@@ -1,0 +1,215 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>OpenGL ES 3.x 实战系列 纹理映射</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content><meta name=generator content="Hugo 0.111.3"></head><body><header role=banner><hgroup><h1><a href=/>My Blog</a></h1><h2></h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option></select></fieldset><ul class=main-navigation></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>May 20, 2021
+- 3 minute read</p><h1 class=entry-title>OpenGL ES 3.x 实战系列 纹理映射</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>本文介绍OpenGL ES上纹理的一些使用方式。使用3.x版本。对应代码见
+<a href=https://github.com/bitristan/OpenGLES3_tutorial target=_blank rel=noopener>OpenGLES3_tutorial</a>。</p><h1 id=绘制单个纹理>绘制单个纹理</h1><p><img src=/images/20210520/1.webp alt=坐标系></p><p>纹理坐标系和顶点坐标系不一样，具体区别如上所示。只要我们在绘制的时候将其一一对应，就能绘制出纹理了。</p><h2 id=着色器>着色器</h2><h3 id=顶点着色器>顶点着色器</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-glsl data-lang=glsl><span class=line><span class=cl><span class=cp>#version 300 es</span>
+</span></span><span class=line><span class=cl><span class=n>layout</span> <span class=p>(</span><span class=n>location</span> <span class=o>=</span> <span class=mo>0</span><span class=p>)</span> <span class=k>in</span> <span class=k>vec3</span> <span class=n>aPosition</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=n>layout</span> <span class=p>(</span><span class=n>location</span> <span class=o>=</span> <span class=mi>1</span><span class=p>)</span> <span class=k>in</span> <span class=k>vec2</span> <span class=n>aTextureCoordinate</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>out</span> <span class=k>vec2</span> <span class=n>vTextureCoordinate</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>void</span> <span class=n>main</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>gl_Position</span> <span class=o>=</span> <span class=k>vec4</span><span class=p>(</span><span class=n>aPosition</span><span class=p>,</span> <span class=mi>1</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>vTextureCoordinate</span> <span class=o>=</span> <span class=n>aTextureCoordinate</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h3 id=片元着色器>片元着色器</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-glsl data-lang=glsl><span class=line><span class=cl><span class=cp>#version 300 es</span>
+</span></span><span class=line><span class=cl><span class=k>precision</span> <span class=k>mediump</span> <span class=k>float</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>in</span> <span class=k>vec2</span> <span class=n>vTextureCoordinate</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>uniform</span> <span class=k>sampler2D</span> <span class=n>sTexture</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>out</span> <span class=k>vec4</span> <span class=n>fragColor</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>void</span> <span class=n>main</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>vec4</span> <span class=n>color</span> <span class=o>=</span> <span class=n>texture</span><span class=p>(</span><span class=n>sTexture</span><span class=p>,</span> <span class=n>vTextureCoordinate</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>fragColor</span> <span class=o>=</span> <span class=n>color</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=加载纹理>加载纹理</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>fun</span> <span class=nf>loadTexture</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>bitmap</span><span class=p>:</span> <span class=n>Bitmap</span><span class=p>,</span> <span class=n>recycle</span><span class=p>:</span> <span class=n>Boolean</span> <span class=p>=</span> <span class=k>true</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>GLES30</span><span class=p>.</span><span class=n>glBindTexture</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_2D</span><span class=p>,</span> <span class=n>index</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>GLES30</span><span class=p>.</span><span class=n>glTexParameteri</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_2D</span><span class=p>,</span> <span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_MAG_FILTER</span><span class=p>,</span> <span class=n>GLES30</span><span class=p>.</span><span class=n>GL_LINEAR</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>GLES30</span><span class=p>.</span><span class=n>glTexParameteri</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_2D</span><span class=p>,</span> <span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_MIN_FILTER</span><span class=p>,</span> <span class=n>GLES30</span><span class=p>.</span><span class=n>GL_LINEAR</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>GLES30</span><span class=p>.</span><span class=n>glTexParameteri</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_2D</span><span class=p>,</span> <span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_WRAP_S</span><span class=p>,</span> <span class=n>GLES30</span><span class=p>.</span><span class=n>GL_REPEAT</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>GLES30</span><span class=p>.</span><span class=n>glTexParameteri</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_2D</span><span class=p>,</span> <span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_WRAP_T</span><span class=p>,</span> <span class=n>GLES30</span><span class=p>.</span><span class=n>GL_REPEAT</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=nc>GLUtils</span><span class=p>.</span><span class=n>texImage2D</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_2D</span><span class=p>,</span> <span class=m>0</span><span class=p>,</span> <span class=n>bitmap</span><span class=p>,</span> <span class=m>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>recycle</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>bitmap</span><span class=p>.</span><span class=n>recycle</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>initTexture</span><span class=p>(</span><span class=n>context</span><span class=p>:</span> <span class=n>Context</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>GLES30</span><span class=p>.</span><span class=n>glGenTextures</span><span class=p>(</span><span class=m>1</span><span class=p>,</span> <span class=n>textureIds</span><span class=p>,</span> <span class=m>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=nc>TextureUtil</span><span class=p>.</span><span class=n>loadTexture</span><span class=p>(</span><span class=n>context</span><span class=p>,</span> <span class=n>textureIds</span><span class=p>[</span><span class=m>0</span><span class=p>],</span> <span class=n>textureRes</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>具体的参数如GL_LINEAR，GL_REPEAT等含义比较明确，不再赘述。</p><h2 id=绘制的时候激活纹理>绘制的时候激活纹理</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glActiveTexture</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glBindTexture</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_2D</span><span class=p>,</span> <span class=n>textureIds</span><span class=p>[</span><span class=m>0</span><span class=p>])</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=顶点和纹理坐标参数>顶点和纹理坐标参数</h2><p>顶点和纹理都按照如下顺序定义：左下，右下，右上，左上</p><h3 id=正常按顺序绘制>正常按顺序绘制</h3><p>对应的坐标如下：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>顶点
+</span></span><span class=line><span class=cl>{ -0.5f, -0.5f, 0.5f, -0.5f, 0.5f, 0.5f, -0.5f, 0.5f }
+</span></span><span class=line><span class=cl>纹理坐标
+</span></span><span class=line><span class=cl>{ 0f, 1f, 1f, 1f, 1f, 0f, 0f, 0f }
+</span></span></code></pre></td></tr></table></div></div><p>效果</p><p><img src=/images/20210520/2.webp alt></p><h3 id=纹理旋转>纹理旋转</h3><p>将纹理坐标稍加变化，我们能实现简单的旋转，翻转，镜像等效果。例如旋转90度，只需要将纹理旋转90度后的坐标和顶点坐标再一一对应即可，具体的纹理坐标如下：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>纹理坐标（旋转90度）
+</span></span><span class=line><span class=cl>{ 1f, 1f, 1f, 0f, 0f, 0f, 0f, 1f }
+</span></span></code></pre></td></tr></table></div></div><p>效果</p><p><img src=/images/20210520/3.webp alt></p><h3 id=截取部分纹理>截取部分纹理</h3><p>例如纹理坐标设置为</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>{ 0f, 0.5f, 0.5f, 0.5f, 0.5f, 0f, 0f, 0f }
+</span></span></code></pre></td></tr></table></div></div><p>效果</p><p><img src=/images/20210520/4.webp alt></p><h3 id=纹理平移>纹理平移</h3><p>将纹理的所有x坐标或者y坐标加上或者减去一个相同值，可以达到平移的效果。例如我们将纹理向右平移到中心点，那么可以设置坐标如下</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>纹理坐标（向右平移）
+</span></span><span class=line><span class=cl>{ 0.5f, 1f, 1.5f, 1f, 1.5f, 0f, 0.5f, 0f }
+</span></span></code></pre></td></tr></table></div></div><p>效果
+由于我们设置GL_REPEAT，所以平移后，左边又被重复的图像填充上了。</p><p><img src=/images/20210520/5.webp alt></p><h3 id=纹理缩小>纹理缩小</h3><p>纹理坐标形成的矩形，如果宽度大于1，那么就相当与缩放了，如果小于1，就相当与放大了。
+设置坐标如下</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>纹理坐标（放大2倍）
+</span></span><span class=line><span class=cl>{ 0f, 2f, 2f, 2f, 2f, 0f, 0f, 0f }
+</span></span></code></pre></td></tr></table></div></div><p>效果</p><p><img src=/images/20210520/6.webp alt></p><h3 id=使用片元着色器实现纹理坐标变换效果>使用片元着色器实现纹理坐标变换效果</h3><p>纹理的放大，缩小，平移等效果也完全可以在片元着色器中实现，下面给出一段参考代码</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>#version 300 es
+</span></span><span class=line><span class=cl>precision mediump float;
+</span></span><span class=line><span class=cl>in vec2 vTextureCoordinate;
+</span></span><span class=line><span class=cl>uniform sampler2D sTexture;
+</span></span><span class=line><span class=cl>out vec4 fragColor;
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>void main() {
+</span></span><span class=line><span class=cl>    vec2 v = (vTextureCoordinate - 0.5) / 0.5 + 0.5;
+</span></span><span class=line><span class=cl>    vec4 color = texture(sTexture, v);
+</span></span><span class=line><span class=cl>    fragColor = color;
+</span></span><span class=line><span class=cl>}
+</span></span></code></pre></td></tr></table></div></div><p>上述代码的效果是将纹理缩小2倍，平移到绘制窗口中央，效果如下：</p><p><img src=/images/20210520/7.webp alt></p><p>我们再配合一些裁剪的代码，可以把周围平铺的多余的纹理去掉，只保留中间一个我们需要的</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-glsl data-lang=glsl><span class=line><span class=cl><span class=cp>#version 300 es</span>
+</span></span><span class=line><span class=cl><span class=k>precision</span> <span class=k>mediump</span> <span class=k>float</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>in</span> <span class=k>vec2</span> <span class=n>vTextureCoordinate</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>uniform</span> <span class=k>sampler2D</span> <span class=n>sTexture</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>out</span> <span class=k>vec4</span> <span class=n>fragColor</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>void</span> <span class=n>main</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>vec2</span> <span class=n>v</span> <span class=o>=</span> <span class=p>(</span><span class=n>vTextureCoordinate</span> <span class=o>-</span> <span class=mf>0.5</span><span class=p>)</span> <span class=o>/</span> <span class=mf>0.5</span> <span class=o>+</span> <span class=mf>0.5</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=k>vec4</span> <span class=n>color</span> <span class=o>=</span> <span class=n>texture</span><span class=p>(</span><span class=n>sTexture</span><span class=p>,</span> <span class=n>v</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>v</span><span class=p>.</span><span class=n>x</span> <span class=o>&gt;=</span> <span class=mf>0.0</span> <span class=o>&amp;&amp;</span> <span class=n>v</span><span class=p>.</span><span class=n>x</span> <span class=o>&lt;=</span> <span class=mf>1.0</span> <span class=o>&amp;&amp;</span> <span class=n>v</span><span class=p>.</span><span class=n>y</span> <span class=o>&gt;=</span> <span class=mf>0.0</span> <span class=o>&amp;&amp;</span> <span class=n>v</span><span class=p>.</span><span class=n>y</span> <span class=o>&lt;=</span> <span class=mf>1.0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>fragColor</span> <span class=o>=</span> <span class=n>color</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>效果如下</p><p><img src=/images/20210520/8.webp alt></p><h1 id=绘制多纹理>绘制多纹理</h1><p>我们也可以绑定多个纹理，例如实现如下两个纹理叠加的效果</p><p><img src=/images/20210520/9.webp alt></p><h2 id=片元着色器-1>片元着色器</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-glsl data-lang=glsl><span class=line><span class=cl><span class=cp>#version 300 es</span>
+</span></span><span class=line><span class=cl><span class=k>precision</span> <span class=k>mediump</span> <span class=k>float</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>in</span> <span class=k>vec2</span> <span class=n>vTextureCoordinate1</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>in</span> <span class=k>vec2</span> <span class=n>vTextureCoordinate2</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>uniform</span> <span class=k>sampler2D</span> <span class=n>sTexture1</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>uniform</span> <span class=k>sampler2D</span> <span class=n>sTexture2</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>out</span> <span class=k>vec4</span> <span class=n>fragColor</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>void</span> <span class=n>main</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>vec4</span> <span class=n>color1</span> <span class=o>=</span> <span class=n>texture</span><span class=p>(</span><span class=n>sTexture1</span><span class=p>,</span> <span class=n>vTextureCoordinate1</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>vec4</span> <span class=n>color2</span> <span class=o>=</span> <span class=n>texture</span><span class=p>(</span><span class=n>sTexture2</span><span class=p>,</span> <span class=n>vTextureCoordinate2</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>vTextureCoordinate2</span><span class=p>.</span><span class=n>x</span> <span class=o>&lt;</span> <span class=mf>0.0</span> <span class=o>||</span> <span class=n>vTextureCoordinate2</span><span class=p>.</span><span class=n>x</span> <span class=o>&gt;</span> <span class=mf>1.0</span> <span class=o>||</span>
+</span></span><span class=line><span class=cl>            <span class=n>vTextureCoordinate2</span><span class=p>.</span><span class=n>y</span> <span class=o>&lt;</span> <span class=mf>0.0</span> <span class=o>||</span> <span class=n>vTextureCoordinate2</span><span class=p>.</span><span class=n>y</span> <span class=o>&gt;</span> <span class=mf>1.0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>fragColor</span> <span class=o>=</span> <span class=n>color1</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>fragColor</span> <span class=o>=</span> <span class=n>color2</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=初始化多个纹理>初始化多个纹理</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>initTexture</span><span class=p>(</span><span class=n>context</span><span class=p>:</span> <span class=n>Context</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>GLES30</span><span class=p>.</span><span class=n>glGenTextures</span><span class=p>(</span><span class=n>textureIds</span><span class=p>.</span><span class=n>size</span><span class=p>,</span> <span class=n>textureIds</span><span class=p>,</span> <span class=m>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=nc>TextureUtil</span><span class=p>.</span><span class=n>loadTexture</span><span class=p>(</span><span class=n>context</span><span class=p>,</span> <span class=n>textureIds</span><span class=p>[</span><span class=m>0</span><span class=p>],</span> <span class=nc>R</span><span class=p>.</span><span class=n>drawable</span><span class=p>.</span><span class=n>lena</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=nc>TextureUtil</span><span class=p>.</span><span class=n>loadTexture</span><span class=p>(</span><span class=n>context</span><span class=p>,</span> <span class=n>textureIds</span><span class=p>[</span><span class=m>1</span><span class=p>],</span> <span class=nc>R</span><span class=p>.</span><span class=n>drawable</span><span class=p>.</span><span class=n>jay</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=绘制的时候绑定多个纹理>绘制的时候绑定多个纹理</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glActiveTexture</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glBindTexture</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_2D</span><span class=p>,</span> <span class=n>textureIds</span><span class=p>[</span><span class=m>0</span><span class=p>])</span>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glUniform1i</span><span class=p>(</span><span class=n>texture1Handle</span><span class=p>,</span> <span class=m>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glActiveTexture</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE1</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glBindTexture</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE_2D</span><span class=p>,</span> <span class=n>textureIds</span><span class=p>[</span><span class=m>1</span><span class=p>])</span>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glUniform1i</span><span class=p>(</span><span class=n>texture2Handle</span><span class=p>,</span> <span class=m>1</span><span class=p>)</span>
+</span></span></code></pre></td></tr></table></div></div><h1 id=后记>后记</h1><p>本文只是介绍了下纹理加载的简单使用。
+使用shader脚本，我们还可以将多个纹理叠加，或者对一个纹理做各种各样的变换，实现各式各样的图片滤镜效果。这里就不再引申。</p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn></span></span>
+<time>May 20, 2021</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2021051901/ title="OpenGL ES 3.x 实战系列 绘制三角形">OpenGL ES 3.x 实战系列 绘制三角形</a>
+<a class="basic-alignment right" href=/posts/2021052101/ title="OpenGL ES 3.x 实战系列 相机实时滤镜">OpenGL ES 3.x 实战系列 相机实时滤镜</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><p></p></section><ul class=sidebar-nav><li class=sidebar-nav-item></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2023 - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>

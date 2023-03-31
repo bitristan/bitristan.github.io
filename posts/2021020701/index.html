@@ -1,0 +1,44 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>关于extractNativeLibs默认值的调研</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content><meta name=generator content="Hugo 0.111.3"></head><body><header role=banner><hgroup><h1><a href=/>My Blog</a></h1><h2></h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option></select></fieldset><ul class=main-navigation></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Feb 7, 2021
+- 2 minute read</p><h1 class=entry-title>关于extractNativeLibs默认值的调研</h1></header><div class=entry-content><p>extractNativeLibs这个属性相信安卓开发者都不会陌生，先引用官方文档说明一下此属性的含义</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-xml data-lang=xml><span class=line><span class=cl>android:extractNativeLibs
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>软件包安装程序是否将原生库从 APK 提取到文件系统。如果设为 false，则原生库必须保持页面对齐状态并以未压缩的形式
+</span></span><span class=line><span class=cl>存储在 APK 中。无需更改代码，因为链接器在运行时直接从 APK 加载库。默认值为 &#34;true&#34;。
+</span></span></code></pre></td></tr></table></div></div><p>含义比较明确，就是如果这个属性设置为 false，那么 apk 的体积会变大，但是 apk 安装后系统会直接使用 apk 中的 so，
+这样就节约了用户的存储空间。反之，如果这个属性设置为 true，那么 apk 的体积会更小，因为 so 是压缩存储的，但是在 apk
+安装的时候，系统会把 apk 中的 so 解压重新存储一份，导致占用的存储空间变大。</p><p>设置这个属性的方法就是直接在 <code>AndroidManifest.xml</code> 中声明即可。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-xml data-lang=xml><span class=line><span class=cl><span class=nt>&lt;application</span>
+</span></span><span class=line><span class=cl>    <span class=na>android:extractNativeLibs=</span><span class=s>&#34;true&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=err>...</span> <span class=nt>&gt;</span>
+</span></span><span class=line><span class=cl><span class=nt>&lt;/application&gt;</span>
+</span></span></code></pre></td></tr></table></div></div><p>如何确认 apk 中 so 是压缩存储的还是未压缩存储的呢，使用 <code>zipinfo</code> 这个命令就行了</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>@debian-ts:~/tmp $ zipinfo test-store.apk *.so
+</span></span><span class=line><span class=cl>-rw----     2.4 fat    <span class=m>13776</span> b- stor 80-000-00 00:00 lib/armeabi-v7a/libtest.so
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>@debian-ts:~/tmp $ zipinfo test-deflate.apk *.so
+</span></span><span class=line><span class=cl>-rw----     2.4 fat    <span class=m>13776</span> b- defN 80-000-00 00:00 lib/armeabi-v7a/libtest.so
+</span></span></code></pre></td></tr></table></div></div><p>如果对 zip 压缩格式有了解的话就知道，<code>stor</code> 为不压缩存储， <code>defN</code> 为压缩存储。</p><p>官方文档上写明了默认值为 <code>true</code>，这个没错，因为查看
+<a href=https://android.googlesource.com/platform/frameworks/base/+/master/core/java/android/content/pm/PackageParser.java title=系统源码 target=_blank rel=noopener>系统源码</a> 可以发现，读取这个属性的时候会以 <code>true</code> 作为默认值</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=k>if</span> <span class=o>(</span><span class=n>sa</span><span class=o>.</span><span class=na>getBoolean</span><span class=o>(</span>
+</span></span><span class=line><span class=cl>        <span class=n>com</span><span class=o>.</span><span class=na>android</span><span class=o>.</span><span class=na>internal</span><span class=o>.</span><span class=na>R</span><span class=o>.</span><span class=na>styleable</span><span class=o>.</span><span class=na>AndroidManifestApplication_extractNativeLibs</span><span class=o>,</span>
+</span></span><span class=line><span class=cl>        <span class=kc>true</span><span class=o>))</span> <span class=o>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>ai</span><span class=o>.</span><span class=na>flags</span> <span class=o>|=</span> <span class=n>ApplicationInfo</span><span class=o>.</span><span class=na>FLAG_EXTRACT_NATIVE_LIBS</span><span class=o>;</span>
+</span></span><span class=line><span class=cl><span class=o>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>如果在 AndroidManifest.xml 中主动设置了 <code>android:extractNativeLibs</code>，那没得说肯定设置的是什么值就是什么值。但是如果默认没有设置，那就有讲究了。</p><p>从 AGP (Android Gradle Plugin) 的 CHANGELOG 中，我们可以看到，在
+<a href=https://developer.android.com/studio/releases/gradle-plugin#3-6-0 title=AGP3.6.0 target=_blank rel=noopener>AGP 3.6.0</a> 版本中，google 更新了 extractNativeLibs 的默认行为，在构建应用时，插件现在默认会将 extractNativeLibs 设置为 <code>false</code>。</p><p>通过观察编译后生成的 AndroidManifest.xml 文件，发现 gradle 插件设置默认值为 false 是通过在处理 AndroidManifest.xml 文件的时候，在其中自动插入 <code>android:extractNativeLibs="false"</code>来实现的。但是由于 android:extractNativeLibs 这个属性是在 Android M(6.0) 引入的，所以如果项目中配置 <code>minSdkVersion &lt; 23</code> 的话， gradle 插件是不会做这个自动插入的。</p><p>所以我们得出 <code>extractNativeLibs</code> 默认值的几种情况：</p><table><thead><tr><th>条件</th><th>默认值</th></tr></thead><tbody><tr><td>AGP &lt; 3.6.0 || minSdkVersion &lt; 23</td><td>true</td></tr><tr><td>AGP >=3.6.0 && minSdkVersion >= 23</td><td>false</td></tr></tbody></table></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn></span></span>
+<time>Feb 7, 2021</time></span></p><p class=meta><a class="basic-alignment right" href=/posts/2021051901/ title="OpenGL ES 3.x 实战系列 绘制三角形">OpenGL ES 3.x 实战系列 绘制三角形</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><p></p></section><ul class=sidebar-nav><li class=sidebar-nav-item></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2023 - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>

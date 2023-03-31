@@ -1,0 +1,269 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>OpenGL ES 3.x 实战系列 相机实时滤镜</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content><meta name=generator content="Hugo 0.111.3"></head><body><header role=banner><hgroup><h1><a href=/>My Blog</a></h1><h2></h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option></select></fieldset><ul class=main-navigation></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>May 21, 2021
+- 4 minute read</p><h1 class=entry-title>OpenGL ES 3.x 实战系列 相机实时滤镜</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>我们将在Android平台下基于Jetpack CameraX库实现一个简单的OpelGLES3相机预览。</p><p>CameraX的相关使用可以参考
+<a href=https://github.com/android/camera-samples target=_blank rel=noopener>Google camera-samples</a>。
+本文源码
+<a href=https://github.com/bitristan/OpenGLES3_tutorial target=_blank rel=noopener>OpenGLES3_tutorial</a>。</p><h1 id=使用camerax实现相机预览>使用CameraX实现相机预览</h1><p>使用CameraX库实现一个相机预览是非常简单的事情</p><h2 id=定义布局>定义布局</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-xml data-lang=xml><span class=line><span class=cl><span class=nt>&lt;androidx.camera.view.PreviewView</span>
+</span></span><span class=line><span class=cl>    <span class=na>android:id=</span><span class=s>&#34;@+id/preview&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>android:layout_width=</span><span class=s>&#34;0dp&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>android:layout_height=</span><span class=s>&#34;0dp&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>app:layout_constraintStart_toStartOf=</span><span class=s>&#34;parent&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>app:layout_constraintEnd_toEndOf=</span><span class=s>&#34;parent&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>app:layout_constraintTop_toTopOf=</span><span class=s>&#34;parent&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>app:layout_constraintBottom_toBottomOf=</span><span class=s>&#34;parent&#34;</span> <span class=nt>/&gt;</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=开启相机>开启相机</h2><p>首先需要申请 Camera 权限，这部分代码我们省略，有了权限之后直接初始化相机即可。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>setUpCamera</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>cameraProviderFuture</span> <span class=p>=</span> <span class=nc>ProcessCameraProvider</span><span class=p>.</span><span class=n>getInstance</span><span class=p>(</span><span class=k>this</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>cameraProviderFuture</span><span class=p>.</span><span class=n>addListener</span><span class=p>({</span>
+</span></span><span class=line><span class=cl>        <span class=n>cameraProvider</span> <span class=p>=</span> <span class=n>cameraProviderFuture</span><span class=p>.</span><span class=k>get</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>        <span class=n>lensFacing</span> <span class=p>=</span> <span class=nc>CameraSelector</span><span class=p>.</span><span class=n>LENS_FACING_BACK</span>
+</span></span><span class=line><span class=cl>        <span class=n>bindCameraUseCases</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=p>},</span> <span class=nc>ContextCompat</span><span class=p>.</span><span class=n>getMainExecutor</span><span class=p>(</span><span class=k>this</span><span class=p>))</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>bindCameraUseCases</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>screenWidth</span> <span class=p>=</span> <span class=n>resources</span><span class=p>.</span><span class=n>displayMetrics</span><span class=p>.</span><span class=n>widthPixels</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>screenHeight</span> <span class=p>=</span> <span class=n>resources</span><span class=p>.</span><span class=n>displayMetrics</span><span class=p>.</span><span class=n>heightPixels</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>screenAspectRatio</span> <span class=p>=</span> <span class=n>aspectRatio</span><span class=p>(</span><span class=n>screenWidth</span><span class=p>,</span> <span class=n>screenHeight</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>rotation</span> <span class=p>=</span> <span class=n>glSurfaceView</span><span class=p>.</span><span class=n>display</span><span class=p>.</span><span class=n>rotation</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>cameraSelector</span> <span class=p>=</span> <span class=nc>CameraSelector</span><span class=p>.</span><span class=n>Builder</span><span class=p>().</span><span class=n>requireLensFacing</span><span class=p>(</span><span class=n>lensFacing</span><span class=p>).</span><span class=n>build</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=n>preview</span> <span class=p>=</span> <span class=nc>Preview</span><span class=p>.</span><span class=n>Builder</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>        <span class=p>.</span><span class=n>setTargetAspectRatio</span><span class=p>(</span><span class=n>screenAspectRatio</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=p>.</span><span class=n>setTargetRotation</span><span class=p>(</span><span class=n>rotation</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=p>.</span><span class=n>build</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// ...
+</span></span></span><span class=line><span class=cl><span class=c1></span>
+</span></span><span class=line><span class=cl>    <span class=c1>// Must unbind the use-cases before rebinding them
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=n>cameraProvider</span><span class=o>?.</span><span class=n>unbindAll</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>try</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// A variable number of use-cases can be passed here -
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=c1>// camera provides access to CameraControl &amp; CameraInfo
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=n>camera</span> <span class=p>=</span> <span class=n>cameraProvider</span><span class=o>?.</span><span class=n>bindToLifecycle</span><span class=p>(</span><span class=k>this</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>            <span class=n>cameraSelector</span><span class=p>,</span> <span class=n>preview</span><span class=p>,</span> <span class=n>imageCapture</span><span class=p>,</span> <span class=n>imageAnalyzer</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>        <span class=n>preview</span><span class=o>?.</span><span class=n>setSurfaceProvider</span><span class=p>(</span><span class=n>previewView</span><span class=p>.</span><span class=n>surfaceProvider</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>catch</span> <span class=p>(</span><span class=n>exc</span><span class=p>:</span> <span class=n>Exception</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=nc>Log</span><span class=p>.</span><span class=n>e</span><span class=p>(</span><span class=n>TAG</span><span class=p>,</span> <span class=s2>&#34;exception&#34;</span><span class=p>,</span> <span class=n>exc</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>这里我们默认使用后置摄像头。可以看到核心的代码就是使用 cameraProvider.bindToLifecycle 以及 使用preview.setSurfaceProvider将相机preview和PreviewView关联起来。</p><h1 id=使用opengle3相机预览>使用OpenGLE3相机预览</h1><p>现在我们不使用系统提供的PreviewView，而是使用OpenGLES3自己绘制相机预览。我们借助GLSurfaceView来实现。</p><p>绘制原理：</p><ol><li>创建一个SurfaceView，并绑定OpenGL中的一个纹理;</li><li>将SurfaceView作为相机预览的输出;</li><li>在OpenGL中绘制出纹理;</li></ol><h2 id=添加布局>添加布局</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-xml data-lang=xml><span class=line><span class=cl><span class=nt>&lt;com.example.opengles.tutorial.GLCameraView</span>
+</span></span><span class=line><span class=cl>    <span class=na>android:id=</span><span class=s>&#34;@+id/glsurface&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>android:layout_width=</span><span class=s>&#34;0dp&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>android:layout_height=</span><span class=s>&#34;0dp&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>android:visibility=</span><span class=s>&#34;gone&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>app:layout_constraintEnd_toEndOf=</span><span class=s>&#34;parent&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>app:layout_constraintStart_toStartOf=</span><span class=s>&#34;parent&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>app:layout_constraintTop_toTopOf=</span><span class=s>&#34;parent&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=na>app:layout_constraintBottom_toBottomOf=</span><span class=s>&#34;parent&#34;</span> <span class=nt>/&gt;</span>
+</span></span></code></pre></td></tr></table></div></div><p>GLCameraView是我们继承GLSurfaceView的自定义类。</p><h2 id=配置glsurfaceview>配置GLSurfaceView</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>init</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>setEGLContextClientVersion</span><span class=p>(</span><span class=m>3</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>setRenderer</span><span class=p>(</span><span class=k>this</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>renderMode</span> <span class=p>=</span> <span class=n>RENDERMODE_WHEN_DIRTY</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>需要设置为手动渲染模式，在我们需要渲染的时候使用renderRequest()出发渲染。</p><h2 id=实现opengles3纹理绘制逻辑>实现OpenGLES3纹理绘制逻辑</h2><p>OpenGLES中的纹理绘制大家都比较熟悉，可以参见前文
+<a href=https://bitristan.github.io/posts/2021052001/ target=_blank rel=noopener>OpenGL ES 3.x 实战系列 纹理映射</a></p><h2 id=添加surfacetexture关联opengl纹理>添加SurfaceTexture，关联OpenGL纹理</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>val</span> <span class=py>ids</span> <span class=p>=</span> <span class=n>IntArray</span><span class=p>(</span><span class=m>1</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glGenTextures</span><span class=p>(</span><span class=m>1</span><span class=p>,</span> <span class=n>ids</span><span class=p>,</span> <span class=m>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>textureId</span> <span class=p>=</span> <span class=n>ids</span><span class=p>[</span><span class=m>0</span><span class=p>]</span>
+</span></span><span class=line><span class=cl><span class=n>surfaceTexture</span> <span class=p>=</span> <span class=n>SurfaceTexture</span><span class=p>(</span><span class=n>textureId</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>surfaceTexture</span><span class=o>!!</span><span class=p>.</span><span class=n>setOnFrameAvailableListener</span><span class=p>(</span><span class=k>this</span><span class=p>)</span>
+</span></span></code></pre></td></tr></table></div></div><p>实现OnFrameAvailableListener回调，每次frame更新的时候调用requestRender触发渲染</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>onFrameAvailable</span><span class=p>(</span><span class=n>surfaceTexture</span><span class=p>:</span> <span class=n>SurfaceTexture</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>requestRender</span><span class=p>()</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=关联相机预览和surfacetexture>关联相机预览和SurfaceTexture</h2><p>这是最重要的一步。之前我们使用原生PreviewView的时候，是这么来帮绑定预览和UI的</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>preview?.setSurfaceProvider(previewView.surfaceProvider)
+</span></span></code></pre></td></tr></table></div></div><p>换成OpenGL预览后，需要做如下替换</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>fun</span> <span class=nf>attachPreview</span><span class=p>(</span><span class=n>preview</span><span class=p>:</span> <span class=n>Preview</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>preview</span><span class=p>.</span><span class=n>setSurfaceProvider</span> <span class=p>{</span> <span class=n>request</span><span class=p>:</span> <span class=n>SurfaceRequest</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>resolution</span> <span class=p>=</span> <span class=n>request</span><span class=p>.</span><span class=n>resolution</span>
+</span></span><span class=line><span class=cl>        <span class=n>surfaceTexture</span><span class=o>!!</span><span class=p>.</span><span class=n>setDefaultBufferSize</span><span class=p>(</span><span class=n>resolution</span><span class=p>.</span><span class=n>width</span><span class=p>,</span> <span class=n>resolution</span><span class=p>.</span><span class=n>height</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>surface</span> <span class=p>=</span> <span class=n>Surface</span><span class=p>(</span><span class=n>surfaceTexture</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=n>request</span><span class=p>.</span><span class=n>provideSurface</span><span class=p>(</span><span class=n>surface</span><span class=p>,</span> <span class=n>executor</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>surface</span><span class=p>.</span><span class=n>release</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>            <span class=n>surfaceTexture</span><span class=o>!!</span><span class=p>.</span><span class=n>release</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 在bindCameraUseCases中将相机preview和GlSurfaceView绑定
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=n>preview</span><span class=o>?.</span><span class=n>let</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>glSurfaceView</span><span class=p>.</span><span class=n>attachPreview</span><span class=p>(</span><span class=k>it</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>注意一定要使用surfaceTexture.setDefaultBufferSize设置一下分辨率，否则预览会非常模糊。</p><h2 id=绑定并更新gl_texture_external_oes纹理>绑定并更新GL_TEXTURE_EXTERNAL_OES纹理</h2><p>对应的顶点着色器</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-glsl data-lang=glsl><span class=line><span class=cl><span class=cp>#version 300 es</span>
+</span></span><span class=line><span class=cl><span class=n>layout</span> <span class=p>(</span><span class=n>location</span> <span class=o>=</span> <span class=mo>0</span><span class=p>)</span> <span class=k>in</span> <span class=k>vec3</span> <span class=n>aPosition</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=n>layout</span> <span class=p>(</span><span class=n>location</span> <span class=o>=</span> <span class=mi>1</span><span class=p>)</span> <span class=k>in</span> <span class=k>vec2</span> <span class=n>aTextureCoordinate</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>out</span> <span class=k>vec2</span> <span class=n>vTextureCoordinate</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>void</span> <span class=n>main</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>gl_Position</span> <span class=o>=</span> <span class=k>vec4</span><span class=p>(</span><span class=n>aPosition</span><span class=p>,</span> <span class=mi>1</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>vTextureCoordinate</span> <span class=o>=</span> <span class=n>aTextureCoordinate</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>片元着色器</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-glsl data-lang=glsl><span class=line><span class=cl><span class=cp>#version 300 es</span>
+</span></span><span class=line><span class=cl><span class=cp>#extension GL_OES_EGL_image_external_essl3 : require</span>
+</span></span><span class=line><span class=cl><span class=k>precision</span> <span class=k>mediump</span> <span class=k>float</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>in</span> <span class=k>vec2</span> <span class=n>vTextureCoordinate</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>uniform</span> <span class=n>samplerExternalOES</span> <span class=n>sTexture</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>out</span> <span class=k>vec4</span> <span class=n>fragColor</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>void</span> <span class=n>main</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>vec4</span> <span class=n>color</span> <span class=o>=</span> <span class=n>texture</span><span class=p>(</span><span class=n>sTexture</span><span class=p>,</span> <span class=n>vTextureCoordinate</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>fragColor</span> <span class=o>=</span> <span class=n>color</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>这里需要使用samplerExternalOES而不能使用sampler2D，因为相机预览的原始数据为YUV格式，直接拿来做渲染的话需要进行转换，使用samplerExternalOES就不用再次转换了。</p><p>另外注意使用samplerExternalOES一定要添加 #extension GL_OES_EGL_image_external_essl3 : require，否则脚本编译会报错。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>E/ShaderUtil: 0:4: L0001: Expected token <span class=s1>&#39;{&#39;</span>, found <span class=s1>&#39;identifier&#39;</span>
+</span></span><span class=line><span class=cl>或者有些机型报错
+</span></span><span class=line><span class=cl>E/ShaderUtil: ERROR: 0:5: <span class=s1>&#39;samplerExternalOES&#39;</span> : requires extension GL_OES_EGL_image_external_essl3 to be enabled
+</span></span></code></pre></td></tr></table></div></div><p>注意一下这里有一些兼容性问题，在OpenGLES 3的版本上需要使用GL_OES_EGL_image_external_essl3而不是GL_OES_EGL_image_external</p><p>纹理绑定，注意需要将纹理绑定到 GLES11Ext.GL_TEXTURE_EXTERNAL_OES</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glActiveTexture</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TEXTURE0</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glBindTexture</span><span class=p>(</span><span class=n>GLES11Ext</span><span class=p>.</span><span class=n>GL_TEXTURE_EXTERNAL_OES</span><span class=p>,</span> <span class=n>textureId</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>更新纹理</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=n>surfaceTexture</span><span class=p>.</span><span class=n>updateTexImage</span><span class=p>()</span>
+</span></span></code></pre></td></tr></table></div></div><h1 id=预览的方向问题>预览的方向问题</h1><p>上述OpenGL相机预览实现之后，我们会发现一个小问题，就是预览方向不对，向左偏转了90度。所以我们需要将纹理坐标做一个顺时针90度旋转。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>绘制的顶点坐标
+</span></span><span class=line><span class=cl>{ -1f, -1f, 1f, -1f, 1f, 1f, -1f, 1f }
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>正常纹理坐标
+</span></span><span class=line><span class=cl>{ 0f, 1f, 1f, 1f, 1f, 0f, 0f, 0f }
+</span></span><span class=line><span class=cl>顺时针旋转90度的纹理坐标
+</span></span><span class=line><span class=cl>{ 1f, 1f, 1f, 0f, 0f, 0f, 0f, 1f }
+</span></span></code></pre></td></tr></table></div></div><h1 id=滤镜效果>滤镜效果</h1><p>在此基础上我们就可以做一些实时滤镜效果了，一些简单的效果我们可以直接在片元着色器中进行逻辑处理，例如我们将预览变成黑白预览，参考片元着色器</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-glsl data-lang=glsl><span class=line><span class=cl><span class=cp>#version 300 es</span>
+</span></span><span class=line><span class=cl><span class=cp>#extension GL_OES_EGL_image_external_essl3 : require</span>
+</span></span><span class=line><span class=cl><span class=k>precision</span> <span class=k>mediump</span> <span class=k>float</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>in</span> <span class=k>vec2</span> <span class=n>vTextureCoordinate</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>uniform</span> <span class=n>samplerExternalOES</span> <span class=n>sTexture</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>out</span> <span class=k>vec4</span> <span class=n>fragColor</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>void</span> <span class=n>main</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 实现一个简单的黑白滤镜</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 滤镜的原理是每个片元的像素值取r,g,b三个分量的平均值</span>
+</span></span><span class=line><span class=cl>    <span class=k>float</span> <span class=n>grey</span> <span class=o>=</span> <span class=p>(</span><span class=n>color</span><span class=p>.</span><span class=n>r</span> <span class=o>+</span> <span class=n>color</span><span class=p>.</span><span class=n>g</span> <span class=o>+</span> <span class=n>color</span><span class=p>.</span><span class=n>b</span><span class=p>)</span> <span class=o>/</span> <span class=mf>3.0</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=n>fragColor</span> <span class=o>=</span> <span class=k>vec4</span><span class=p>(</span><span class=n>grey</span><span class=p>,</span> <span class=n>grey</span><span class=p>,</span> <span class=n>grey</span><span class=p>,</span> <span class=mf>1.0</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>有些效果可能还需要加入蒙版，还有比较流行的LUT滤镜等，可以阅读其他资料进一步学习。</p><h1 id=效果>效果</h1><p><img src=/images/20210521/1.webp alt></p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn></span></span>
+<time>May 21, 2021</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2021052001/ title="OpenGL ES 3.x 实战系列 纹理映射">OpenGL ES 3.x 实战系列 纹理映射</a>
+<a class="basic-alignment right" href=/posts/2022031901/ title=RecyclerView嵌套RecyclerView自动滚动的问题>RecyclerView嵌套RecyclerView自动滚动的问题</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><p></p></section><ul class=sidebar-nav><li class=sidebar-nav-item></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2023 - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>

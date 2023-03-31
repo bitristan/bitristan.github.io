@@ -1,0 +1,263 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>安卓使用prefab特性在AAR中导出和导入原生so依赖</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content><meta name=generator content="Hugo 0.111.3"></head><body><header role=banner><hgroup><h1><a href=/>My Blog</a></h1><h2></h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option></select></fieldset><ul class=main-navigation></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Mar 26, 2022
+- 3 minute read</p><h1 class=entry-title>安卓使用prefab特性在AAR中导出和导入原生so依赖</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>我们知道AAR中的so是无法被直接gradle引用的，要使用AAR中的so，要么手动将so解压出来，要么定义一个gradle task自动将so解压到指定路径进行引用。</p><p>Android Gradle Plugin 4.0中添加的Prefab功能帮助我们解决了这个问题。下面我们来看一下如何使用。</p><h1 id=导出依赖>导出依赖</h1><p>首先我们创建一个library工程，cpp目录结构如下</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>cpp/
+</span></span><span class=line><span class=cl>├── CMakeLists.txt
+</span></span><span class=line><span class=cl>├── include
+</span></span><span class=line><span class=cl>│   └── mylibrary
+</span></span><span class=line><span class=cl>│       └── mylibrary.h
+</span></span><span class=line><span class=cl>└── mylibrary.cpp
+</span></span></code></pre></td></tr></table></div></div><p>其中mylibrary.h为我们定义的库头文件，定义了一个简单的方法</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>int</span> <span class=nf>add_tow_number</span><span class=p>(</span><span class=kt>int</span> <span class=n>a</span><span class=p>,</span> <span class=kt>int</span> <span class=n>b</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>mylibrary.cpp为我们定义的库实现</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=cp>#include</span> <span class=cpf>&#34;mylibrary/mylibrary.h&#34;</span><span class=cp>
+</span></span></span><span class=line><span class=cl><span class=cp></span>
+</span></span><span class=line><span class=cl><span class=kt>int</span> <span class=nf>add_tow_number</span><span class=p>(</span><span class=kt>int</span> <span class=n>a</span><span class=p>,</span> <span class=kt>int</span> <span class=n>b</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>a</span> <span class=o>+</span> <span class=n>b</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>我们按照默认的方式生成aar，尽管aar中包含so，但是我们将此aar作为依赖放入app工程中，默认是没办法直接引用到so的。此时aar中的文件结构如下</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Archive:  mylibrary-debug.aar
+</span></span><span class=line><span class=cl>    testing: proguard.txt             OK
+</span></span><span class=line><span class=cl>    testing: R.txt                    OK
+</span></span><span class=line><span class=cl>    testing: AndroidManifest.xml      OK
+</span></span><span class=line><span class=cl>    testing: classes.jar              OK
+</span></span><span class=line><span class=cl>    testing: jni/                     OK
+</span></span><span class=line><span class=cl>    testing: jni/arm64-v8a/           OK
+</span></span><span class=line><span class=cl>    testing: jni/arm64-v8a/libc++_shared.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/arm64-v8a/libmylibrary.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/armeabi-v7a/         OK
+</span></span><span class=line><span class=cl>    testing: jni/armeabi-v7a/libc++_shared.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/armeabi-v7a/libmylibrary.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/x86/                 OK
+</span></span><span class=line><span class=cl>    testing: jni/x86/libc++_shared.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/x86/libmylibrary.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/x86_64/              OK
+</span></span><span class=line><span class=cl>    testing: jni/x86_64/libc++_shared.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/x86_64/libmylibrary.so   OK
+</span></span><span class=line><span class=cl>    testing: META-INF/com/android/build/gradle/aar-metadata.properties   OK
+</span></span><span class=line><span class=cl>    testing: arm64-v8a/               OK
+</span></span><span class=line><span class=cl>    testing: armeabi-v7a/             OK
+</span></span><span class=line><span class=cl>    testing: x86/                     OK
+</span></span><span class=line><span class=cl>    testing: x86_64/                  OK
+</span></span><span class=line><span class=cl>No errors detected in compressed data of mylibrary-debug.aar.
+</span></span></code></pre></td></tr></table></div></div><p>为了能直接引用到so，我们需要添加开启prefab配置。在mylibrary工程的build.gradle中添加如下配置</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-groovy data-lang=groovy><span class=line><span class=cl><span class=n>buildFeatures</span> <span class=o>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>prefabPublishing</span> <span class=kc>true</span>
+</span></span><span class=line><span class=cl><span class=o>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=n>prefab</span> <span class=o>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>mylibrary</span> <span class=o>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>headers</span> <span class=s2>&#34;src/main/cpp/include&#34;</span>
+</span></span><span class=line><span class=cl>    <span class=o>}</span>
+</span></span><span class=line><span class=cl><span class=o>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>再次编译生成so，我们可以看到aar的文件结构如下</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Archive:  /home/sunting/Desktop/AndroidPrefabTutor/mylibrary/build/outputs/aar/mylibrary-debug.aar
+</span></span><span class=line><span class=cl>    testing: proguard.txt             OK
+</span></span><span class=line><span class=cl>    testing: R.txt                    OK
+</span></span><span class=line><span class=cl>    testing: AndroidManifest.xml      OK
+</span></span><span class=line><span class=cl>    testing: classes.jar              OK
+</span></span><span class=line><span class=cl>    testing: jni/                     OK
+</span></span><span class=line><span class=cl>    testing: jni/arm64-v8a/           OK
+</span></span><span class=line><span class=cl>    testing: jni/arm64-v8a/libc++_shared.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/arm64-v8a/libmylibrary.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/armeabi-v7a/         OK
+</span></span><span class=line><span class=cl>    testing: jni/armeabi-v7a/libc++_shared.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/armeabi-v7a/libmylibrary.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/x86/                 OK
+</span></span><span class=line><span class=cl>    testing: jni/x86/libc++_shared.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/x86/libmylibrary.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/x86_64/              OK
+</span></span><span class=line><span class=cl>    testing: jni/x86_64/libc++_shared.so   OK
+</span></span><span class=line><span class=cl>    testing: jni/x86_64/libmylibrary.so   OK
+</span></span><span class=line><span class=cl>    testing: prefab/                  OK
+</span></span><span class=line><span class=cl>    testing: prefab/prefab.json       OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/          OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/module.json   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/include/   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/include/mylibrary/   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/include/mylibrary/mylibrary.h   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/android.arm64-v8a/   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/android.arm64-v8a/abi.json   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/android.arm64-v8a/libmylibrary.so   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/android.armeabi-v7a/   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/android.armeabi-v7a/abi.json   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/android.armeabi-v7a/libmylibrary.so   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/android.x86/   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/android.x86/abi.json   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/android.x86/libmylibrary.so   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/android.x86_64/   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/android.x86_64/abi.json   OK
+</span></span><span class=line><span class=cl>    testing: prefab/modules/mylibrary/libs/android.x86_64/libmylibrary.so   OK
+</span></span><span class=line><span class=cl>    testing: META-INF/com/android/build/gradle/aar-metadata.properties   OK
+</span></span><span class=line><span class=cl>    testing: arm64-v8a/               OK
+</span></span><span class=line><span class=cl>    testing: armeabi-v7a/             OK
+</span></span><span class=line><span class=cl>    testing: x86/                     OK
+</span></span><span class=line><span class=cl>    testing: x86_64/                  OK
+</span></span><span class=line><span class=cl>    testing: modules/                 OK
+</span></span><span class=line><span class=cl>    testing: modules/mylibrary/       OK
+</span></span><span class=line><span class=cl>    testing: modules/mylibrary/include/   OK
+</span></span><span class=line><span class=cl>    testing: modules/mylibrary/include/mylibrary/   OK
+</span></span><span class=line><span class=cl>    testing: modules/mylibrary/libs/   OK
+</span></span><span class=line><span class=cl>    testing: modules/mylibrary/libs/android.arm64-v8a/   OK
+</span></span><span class=line><span class=cl>    testing: modules/mylibrary/libs/android.armeabi-v7a/   OK
+</span></span><span class=line><span class=cl>    testing: modules/mylibrary/libs/android.x86/   OK
+</span></span><span class=line><span class=cl>    testing: modules/mylibrary/libs/android.x86_64/   OK
+</span></span><span class=line><span class=cl>No errors detected in compressed data of /home/sunting/Desktop/AndroidPrefabTutor/mylibrary/build/outputs/aar/mylibrary-debug.aar.
+</span></span></code></pre></td></tr></table></div></div><p>可以发现比之前多了prefab和modules目录，现在我们就可以直接在app工程中使用我们的aar依赖so库功能了。</p><h1 id=使用prefab原生依赖>使用prefab原生依赖</h1><p>将aar拷贝到app/libs目录中，build.gradle中依赖aar</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-groovy data-lang=groovy><span class=line><span class=cl><span class=n>implementation</span> <span class=nf>fileTree</span><span class=o>(</span><span class=nl>dir:</span> <span class=s1>&#39;libs&#39;</span><span class=o>,</span> <span class=nl>include:</span> <span class=o>[</span><span class=s1>&#39;*.jar&#39;</span><span class=o>,</span> <span class=s1>&#39;*.aar&#39;</span><span class=o>])</span>
+</span></span></code></pre></td></tr></table></div></div><p>app的build.gradle中开启prefab支持</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-groovy data-lang=groovy><span class=line><span class=cl><span class=n>buildFeatures</span> <span class=o>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>prefab</span> <span class=o>=</span> <span class=kc>true</span>
+</span></span><span class=line><span class=cl><span class=o>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>CMakeLists.txt中就可以直接依赖了，我们的library名称是mylibrary，所以这么来依赖</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cmake data-lang=cmake><span class=line><span class=cl><span class=nb>find_package</span><span class=p>(</span><span class=s>mylibrary</span> <span class=s>REQUIRED</span> <span class=s>CONFIG</span><span class=p>)</span><span class=err>
+</span></span></span><span class=line><span class=cl><span class=err>
+</span></span></span><span class=line><span class=cl><span class=err></span><span class=nb>target_link_libraries</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>        <span class=s>tutor</span>
+</span></span><span class=line><span class=cl>        <span class=s>mylibrary::mylibrary</span>
+</span></span><span class=line><span class=cl>        <span class=o>${</span><span class=nv>log-lib</span><span class=o>}</span><span class=p>)</span><span class=err>
+</span></span></span></code></pre></td></tr></table></div></div><p>先使用 find-library 查找到mylibrary库，然后在target_link_libraries中使用mylibrary::mylibrary引用就可以了。</p><p>我们来实验一下，Android Studio中能直接提示mylibrary.h，调用也是没有任何问题的。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=cp>#include</span> <span class=cpf>&#34;mylibrary/mylibrary.h&#34;</span><span class=cp>
+</span></span></span><span class=line><span class=cl><span class=cp></span>
+</span></span><span class=line><span class=cl><span class=k>extern</span> <span class=s>&#34;C&#34;</span> <span class=n>JNIEXPORT</span> <span class=n>jstring</span> <span class=n>JNICALL</span>
+</span></span><span class=line><span class=cl><span class=n>Java_com_example_android_prefab_tutor_MainActivity_stringFromJNI</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>        <span class=n>JNIEnv</span><span class=o>*</span> <span class=n>env</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>        <span class=n>jobject</span> <span class=cm>/* this */</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>std</span><span class=o>::</span><span class=n>string</span> <span class=n>hello</span> <span class=o>=</span> <span class=s>&#34;Hello from C++&#34;</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>c</span> <span class=o>=</span> <span class=n>add_tow_number</span><span class=p>(</span><span class=mi>2</span><span class=p>,</span> <span class=mi>3</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>slogd</span><span class=p>(</span><span class=s>&#34;result is %d&#34;</span><span class=p>,</span> <span class=n>c</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>env</span><span class=o>-&gt;</span><span class=n>NewStringUTF</span><span class=p>(</span><span class=n>hello</span><span class=p>.</span><span class=n>c_str</span><span class=p>());</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>细心的朋友可能发现，我们输出的库文件aar中，有两份so，一份在jni目录下，一份在prefab目录下，jni目录下的so其实是没有任何用处的，我们可以加入gradle配置exclude掉</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-groovy data-lang=groovy><span class=line><span class=cl><span class=n>packagingOptions</span> <span class=o>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>exclude</span><span class=o>(</span><span class=s2>&#34;**/libmylibrary.so&#34;</span><span class=o>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>exclude</span><span class=o>(</span><span class=s2>&#34;**/libc++_shared.so&#34;</span><span class=o>)</span>
+</span></span><span class=line><span class=cl><span class=o>}</span>
+</span></span></code></pre></td></tr></table></div></div><h1 id=总结>总结</h1><p>实际上已经很多库支持prefab特性了，例如大名鼎鼎的
+<a href=https://github.com/facebookincubator/fbjni target=_blank rel=noopener>fbjni</a>，我们开启prefab，直接两步就能引用上了，再也不用各种拷贝配置so了，突出一个方便。 fbjni的README上也列出了AGP 4.0之前的导入方式，需要自己配置很多额外的gradle代码，相当的麻烦。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-groovy data-lang=groovy><span class=line><span class=cl><span class=c1>// in build.gradle
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=n>implementation</span> <span class=s1>&#39;com.facebook.fbjni:fbjni:0.2.2&#39;</span>
+</span></span></code></pre></td></tr></table></div></div><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cmake data-lang=cmake><span class=line><span class=cl><span class=c># in CMakeLists.txt
+</span></span></span><span class=line><span class=cl><span class=c></span><span class=nb>find_package</span><span class=p>(</span><span class=s>fbjni</span> <span class=s>REQUIRED</span> <span class=s>CONFIG</span><span class=p>)</span><span class=err>
+</span></span></span><span class=line><span class=cl><span class=err></span><span class=nb>target_link_libraries</span><span class=p>(</span><span class=s>fbjnidemo</span> <span class=s>fbjni::fbjni</span><span class=p>)</span><span class=err>
+</span></span></span></code></pre></td></tr></table></div></div><h1 id=demo工程地址>Demo工程地址</h1><p><a href=https://gitlab.com/sunting/android-prefab-tutor target=_blank rel=noopener>https://gitlab.com/sunting/android-prefab-tutor</a></p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn></span></span>
+<time>Mar 26, 2022</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2022031901/ title=RecyclerView嵌套RecyclerView自动滚动的问题>RecyclerView嵌套RecyclerView自动滚动的问题</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><p></p></section><ul class=sidebar-nav><li class=sidebar-nav-item></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2023 - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>

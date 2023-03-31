@@ -1,0 +1,110 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>OpenGL ES 3.x 实战系列 绘制三角形</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content><meta name=generator content="Hugo 0.111.3"></head><body><header role=banner><hgroup><h1><a href=/>My Blog</a></h1><h2></h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option></select></fieldset><ul class=main-navigation></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>May 19, 2021
+- 1 minute read</p><h1 class=entry-title>OpenGL ES 3.x 实战系列 绘制三角形</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>OpenGL ES的基础知识不再赘述，网上很多相关的资料，推荐几个学教程：</p><ul><li>《Open GL ES 3.x游戏开发》</li><li><a href=https://learnopengl.com/Introduction target=_blank rel=noopener>Learn OpenGL</a></li></ul><p>本文使用OpenGL ES 3.x 版本在Android上绘制一个三角形。具体代码见
+<a href=https://github.com/bitristan/OpenGLES3_tutorial target=_blank rel=noopener>OpenGL ES 3 Tutorial</a></p><h1 id=glsurfaceview配置>GLSurfaceView配置</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=n>setEGLContextClientVersion</span><span class=p>(</span><span class=m>3</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>sceneRenderer</span> <span class=p>=</span> <span class=n>SceneRenderer</span><span class=p>()</span>
+</span></span><span class=line><span class=cl><span class=n>setRenderer</span><span class=p>(</span><span class=n>sceneRenderer</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>renderMode</span> <span class=p>=</span> <span class=n>RENDERMODE_CONTINUOUSLY</span>
+</span></span></code></pre></td></tr></table></div></div><h1 id=顶点着色器>顶点着色器</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-glsl data-lang=glsl><span class=line><span class=cl><span class=cp>#version 300 es</span>
+</span></span><span class=line><span class=cl><span class=n>layout</span> <span class=p>(</span><span class=n>location</span> <span class=o>=</span> <span class=mo>0</span><span class=p>)</span> <span class=k>in</span> <span class=k>vec3</span> <span class=n>aPosition</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=n>layout</span> <span class=p>(</span><span class=n>location</span> <span class=o>=</span> <span class=mi>1</span><span class=p>)</span> <span class=k>in</span> <span class=k>vec4</span> <span class=n>aColor</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>out</span> <span class=k>vec4</span> <span class=n>vColor</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>void</span> <span class=n>main</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>gl_Position</span> <span class=o>=</span> <span class=k>vec4</span><span class=p>(</span><span class=n>aPosition</span><span class=p>,</span> <span class=mi>1</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>vColor</span> <span class=o>=</span> <span class=n>aColor</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h1 id=片元着色器>片元着色器</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-glsl data-lang=glsl><span class=line><span class=cl><span class=cp>#version 300 es</span>
+</span></span><span class=line><span class=cl><span class=k>precision</span> <span class=k>mediump</span> <span class=k>float</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>in</span>  <span class=k>vec4</span> <span class=n>vColor</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>out</span> <span class=k>vec4</span> <span class=n>fragColor</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>void</span> <span class=n>main</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>fragColor</span> <span class=o>=</span> <span class=n>vColor</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>OpenGL ES 3.x相比于2.x，shader脚本有一些变化：</p><ol><li>3.x中新增了 in，out 关键字，用来取代 attribute 和 varying 关键字;</li><li>3.x中可以直接使用 layout 对指定位置的变量赋值，这样就不需要使用 glGetAttribLocation 类似的函数再去获取位置了;</li><li>gl_FragColor 和 gl_FragData 删除了，片段着色器可以使用 out 声明字段输出。</li></ol><h1 id=顶点数据>顶点数据</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>val</span> <span class=py>vertices</span> <span class=p>=</span> <span class=n>floatArrayOf</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=p>-</span><span class=m>0.5f</span><span class=p>,</span> <span class=p>-</span><span class=m>0.5f</span><span class=p>,</span> <span class=m>0.0f</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=m>0.5f</span><span class=p>,</span> <span class=p>-</span><span class=m>0.5f</span><span class=p>,</span> <span class=m>0.0f</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=m>0.0f</span><span class=p>,</span> <span class=m>0.5f</span><span class=p>,</span> <span class=m>0.0f</span><span class=p>,</span>
+</span></span><span class=line><span class=cl><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=k>val</span> <span class=py>vbb</span> <span class=p>=</span> <span class=nc>ByteBuffer</span><span class=p>.</span><span class=n>allocateDirect</span><span class=p>(</span><span class=n>vertices</span><span class=p>.</span><span class=n>size</span> <span class=p>*</span> <span class=m>4</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>vbb</span><span class=p>.</span><span class=n>order</span><span class=p>(</span><span class=nc>ByteOrder</span><span class=p>.</span><span class=n>nativeOrder</span><span class=p>())</span>
+</span></span><span class=line><span class=cl><span class=n>vertexBuffer</span> <span class=p>=</span> <span class=n>vbb</span><span class=p>.</span><span class=n>asFloatBuffer</span><span class=p>()</span>
+</span></span><span class=line><span class=cl><span class=n>vertexBuffer</span><span class=p>.</span><span class=n>put</span><span class=p>(</span><span class=n>vertices</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>vertexBuffer</span><span class=p>.</span><span class=n>position</span><span class=p>(</span><span class=m>0</span><span class=p>)</span>
+</span></span></code></pre></td></tr></table></div></div><h1 id=颜色数据>颜色数据</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>val</span> <span class=py>colors</span> <span class=p>=</span> <span class=n>floatArrayOf</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=m>1f</span><span class=p>,</span> <span class=m>0f</span><span class=p>,</span> <span class=m>0f</span><span class=p>,</span> <span class=m>1f</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=m>0f</span><span class=p>,</span> <span class=m>1f</span><span class=p>,</span> <span class=m>0f</span><span class=p>,</span> <span class=m>1f</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=m>0f</span><span class=p>,</span> <span class=m>0f</span><span class=p>,</span> <span class=m>1f</span><span class=p>,</span> <span class=m>1f</span>
+</span></span><span class=line><span class=cl><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=k>val</span> <span class=py>cbb</span> <span class=p>=</span> <span class=nc>ByteBuffer</span><span class=p>.</span><span class=n>allocateDirect</span><span class=p>(</span><span class=n>colors</span><span class=p>.</span><span class=n>size</span> <span class=p>*</span> <span class=m>4</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>cbb</span><span class=p>.</span><span class=n>order</span><span class=p>(</span><span class=nc>ByteOrder</span><span class=p>.</span><span class=n>nativeOrder</span><span class=p>())</span>
+</span></span><span class=line><span class=cl><span class=n>colorBuffer</span> <span class=p>=</span> <span class=n>cbb</span><span class=p>.</span><span class=n>asFloatBuffer</span><span class=p>()</span>
+</span></span><span class=line><span class=cl><span class=n>colorBuffer</span><span class=p>.</span><span class=n>put</span><span class=p>(</span><span class=n>colors</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>colorBuffer</span><span class=p>.</span><span class=n>position</span><span class=p>(</span><span class=m>0</span><span class=p>)</span>
+</span></span></code></pre></td></tr></table></div></div><h1 id=绘制>绘制</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glUseProgram</span><span class=p>(</span><span class=n>program</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glVertexAttribPointer</span><span class=p>(</span><span class=m>0</span><span class=p>,</span> <span class=m>3</span><span class=p>,</span> <span class=n>GLES30</span><span class=p>.</span><span class=n>GL_FLOAT</span><span class=p>,</span> <span class=k>false</span><span class=p>,</span> <span class=m>0</span><span class=p>,</span> <span class=n>vertexBuffer</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glVertexAttribPointer</span><span class=p>(</span><span class=m>1</span><span class=p>,</span> <span class=m>4</span><span class=p>,</span> <span class=n>GLES30</span><span class=p>.</span><span class=n>GL_FLOAT</span><span class=p>,</span> <span class=k>false</span><span class=p>,</span> <span class=m>0</span><span class=p>,</span> <span class=n>colorBuffer</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glEnableVertexAttribArray</span><span class=p>(</span><span class=m>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glEnableVertexAttribArray</span><span class=p>(</span><span class=m>1</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glDrawArrays</span><span class=p>(</span><span class=n>GLES30</span><span class=p>.</span><span class=n>GL_TRIANGLES</span><span class=p>,</span> <span class=m>0</span><span class=p>,</span> <span class=m>3</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glDisableVertexAttribArray</span><span class=p>(</span><span class=m>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glDisableVertexAttribArray</span><span class=p>(</span><span class=m>1</span><span class=p>)</span>
+</span></span></code></pre></td></tr></table></div></div><h1 id=效果>效果</h1><p><img src=/images/20210519/1.webp alt></p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn></span></span>
+<time>May 19, 2021</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2021020701/ title=关于extractNativeLibs默认值的调研>关于extractNativeLibs默认值的调研</a>
+<a class="basic-alignment right" href=/posts/2021052001/ title="OpenGL ES 3.x 实战系列 纹理映射">OpenGL ES 3.x 实战系列 纹理映射</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><p></p></section><ul class=sidebar-nav><li class=sidebar-nav-item></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2023 - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
