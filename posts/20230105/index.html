@@ -1,0 +1,172 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>x86系统最简单的bootloader引导扇区</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.111.3"></head><body><header role=banner><hgroup><h1><a href=/>Ting's Blog</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Jan 5, 2023
+- 3 minute read</p><h1 class=entry-title>x86系统最简单的bootloader引导扇区</h1></header><div class=entry-content><h1 id=x86启动过程>X86启动过程</h1><p>x86的计算机启动时，BIOS检测到启动设备的第一个扇区如果是以0x55aa结尾，那么就会将第一个扇区加载到内存0x7c00处，并跳转到这个地方执行。具体的流程网上资料很多，不再赘述。</p><p>我们主要是来看一下如何写一个简单的引导程序。</p><h1 id=最简单的启动引导程序>最简单的启动引导程序</h1><p>我们使用AT&amp;T汇编语法，代码文件命名为boot.s，具体代码如下</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-asm data-lang=asm><span class=line><span class=cl>    <span class=na>.code16</span>
+</span></span><span class=line><span class=cl>    <span class=na>.global</span> <span class=no>_start</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nl>_start:</span>
+</span></span><span class=line><span class=cl>    <span class=nf>jmp</span> <span class=no>_start</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=err>.</span> <span class=err>=</span> <span class=err>510</span>
+</span></span><span class=line><span class=cl>    <span class=na>.word</span> <span class=mi>0xaa55</span>
+</span></span></code></pre></td></tr></table></div></div><ol><li>由于开机后系统运行在16位实模式下，所以我们使用<code>.code16</code>声明；</li><li><code>. = 510</code>是填充到510字节，加上 <code>.word</code> 声明的2个字节，所以我们的程序一共是512个字节，正好占一个扇区大小，也可以使用代码 <code>.fill 510-(.-init), 1, 0</code> ，是一样的效果；</li><li>程序的功能就是死循环</li></ol><h1 id=编译运行>编译运行</h1><p>使用正常的as和ld编译成的目标文件是elf格式，而我们现在的系统还没有任何操作系统，无法加载这样的elf格式，所以我们需要编译生成一个512字节的纯二进制文件目标文件。</p><p>有两种处理方式</p><ol><li>正常编译出elf文件，然后使用objcopy提取出二进制目标文件</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-shell data-lang=shell><span class=line><span class=cl>as -o boot.o boot.s
+</span></span><span class=line><span class=cl>ld -o boot boot.o
+</span></span><span class=line><span class=cl>objcopy -O binary boot
+</span></span></code></pre></td></tr></table></div></div><ol start=2><li>使用ld的&ndash;oformat=binary编译选项，直接编译出二进制目标文件</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-shell data-lang=shell><span class=line><span class=cl>as -o boot.o boot.s
+</span></span><span class=line><span class=cl>ld -o boot --oformat<span class=o>=</span>binary boot.o
+</span></span></code></pre></td></tr></table></div></div><p>使用<code>qemu模拟器</code>运行</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>qemu-system-i386 -boot a -fda bootsect
+</span></span></code></pre></td></tr></table></div></div><p><img src=/images/20230105/1.png alt></p><h1 id=mac环境下运行的一些问题>mac环境下运行的一些问题</h1><ol><li>在mac环境下运行qemu需要加上<code>-nographic</code></li><li>mac自带的ld工具不能使用，需要安装<code>i686-elf-binutils</code>工具链</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-shell data-lang=shell><span class=line><span class=cl>brew install i686-elf-binutils
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>i686-elf-as -o boot.o boot.s
+</span></span><span class=line><span class=cl>i686-elf-ld -o boot --oformat<span class=o>=</span>binary boot.o
+</span></span></code></pre></td></tr></table></div></div><h1 id=在屏幕上输出一行文字>在屏幕上输出一行文字</h1><p>使用0x10中断可以在屏幕上输出一行文字，具体原理也不讲了，网上文章很多，直接给出代码</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-asm data-lang=asm><span class=line><span class=cl>    <span class=na>.code16</span>
+</span></span><span class=line><span class=cl>    <span class=na>.global</span> <span class=no>_start</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nl>_start:</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=nv>%cs</span><span class=p>,</span> <span class=nv>%ax</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=nv>%ax</span><span class=p>,</span> <span class=nv>%ds</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=nv>%ax</span><span class=p>,</span> <span class=nv>%es</span>
+</span></span><span class=line><span class=cl>    <span class=nf>call</span> <span class=no>_print</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nl>_loop:</span>
+</span></span><span class=line><span class=cl>    <span class=nf>jmp</span> <span class=no>_loop</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nl>_print:</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span> <span class=no>$0x03</span><span class=p>,</span> <span class=nv>%ah</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span> <span class=no>$0</span><span class=p>,</span> <span class=nv>%bh</span>
+</span></span><span class=line><span class=cl>    <span class=nf>int</span> <span class=no>$0x10</span>  <span class=c1># 读取当前光标位置，调用完成光标位置保存在dh和dl寄存器中
+</span></span></span><span class=line><span class=cl><span class=c1></span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=no>$msg</span><span class=p>,</span> <span class=nv>%bp</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=no>$12</span><span class=p>,</span> <span class=nv>%cx</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=no>$0x01301</span><span class=p>,</span> <span class=nv>%ax</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=no>$0x000c</span><span class=p>,</span> <span class=nv>%bx</span>
+</span></span><span class=line><span class=cl>    <span class=nf>int</span>	<span class=no>$0x10</span>  <span class=c1># 输出字符串
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=nf>ret</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nl>msg:</span>
+</span></span><span class=line><span class=cl>    <span class=na>.asciz</span> <span class=s>&#34;Hello world!&#34;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=err>.</span> <span class=err>=</span> <span class=err>510</span>
+</span></span><span class=line><span class=cl>    <span class=na>.word</span> <span class=mi>0xaa55</span>
+</span></span></code></pre></td></tr></table></div></div><p>需要注意的是，此时编译会报错</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>boot.o: in <span class=k>function</span> <span class=sb>`</span>_start<span class=s1>&#39;:
+</span></span></span><span class=line><span class=cl><span class=s1>(.text+0x1): relocation truncated to fit: R_X86_64_16 against `.text&#39;</span>+f
+</span></span></code></pre></td></tr></table></div></div><p>链接的时候需要加上 <code>-Ttext 0x7c00</code> 选项</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>as -o boot.o boot.s
+</span></span><span class=line><span class=cl>ld -o boot --oformat<span class=o>=</span>binary -Ttext 0x7c00 boot.o
+</span></span></code></pre></td></tr></table></div></div><h1 id=运行效果>运行效果</h1><p><img src=/images/20230105/2.png alt></p><p>至此我们就完成了一个非常简单的x86的bootloader，可以开始我们的操作系统之旅了。</p><h1 id=关于-ttext的说明>关于-Ttext的说明</h1><p>系统加载bootloader后，跳转到0x7c00内存地址执行，此时CS寄存器为0x0000，IP寄存器为0x7c00，所以默认情况下我们链接的时候需要使用 <code>-Ttext 0x7c00</code> 参数将代码段设置为从0x7c00开始。</p><p>当然还有一种做法是使用 <code>-Ttext 0</code> 参数将代码段设置为从0x0000开始，但是此时在bootloader程序中，我们需要手动设置cs寄存器的值为0x07c0，设置ip寄存器的值为0x0000，使用ljmp即可，即在最开始跳转一下。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-asm data-lang=asm><span class=line><span class=cl>    <span class=na>.code16</span>
+</span></span><span class=line><span class=cl>    <span class=na>.global</span> <span class=no>_start</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1># 新增ljmp
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=nf>ljmp</span> <span class=no>$0x07c0</span><span class=p>,</span> <span class=no>$_start</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nl>_start:</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=nv>%cs</span><span class=p>,</span> <span class=nv>%ax</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=nv>%ax</span><span class=p>,</span> <span class=nv>%ds</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=nv>%ax</span><span class=p>,</span> <span class=nv>%es</span>
+</span></span><span class=line><span class=cl>    <span class=nf>call</span> <span class=no>_print</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nl>_loop:</span>
+</span></span><span class=line><span class=cl>    <span class=nf>jmp</span> <span class=no>_loop</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nl>_print:</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span> <span class=no>$0x03</span><span class=p>,</span> <span class=nv>%ah</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span> <span class=no>$0</span><span class=p>,</span> <span class=nv>%bh</span>
+</span></span><span class=line><span class=cl>    <span class=nf>int</span> <span class=no>$0x10</span>  <span class=c1># 读取当前光标位置，调用完成光标位置保存在dh和dl寄存器中
+</span></span></span><span class=line><span class=cl><span class=c1></span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=no>$msg</span><span class=p>,</span> <span class=nv>%bp</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=no>$12</span><span class=p>,</span> <span class=nv>%cx</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=no>$0x01301</span><span class=p>,</span> <span class=nv>%ax</span>
+</span></span><span class=line><span class=cl>    <span class=nf>mov</span>	<span class=no>$0x000c</span><span class=p>,</span> <span class=nv>%bx</span>
+</span></span><span class=line><span class=cl>    <span class=nf>int</span>	<span class=no>$0x10</span>  <span class=c1># 输出字符串
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=nf>ret</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nl>msg:</span>
+</span></span><span class=line><span class=cl>    <span class=na>.asciz</span> <span class=s>&#34;Hello world!&#34;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=err>.</span> <span class=err>=</span> <span class=err>510</span>
+</span></span><span class=line><span class=cl>    <span class=na>.word</span> <span class=mi>0xaa55</span>
+</span></span></code></pre></td></tr></table></div></div><h1 id=代码示例>代码示例</h1><p><a href=https://gitlab.com/bitristan/os-tutorial target=_blank rel=noopener>https://gitlab.com/bitristan/os-tutorial</a></p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span>
+<time>Jan 5, 2023</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2022032601/ title=安卓使用prefab特性在AAR中导出和导入原生so依赖>安卓使用prefab特性在AAR中导出和导入原生so依赖</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2023 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
