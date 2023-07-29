@@ -1,0 +1,165 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>nginx搭建rtmp推拉流服务器</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.115.4"></head><body><header role=banner><hgroup><h1><a href=/>Ting's Blog</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Jul 29, 2023
+- 3 minute read</p><h1 class=entry-title>nginx搭建rtmp推拉流服务器</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>使用nginx搭建rtmp/hls/http-flv推拉流服务。
+环境: Debian bullseye。</p><h1 id=nginx安装>nginx安装</h1><p>1.下载 nginx，nginx-http-flv-module 到同一路径下，由于 http-flv-module 支持 http-flv/rtmp/hls，所以只需要添加这一个模块就行了</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>git clone https://github.com/nginx/nginx
+</span></span><span class=line><span class=cl>git clone https://github.com/winshining/nginx-http-flv-module
+</span></span></code></pre></td></tr></table></div></div><p>2.开始编译</p><p>注意这里有个小区别: 从github上clone的版本，configure文件在auto目录下，从nginx官网下载的包configure文件在根目录下</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=nb>cd</span> nginx
+</span></span><span class=line><span class=cl>./auto/configure --with-http_ssl_module --add-module<span class=o>=</span>../nginx-http-flv-module
+</span></span><span class=line><span class=cl><span class=c1># 执行configure完成后，可以在终端看到nginx的安装路径以及其他一些参数，也可以使用--prefix修改路径，我们保持默认</span>
+</span></span><span class=line><span class=cl>make
+</span></span><span class=line><span class=cl>sudo make install
+</span></span></code></pre></td></tr></table></div></div><p>3.启动</p><p>安装完成后，nginx默认安装在: /usr/local/nginx/</p><p>nginx命令路径: /usr/local/nginx/sbin/nginx</p><p>nginx配置文件路径: /usr/local/nginx/conf/nginx.conf</p><p>修改 nginx.conf，端口号改为 8080 (默认为80，不改也可以，不过我本机安装了apache2，80端口被占用了)</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>sudo /usr/local/nginx/sbin/nginx
+</span></span></code></pre></td></tr></table></div></div><p>4.访问 localhost:8080，可以看到 nginx 的欢迎页面</p><h1 id=配置-rtmp-推拉流>配置 rtmp 推拉流</h1><ol><li>修改nginx配置，增加如下内容</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>rtmp {
+</span></span><span class=line><span class=cl>    server {
+</span></span><span class=line><span class=cl>        listen 1935;
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>        # 点播配置
+</span></span><span class=line><span class=cl>        application vod {
+</span></span><span class=line><span class=cl>            play /var/vod;   # 点播的视频文件存放目录
+</span></span><span class=line><span class=cl>        }
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>        # 直播配置
+</span></span><span class=line><span class=cl>        application live {
+</span></span><span class=line><span class=cl>            live on;
+</span></span><span class=line><span class=cl>        }
+</span></span><span class=line><span class=cl>    }
+</span></span><span class=line><span class=cl>}
+</span></span></code></pre></td></tr></table></div></div><ol start=2><li><p>在 /var/vod 目录下放一个视频文件 sample.flv，可以从
+<a href="https://www.tootootool.com/?p=275" target=_blank rel=noopener>https://www.tootootool.com/?p=275</a> 下载一个测试文件</p></li><li><p>使用 ffplay 测试点播</p></li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>ffplay rtmp://localhost/vod/sample.flv
+</span></span></code></pre></td></tr></table></div></div><ol start=4><li>使用 ffmpeg 推流</li></ol><p>推流的地址为 rtmp://localhost/live/1，其中live对应nginx配置中的application，1为stream名称，可以为任意值，拉流的地址也要对应。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>ffmpeg -re -i sample.flv -vcodec copy -acodec copy -f flv rtmp://localhost/live/1
+</span></span></code></pre></td></tr></table></div></div><ol start=5><li>使用 ffplay 拉流</li></ol><p>对应第4步中的stream名为1的拉流地址为: rtmp://localhost/live/1，直接使用 ffplay 播放即可</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>ffplay rtmp://localhost/live/1
+</span></span></code></pre></td></tr></table></div></div><h1 id=配置-rtmp-统计>配置 rtmp 统计</h1><p>可以在 nginx 中配置 rtmp 统计</p><ol><li>在nginx配置的http模块中增加stat的配置</li></ol><p>注意我们使用的是 nginx-http-flv-module，如果使用的是nginx-rtmp-module或者其他支持rtmp的模块，配置方法可能是不一样的。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>http {
+</span></span><span class=line><span class=cl>    server {
+</span></span><span class=line><span class=cl>        listen 8080;  # HTTP服务器监听的端口
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>        location /stat {
+</span></span><span class=line><span class=cl>            rtmp_stat all;
+</span></span><span class=line><span class=cl>            rtmp_stat_stylesheet stat.xsl;
+</span></span><span class=line><span class=cl>        }
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>        location /stat.xsl {
+</span></span><span class=line><span class=cl>            root html;
+</span></span><span class=line><span class=cl>        }
+</span></span><span class=line><span class=cl>    }
+</span></span><span class=line><span class=cl>}
+</span></span></code></pre></td></tr></table></div></div><ol start=2><li>需要拷贝 nginx-http-flv-module 源码中的 stats.xsl 到 nginx 的 html 目录中</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>sudo cp nginx-http-flv-module/stats.xsl /usr/local/nginx/html/
+</span></span></code></pre></td></tr></table></div></div><ol start=3><li>重启nginx服务，然后可以通过 http://localhost:8080/stat 来查看rtmp服务器的统计信息</li></ol><h1 id=配置-hls-拉流支持>配置 hls 拉流支持</h1><p>rtmp只能在支持rtmp的播放器上观看，hls基于http协议，支持hls后，我们就能直接通过浏览器观看直播了。</p><ol><li>nginx配置文件中rtmp模块开启hls支持</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>rtmp {
+</span></span><span class=line><span class=cl>    server {
+</span></span><span class=line><span class=cl>        listen 1935;
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>        # 点播配置
+</span></span><span class=line><span class=cl>        application vod {
+</span></span><span class=line><span class=cl>            play /var/vod;   # 点播的视频文件存放目录
+</span></span><span class=line><span class=cl>        }
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>        # 直播配置
+</span></span><span class=line><span class=cl>        application live {
+</span></span><span class=line><span class=cl>            live on;
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>            hls on;
+</span></span><span class=line><span class=cl>            hls_path /var/hls;
+</span></span><span class=line><span class=cl>            hls_fragment 10s;
+</span></span><span class=line><span class=cl>            hls_playlist_length 30s;
+</span></span><span class=line><span class=cl>        }
+</span></span><span class=line><span class=cl>    }
+</span></span><span class=line><span class=cl>}
+</span></span></code></pre></td></tr></table></div></div><ol start=2><li>nginx配置文件的http模块中配置hls切块的访问路径</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>http {
+</span></span><span class=line><span class=cl>    server {
+</span></span><span class=line><span class=cl>        listen 8080;
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>        location /hls {
+</span></span><span class=line><span class=cl>            alias /var/hls;
+</span></span><span class=line><span class=cl>            types {
+</span></span><span class=line><span class=cl>                application/vnd.apple.mpegurl m3u8;
+</span></span><span class=line><span class=cl>                video/mp2t ts;
+</span></span><span class=line><span class=cl>            }
+</span></span><span class=line><span class=cl>            add_header Cache-Control no-cache;
+</span></span><span class=line><span class=cl>        }
+</span></span><span class=line><span class=cl>    }
+</span></span><span class=line><span class=cl>}
+</span></span></code></pre></td></tr></table></div></div><ol start=3><li>推拉流测试</li></ol><p>推流地址: rtmp://localhost/live/1</p><p>拉流地址: http://localhost:8080/hls/1.m3u8</p><p>我找了一个mkv的测试视频来测试，下载链接:
+<a href="https://pan.baidu.com/s/1ln1S_HnAYaMCtLDIhTq6rg?pwd=ye8i" target=_blank rel=noopener>https://pan.baidu.com/s/1ln1S_HnAYaMCtLDIhTq6rg?pwd=ye8i</a> 提取码: ye8i</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>ffmpeg -re -i 6.mkv -c:v copy -c:a aac -ar 44100 -ac 2 -f flv rtmp://localhost/live/1
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>ffplay http://localhost:8080/hls/1.m3u8
+</span></span></code></pre></td></tr></table></div></div><p>执行推流之后，需要过一段时间才会在 /var/hls 目录下生成 1.m3u8 文件，此时才能播放，如果在此之前执行ffplay播放命令，会出现 Not Found 的错误。</p><p>这是因为我们配置的 hls_fragment 为10s，也就是nginx生成了第一个分段后，才能生成索引文件。</p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span>
+<time>Jul 29, 2023</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/20230105/ title=x86系统最简单的bootloader引导扇区>x86系统最简单的bootloader引导扇区</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2023 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
