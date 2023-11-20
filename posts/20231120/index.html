@@ -1,0 +1,77 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>搭建linux2.6.26内核编译调试环境</title>
+<link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.120.4"></head><body><header role=banner><hgroup><h1><a href=/>Ting's Blog</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Nov 19, 2023
+- 2 minute read</p><h1 class=entry-title>搭建linux2.6.26内核编译调试环境</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>关于linux内核的基本经典书籍都是基于linux 2.4或者2.6版本，为了更好的阅读我们需要搭建一个老版本的linux内核调试环境。
+本文以linux 2.6.26版本的内核为例，介绍如何使用docker搭建一个适用于mac/linux的linux内核32位i386编译调试环境。
+其他版本的内核都可以用类似方式搭建，关键是要选择一个合适的基础镜像，例如linux 2.6.26版本用ubuntu14.04编译更为合适。</p><h1 id=运行ubuntu-1404>运行ubuntu 14.04</h1><p>docker的基本使用不赘述，首先我们拉取ubuntu 14.04 i386镜像，并创建相应的容器运行起来</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>docker pull i386/ubuntu:14.04
+</span></span><span class=line><span class=cl>docker run --name ubuntu -itd i386/ubuntu:14.04 /bin/bash
+</span></span><span class=line><span class=cl>docker <span class=nb>exec</span> -it ubuntu /bin/bash
+</span></span></code></pre></td></tr></table></div></div><h1 id=安装编译调试需要的工具>安装编译调试需要的工具</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>apt-get install -y build-essential
+</span></span><span class=line><span class=cl>apt-get install -y libncurses5-dev
+</span></span><span class=line><span class=cl>apt-get install -y git
+</span></span><span class=line><span class=cl>apt-get install -y qemu
+</span></span><span class=line><span class=cl>apt-get install -y gdb
+</span></span></code></pre></td></tr></table></div></div><h1 id=下载linux2626源代码>下载linux2.6.26源代码</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>git clone --branch v2.6.26 --depth <span class=m>1</span> https://github.com/torvalds/linux /home/linux
+</span></span></code></pre></td></tr></table></div></div><h1 id=修复源码编译错误>修复源码编译错误</h1><p>直接编译linux内核代码会报错，需要做
+<a href=https://github.com/bitristan/docker-linux-2.6.26-build/blob/main/fix.patch target=_blank rel=noopener>几处改动</a>
+下载上述文件，使用 <code>git apply</code> 打上补丁就行了。</p><h1 id=编译内核>编译内核</h1><p>由于docker容器共享宿主系统的架构，而我们希望编译i386的内核，所以编译的时候需要指定 <code>ARCH=i386</code>。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>make <span class=nv>ARCH</span><span class=o>=</span>i386 defconfig
+</span></span><span class=line><span class=cl><span class=c1># 如有需要可自定义配置</span>
+</span></span><span class=line><span class=cl>make <span class=nv>ARCH</span><span class=o>=</span>i386 meneconfig
+</span></span><span class=line><span class=cl>make <span class=nv>ARCH</span><span class=o>=</span>i386 <span class=nv>V</span><span class=o>=</span><span class=m>1</span>
+</span></span></code></pre></td></tr></table></div></div><p>等待一段时间，编译成功后会看到两个输出文件:</p><ul><li>vmlinux: 包含所有内核代码的elf文件，可用于调试内核</li><li>bzImage: 可用于引导的内核二进制文件</li></ul><h1 id=制作根文件系统>制作根文件系统</h1><p>其实这样就可以开启调试linux内核了，只是内核运行起来后，由于没有设置根文件系统，也没有指定init程序，内核跑起来后无法创建init进程。
+有很多工具可以用来制作根文件系统，例如busybox, buildroot等，当前我们采用最简单的一种方式，自己创建一个可执行的init文件，然后使用cpio打包一个最小的initrd。</p><p>先创建一个简单的init可执行文件，源代码</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#include</span> <span class=cpf>&lt;stdio.h&gt;</span><span class=cp>
+</span></span></span><span class=line><span class=cl><span class=cp>#include</span> <span class=cpf>&lt;unistd.h&gt;</span><span class=cp>
+</span></span></span><span class=line><span class=cl><span class=cp></span>
+</span></span><span class=line><span class=cl><span class=kt>int</span> <span class=nf>main</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=k>while</span> <span class=p>(</span><span class=mi>1</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nf>printf</span><span class=p>(</span><span class=s>&#34;hello, I&#39;m init</span><span class=se>\n</span><span class=s>&#34;</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=nf>sleep</span><span class=p>(</span><span class=mi>1</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>编译成init可执行文件</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>gcc -static -o init init.c
+</span></span></code></pre></td></tr></table></div></div><p>创建系统启动必要的设备文件，使用cpio打包成initrd压缩文件</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>mkdir rootfs
+</span></span><span class=line><span class=cl>cp init rootfs
+</span></span><span class=line><span class=cl><span class=nb>cd</span> rootfs
+</span></span><span class=line><span class=cl>mkdir dev
+</span></span><span class=line><span class=cl>mknod dev/console c <span class=m>5</span> <span class=m>1</span>
+</span></span><span class=line><span class=cl>mknod dev/ram b <span class=m>1</span> <span class=m>0</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>find . <span class=p>|</span> cpio -o -H newc <span class=p>|</span> gzip &gt; ../myinitrd.img
+</span></span></code></pre></td></tr></table></div></div><h1 id=使用qemu运行内核>使用qemu运行内核</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>qemu-system-i386 -kernel /home/linux/arch/x86/boot/bzImage -initrd /home/initrd/myinitrd.img -append <span class=s2>&#34;root=/dev/ram init=/init console=ttyS0&#34;</span> -nographic
+</span></span></code></pre></td></tr></table></div></div><p>可以看到内核运行起来后，会执行init程序，每1s会输出一句hello</p><h1 id=将上述流程打包成docker镜像>将上述流程打包成Docker镜像</h1><p>完整的
+<a href=https://github.com/bitristan/docker-linux-2.6.26-build/blob/main/Dockerfile target=_blank rel=noopener>DockerFile</a></p><h1 id=源码>源码</h1><p><a href=https://github.com/bitristan/docker-linux-2.6.26-build target=_blank rel=noopener>docker-linux-2.6.26-build</a></p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span>
+<time>Nov 19, 2023</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/20230729/ title=nginx搭建rtmp推拉流服务器>nginx搭建rtmp推拉流服务器</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2023 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
