@@ -4,14 +4,14 @@
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>brew install qemu
-</span></span><span class=line><span class=cl>brew install riscv64-elf-gcc 
+</span></span><span class=line><span class=cl>brew install riscv64-elf-gcc
 </span></span><span class=line><span class=cl>brew install riscv64-elf-gdb
 </span></span></code></pre></td></tr></table></div></div><h2 id=linux>linux</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>apt install gcc-riscv64-linux-gnu
-</span></span><span class=line><span class=cl>apt install binutils-riscv64-linux-gnu
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>apt install gcc-riscv64-unknown-elf
+</span></span><span class=line><span class=cl>apt install binutils-riscv64-unknown-elf
 </span></span><span class=line><span class=cl>apt install gdb-multiarch
 </span></span><span class=line><span class=cl>apt install qemu-system-misc
 </span></span></code></pre></td></tr></table></div></div><h1 id=启动程序>启动程序</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
@@ -82,7 +82,7 @@
 </span></span><span class=line><span class=cl>riscv64-elf-gcc -g -c -ffreestanding -mcmodel<span class=o>=</span>medany -o uart.o uart.c
 </span></span><span class=line><span class=cl>riscv64-elf-gcc -g -c -ffreestanding -mcmodel<span class=o>=</span>medany -o kernel.o kernel.c
 </span></span><span class=line><span class=cl>riscv64-elf-ld -Ttext<span class=o>=</span>0x80000000 -o os.elf boot.o uart.o kernel.o
-</span></span></code></pre></td></tr></table></div></div><p>上述是mac下的编译，linux下使用的编译工具名称有所不同。</p><p>注意-mcmodel参数非常重要，我们编译的是64位程序，链接地址为0x80000000，超出了2G的范围，默认-mcmodel参数为medlow，使用默认参数的话链接时会报错。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></span></code></pre></td></tr></table></div></div><p>上述是mac下的编译，linux下使用的编译工具前缀为riscv64-unknown-elf-。</p><p>注意-mcmodel参数非常重要，我们编译的是64位程序，链接地址为0x80000000，超出了2G的范围，默认-mcmodel参数为medlow，使用默认参数的话链接时会报错。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
@@ -92,8 +92,7 @@
 </span></span><span class=line><span class=cl>uart.o: in <span class=k>function</span> <span class=sb>`</span>uart_init<span class=s1>&#39;:
 </span></span></span><span class=line><span class=cl><span class=s1>uart.c:(.text+0x98): relocation truncated to fit: R_RISCV_HI20 against `uart16550_clock&#39;</span>
 </span></span><span class=line><span class=cl>make: *** <span class=o>[</span>os.elf<span class=o>]</span> Error <span class=m>1</span>
-</span></span></code></pre></td></tr></table></div></div><p>关于medlow和medany的区别，具体可阅读如下几篇文章:</p><ul><li><a href=https://www.jianshu.com/p/895034767f21 target=_blank rel=noopener>为什么 xv6-riscv 编译的时候需要 -mcmodel=medany</a></li><li><a href=https://www.sifive.com/blog/all-aboard-part-4-risc-v-code-models target=_blank rel=noopener>The RISC-V Code Models</a></li><li><a href=https://blog.csdn.net/zoomdy/article/details/100699108 target=_blank rel=noopener>RISC-V：-mcmodel=medlow vs -mcmodel=medany</a></li></ul><p>有一个存疑的问题: 在linux上使用riscv64-linux-gnu-gcc编译，不管参数设置为medlow还是medany，都能成功编译运行。
-但是在mac上使用riscv64-elf-gcc编译，必须设置为medany，否则链接报错。</p><h1 id=运行>运行</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></span></code></pre></td></tr></table></div></div><p>关于medlow和medany的区别，具体可阅读如下几篇文章:</p><ul><li><a href=https://www.jianshu.com/p/895034767f21 target=_blank rel=noopener>为什么 xv6-riscv 编译的时候需要 -mcmodel=medany</a></li><li><a href=https://www.sifive.com/blog/all-aboard-part-4-risc-v-code-models target=_blank rel=noopener>The RISC-V Code Models</a></li><li><a href=https://blog.csdn.net/zoomdy/article/details/100699108 target=_blank rel=noopener>RISC-V：-mcmodel=medlow vs -mcmodel=medany</a></li></ul><h1 id=运行>运行</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>qemu-system-riscv64 -nographic -M virt -smp <span class=m>1</span> -bios none -kernel os.elf
 </span></span></code></pre></td></tr></table></div></div><p><img src=/images/20240410/1.png alt=效果></p><p>这里我们指定1个核心，RISC-V中每个核心称之为HART，如果有多个HART的话，每个HART都会在0x80000000处执行boot.s中的逻辑，我们需要获取HART ID做相应的处理，文本不继续拓展。</p><p>使用 Ctrl-a x 可以退出。</p><h1 id=调试>调试</h1><p>qemu提供了很方便的调试功能，执行的时候使用加上 -s -S 参数既可以进入调试模式，然后使用gdb可以连接进行调试。</p><p>在mac上使用riscv64-elf-gdb调试即可，在linux上需要使用gdb-multiarch</p><p>首先启动qemu进入调试模式</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>qemu-system-riscv64 -nographic -M virt -smp <span class=m>1</span> -bios none -kernel os.elf -s -S
