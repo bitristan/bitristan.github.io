@@ -1,18 +1,16 @@
 <!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>qemu运行riscv裸机程序</title>
 <link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.124.1"></head><body><header role=banner><hgroup><h1><a href=/>Ting's Blog</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Apr 10, 2024
-- 4 minute read</p><h1 class=entry-title>qemu运行riscv裸机程序</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>RISC-V，作为一种开源的指令集架构（ISA），因其简洁性和灵活性而受到广泛关注。本文将指导您如何在QEMU模拟器上运行一个基于RISC-V 64位架构的裸机程序，该程序的功能是输出经典的"Hello, RISC-V!&ldquo;消息。</p><h1 id=启动流程>启动流程</h1><p>QEMU是一个通用的开源机器模拟器和虚拟化器，它可以模拟多种处理器架构，包括x86、ARM、PowerPC、RISC-V等。VIRT机型是QEMU提供的一种虚拟硬件环境，它旨在为各种客户操作系统和裸机程序提供一个最小化且标准化的执行环境。我们将在QEMU上使用VIRT机型来启动。
-QEMU VIRT平台上电之后，RISC-V处理器首先进入机器模式(M-Mode)，这是RISC-V架构中权限最高的运行模式。此时处理器会自动跳转到一个预定义的启动地址开始执行代码。在VIRT平台上，这个预定义的启动地址是0x1000，此处存放的是ROM中的初始代码。
-ROM代码负责执行系统启动初期的一些基本设置，这包括设置初始的硬件状态和为后续的软件执行(包括SBI固件)配置环境。SBI固件通常由QEMU在启动时加载到预定的内存位置(通常为0x80000000)，ROM代码之后会跳转到这个位置开始执行SBI固件，SBI固件负责将系统从机器模式(M-Mode)切换到监督模式(S-Mode)，并继续启动过程，最终跳转到操作系统的入口点(通常为0x80200000)，交由实际的操作系统接管。</p><p>根据上述启动原理，我们只需要开发一个程序，将其链接地址设置为0x80000000，让QEMU启动这个程序就可以了，程序运行在M-Mode下，通过uart输出"Hello, RISC-V!&rdquo;.</p><h1 id=准备开发环境>准备开发环境</h1><h2 id=mac>mac</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+- 4 minute read</p><h1 class=entry-title>qemu运行riscv裸机程序</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>RISC-V，作为一种开源的指令集架构（ISA），因其简洁性和灵活性而受到广泛关注。</p><p>本文将指导您如何在QEMU模拟器上运行一个基于RISC-V 64位架构的裸机程序，该程序的功能是输出经典的"Hello, RISC-V!&ldquo;消息。</p><h1 id=启动流程>启动流程</h1><p>QEMU是一个通用的开源机器模拟器和虚拟化器，它可以模拟多种处理器架构，包括x86、ARM、PowerPC、RISC-V等。VIRT机型是QEMU提供的一种虚拟硬件环境，它旨在为各种客户操作系统和裸机程序提供一个最小化且标准化的执行环境。我们将在QEMU上使用VIRT机型来启动。</p><p>QEMU VIRT平台上电之后，RISC-V处理器首先进入机器模式(M-Mode)，这是RISC-V架构中权限最高的运行模式。此时处理器会自动跳转到一个预定义的启动地址开始执行代码。在VIRT平台上，这个预定义的启动地址是0x1000，此处存放的是ROM中的初始代码。</p><p>ROM代码负责执行系统启动初期的一些基本设置，这包括设置初始的硬件状态和为后续的软件执行(包括SBI固件)配置环境。SBI固件通常由QEMU在启动时加载到预定的内存位置(通常为0x80000000)，ROM代码之后会跳转到这个位置开始执行SBI固件，SBI固件负责将系统从机器模式(M-Mode)切换到监督模式(S-Mode)，并继续启动过程，最终跳转到操作系统的入口点(通常为0x80200000)，交由实际的操作系统接管。</p><p>根据上述启动原理，我们只需要开发一个程序，将其链接地址设置为0x80000000，让QEMU启动这个程序就可以了，程序运行在M-Mode下，通过uart输出"Hello, RISC-V!&rdquo;.</p><h1 id=准备开发环境>准备开发环境</h1><h2 id=mac>mac</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>brew install qemu
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>brew install qemu
 </span></span><span class=line><span class=cl>brew install riscv64-elf-gcc 
 </span></span><span class=line><span class=cl>brew install riscv64-elf-gdb
 </span></span></code></pre></td></tr></table></div></div><h2 id=linux>linux</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>apt install gcc-riscv64-linux-gnu
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>apt install gcc-riscv64-linux-gnu
 </span></span><span class=line><span class=cl>apt install binutils-riscv64-linux-gnu
 </span></span><span class=line><span class=cl>apt install gdb-multiarch
 </span></span><span class=line><span class=cl>apt install qemu-system-misc
@@ -36,26 +34,26 @@ ROM代码负责执行系统启动初期的一些基本设置，这包括设置�
 </span><span class=lnt>18
 </span><span class=lnt>19
 </span><span class=lnt>20
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>.section &#34;.text.boot&#34;
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-asm data-lang=asm><span class=line><span class=cl><span class=na>.section</span> <span class=s>&#34;.text.boot&#34;</span>
 </span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>.globl _start
-</span></span><span class=line><span class=cl>_start:
-</span></span><span class=line><span class=cl>        /* Mask all interrupts */
-</span></span><span class=line><span class=cl>        csrw sie, zero
+</span></span><span class=line><span class=cl><span class=na>.globl</span> <span class=no>_start</span>
+</span></span><span class=line><span class=cl><span class=nl>_start:</span>
+</span></span><span class=line><span class=cl>        <span class=cm>/* Mask all interrupts */</span>
+</span></span><span class=line><span class=cl>        <span class=nf>csrw</span> <span class=no>sie</span><span class=p>,</span> <span class=no>zero</span>
 </span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>        /* set stack size */
-</span></span><span class=line><span class=cl>        la sp, stack_start
-</span></span><span class=line><span class=cl>        li t0, 4096
-</span></span><span class=line><span class=cl>        add sp, sp, t0
+</span></span><span class=line><span class=cl>        <span class=cm>/* set stack size */</span>
+</span></span><span class=line><span class=cl>        <span class=nf>la</span> <span class=no>sp</span><span class=p>,</span> <span class=no>stack_start</span>
+</span></span><span class=line><span class=cl>        <span class=nf>li</span> <span class=no>t0</span><span class=p>,</span> <span class=mi>4096</span>
+</span></span><span class=line><span class=cl>        <span class=nf>add</span> <span class=no>sp</span><span class=p>,</span> <span class=no>sp</span><span class=p>,</span> <span class=no>t0</span>
 </span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>        /* goto main */
-</span></span><span class=line><span class=cl>        tail kernel_main
+</span></span><span class=line><span class=cl>        <span class=cm>/* goto main */</span>
+</span></span><span class=line><span class=cl>        <span class=nf>tail</span> <span class=no>kernel_main</span>
 </span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>.section .data
-</span></span><span class=line><span class=cl>.align  12
-</span></span><span class=line><span class=cl>.global stack_start
-</span></span><span class=line><span class=cl>stack_start:
-</span></span><span class=line><span class=cl>        .skip 4096
+</span></span><span class=line><span class=cl><span class=na>.section</span> <span class=no>.data</span>
+</span></span><span class=line><span class=cl><span class=na>.align</span>  <span class=mi>12</span>
+</span></span><span class=line><span class=cl><span class=na>.global</span> <span class=no>stack_start</span>
+</span></span><span class=line><span class=cl><span class=nl>stack_start:</span>
+</span></span><span class=line><span class=cl>        <span class=na>.skip</span> <span class=mi>4096</span>
 </span></span></code></pre></td></tr></table></div></div><p>代码含义比较明确，先禁止中断，然后设置堆栈，最后跳转到main程序入口</p><h1 id=主程序>主程序</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
@@ -66,42 +64,38 @@ ROM代码负责执行系统启动初期的一些基本设置，这包括设置�
 </span><span class=lnt> 8
 </span><span class=lnt> 9
 </span><span class=lnt>10
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>extern void uart_init(void);
-</span></span><span class=line><span class=cl>extern void uart_send_string(char *s);
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>extern</span> <span class=kt>void</span> <span class=nf>uart_init</span><span class=p>(</span><span class=kt>void</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=k>extern</span> <span class=kt>void</span> <span class=nf>uart_send_string</span><span class=p>(</span><span class=kt>char</span> <span class=o>*</span><span class=n>s</span><span class=p>);</span>
 </span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>void kernel_main(void)
-</span></span><span class=line><span class=cl>{
-</span></span><span class=line><span class=cl>        uart_init();
-</span></span><span class=line><span class=cl>        uart_send_string(&#34;Hello, RISC-V!\r\n&#34;);
+</span></span><span class=line><span class=cl><span class=kt>void</span> <span class=nf>kernel_main</span><span class=p>(</span><span class=kt>void</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=nf>uart_init</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>        <span class=nf>uart_send_string</span><span class=p>(</span><span class=s>&#34;Hello, RISC-V!</span><span class=se>\r\n</span><span class=s>&#34;</span><span class=p>);</span>
 </span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>        while (1) {};
-</span></span><span class=line><span class=cl>}
+</span></span><span class=line><span class=cl>        <span class=k>while</span> <span class=p>(</span><span class=mi>1</span><span class=p>)</span> <span class=p>{};</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
 </span></span></code></pre></td></tr></table></div></div><p>主程序先初始化uart，然后借助uart输出字符串，最后进入死循环。uart不是本文的重点，感兴趣可以搜索相关资料继续了解。在我们的程序中，uart相关的逻辑都封装到了uart.c中，在主程序中直接调用即可。</p><h1 id=编译>编译</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>riscv64-elf-gcc -g -c -ffreestanding -mcmodel=medany -o boot.o boot.s
-</span></span><span class=line><span class=cl>riscv64-elf-gcc -g -c -ffreestanding -mcmodel=medany -o uart.o uart.c
-</span></span><span class=line><span class=cl>riscv64-elf-gcc -g -c -ffreestanding -mcmodel=medany -o kernel.o kernel.c
-</span></span><span class=line><span class=cl>riscv64-elf-ld -Ttext=0x80000000 -o os.elf boot.o uart.o kernel.o
-</span></span></code></pre></td></tr></table></div></div><p>上述是mac下的编译，linux下使用的编译工具名称有所不同。
-注意-mcmodel参数非常重要，我们编译的是64位程序，链接地址为0x80000000，超出了2G的范围，默认-mcmodel参数为medlow，使用默认参数的话链接时会报错。
-具体可阅读如下几篇文章:</p><ul><li><a href=https://www.jianshu.com/p/895034767f21 target=_blank rel=noopener>为什么 xv6-riscv 编译的时候需要 -mcmodel=medany</a></li><li><a href=https://www.sifive.com/blog/all-aboard-part-4-risc-v-code-models target=_blank rel=noopener>The RISC-V Code Models</a></li><li><a href=https://blog.csdn.net/zoomdy/article/details/1006991080 target=_blank rel=noopener>RISC-V：-mcmodel=medlow vs -mcmodel=medany</a></li></ul><h1 id=运行>运行</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>qemu-system-riscv64 -nographic -M virt -smp 1 -bios none -kernel os.elf
-</span></span></code></pre></td></tr></table></div></div><p><img src=/images/20230105/1.png alt=效果></p><p>这里我们指定1个核心，RISC-V中每个核心称之为HART，如果有多个HART的话，每个HART都会在0x80000000处执行boot.s中的逻辑，我们需要获取HART ID做相应的处理，文本不继续拓展。
-使用 Ctrl-a x 可以退出。</p><h1 id=调试>调试</h1><p>qemu提供了很方便的调试功能，执行的时候使用加上 -s -S 参数既可以进入调试模式，然后使用gdb可以连接进行调试。
-在mac上使用riscv64-elf-gdb调试即可，在linux上需要使用gdb-multiarch</p><p>首先启动qemu进入调试模式</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>qemu-system-riscv64 -nographic -M virt -smp 1 -bios none -kernel os.elf -s -S
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>riscv64-elf-gcc -g -c -ffreestanding -mcmodel<span class=o>=</span>medany -o boot.o boot.s
+</span></span><span class=line><span class=cl>riscv64-elf-gcc -g -c -ffreestanding -mcmodel<span class=o>=</span>medany -o uart.o uart.c
+</span></span><span class=line><span class=cl>riscv64-elf-gcc -g -c -ffreestanding -mcmodel<span class=o>=</span>medany -o kernel.o kernel.c
+</span></span><span class=line><span class=cl>riscv64-elf-ld -Ttext<span class=o>=</span>0x80000000 -o os.elf boot.o uart.o kernel.o
+</span></span></code></pre></td></tr></table></div></div><p>上述是mac下的编译，linux下使用的编译工具名称有所不同。</p><p>注意-mcmodel参数非常重要，我们编译的是64位程序，链接地址为0x80000000，超出了2G的范围，默认-mcmodel参数为medlow，使用默认参数的话链接时会报错。</p><p>具体可阅读如下几篇文章:</p><ul><li><a href=https://www.jianshu.com/p/895034767f21 target=_blank rel=noopener>为什么 xv6-riscv 编译的时候需要 -mcmodel=medany</a></li><li><a href=https://www.sifive.com/blog/all-aboard-part-4-risc-v-code-models target=_blank rel=noopener>The RISC-V Code Models</a></li><li><a href=https://blog.csdn.net/zoomdy/article/details/100699108 target=_blank rel=noopener>RISC-V：-mcmodel=medlow vs -mcmodel=medany</a></li></ul><h1 id=运行>运行</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>qemu-system-riscv64 -nographic -M virt -smp <span class=m>1</span> -bios none -kernel os.elf
+</span></span></code></pre></td></tr></table></div></div><p><img src=/images/20240410/1.png alt=效果></p><p>这里我们指定1个核心，RISC-V中每个核心称之为HART，如果有多个HART的话，每个HART都会在0x80000000处执行boot.s中的逻辑，我们需要获取HART ID做相应的处理，文本不继续拓展。</p><p>使用 Ctrl-a x 可以退出。</p><h1 id=调试>调试</h1><p>qemu提供了很方便的调试功能，执行的时候使用加上 -s -S 参数既可以进入调试模式，然后使用gdb可以连接进行调试。</p><p>在mac上使用riscv64-elf-gdb调试即可，在linux上需要使用gdb-multiarch</p><p>首先启动qemu进入调试模式</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>qemu-system-riscv64 -nographic -M virt -smp <span class=m>1</span> -bios none -kernel os.elf -s -S
 </span></span></code></pre></td></tr></table></div></div><p>然后启动gdb，需要远程连接qemu，默认端口为1234。</p><h2 id=mac上调试>mac上调试</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
 </span><span class=lnt>5
 </span><span class=lnt>6
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>riscv64-elf-gdb os.elf
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>riscv64-elf-gdb os.elf
 </span></span><span class=line><span class=cl>target remote :1234
-</span></span><span class=line><span class=cl>break *0x80000000
-</span></span><span class=line><span class=cl>break kernel_main
+</span></span><span class=line><span class=cl><span class=nb>break</span> *0x80000000
+</span></span><span class=line><span class=cl><span class=nb>break</span> kernel_main
 </span></span><span class=line><span class=cl>c
 </span></span><span class=line><span class=cl>c
 </span></span></code></pre></td></tr></table></div></div><p>当输入target remote :1234后，发现此时gdb窗口中，pc寄存器的值为0x1000，我们可以在0x80000000和kernel_main处分别设置断点，使用c可以继续执行到断点处，kernel_main处继续按c，则可以看到屏幕输出了Hello。</p><h2 id=linux上调试>linux上调试</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
@@ -111,11 +105,11 @@ ROM代码负责执行系统启动初期的一些基本设置，这包括设置�
 </span><span class=lnt>5
 </span><span class=lnt>6
 </span><span class=lnt>7
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>gdb-multiarch os.elf
-</span></span><span class=line><span class=cl>set architecture riscv:rv64
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>gdb-multiarch os.elf
+</span></span><span class=line><span class=cl><span class=nb>set</span> architecture riscv:rv64
 </span></span><span class=line><span class=cl>target remote :1234
-</span></span><span class=line><span class=cl>break *0x80000000
-</span></span><span class=line><span class=cl>break kernel_main
+</span></span><span class=line><span class=cl><span class=nb>break</span> *0x80000000
+</span></span><span class=line><span class=cl><span class=nb>break</span> kernel_main
 </span></span><span class=line><span class=cl>c
 </span></span><span class=line><span class=cl>c
 </span></span></code></pre></td></tr></table></div></div><h1 id=代码地址>代码地址</h1><p><a href=https://gitlab.com/bitristan/riscv-os-hello target=_blank rel=noopener>https://gitlab.com/bitristan/riscv-os-hello</a></p><h1 id=推荐学习资料>推荐学习资料</h1><ul><li><a href=https://github.com/plctlab/riscv-operating-system-mooc target=_blank rel=noopener>riscv-operating-system-mooc</a></li><li><a href=https://github.com/runninglinuxkernel/riscv_programming_practice target=_blank rel=noopener>riscv_programming_practice</a></li><li><a href=https://riscv-programming.org/book/riscv-book.html target=_blank rel=noopener>An Introduction to Assembly Programming with RISC-V</a></li></ul></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span>
