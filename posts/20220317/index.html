@@ -1,0 +1,161 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Android JNI静态注册和动态注册</title>
+<link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.127.0"></head><body><header role=banner><hgroup><h1><a href=/>Ting's Blog</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Jan 1, 0001
+- 2 minute read</p><h1 class=entry-title>Android JNI静态注册和动态注册</h1></header><div class=entry-content><h1 id=android-jni静态注册和动态注册>Android JNI静态注册和动态注册</h1><h2 id=静态注册>静态注册</h2><ol><li>首先在kotlin侧定义native方法</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-go data-lang=go><span class=line><span class=cl><span class=kn>package</span> <span class=nx>com</span><span class=p>.</span><span class=nx>example</span><span class=p>.</span><span class=nx>jni</span><span class=p>.</span><span class=nx>tutorial</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nx>class</span> <span class=nx>Util</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nx>companion</span> <span class=nx>object</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=err>@</span><span class=nx>JvmStatic</span>
+</span></span><span class=line><span class=cl>        <span class=nx>external</span> <span class=nx>fun</span> <span class=nf>staticClassMethod</span><span class=p>():</span> <span class=nx>String</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=nx>external</span> <span class=nx>fun</span> <span class=nf>staticObjectMethod</span><span class=p>():</span> <span class=nx>String</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><ol start=2><li>然后在C++侧定义对应的方法实现，方法名称按照规则，需要注意的是静态方法有一个jclass类型的参数，而非静态方法则是一个jobject类型的参数，分别表示类和对象的信息。</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>extern &#34;C&#34;
+</span></span><span class=line><span class=cl>JNIEXPORT jstring JNICALL
+</span></span><span class=line><span class=cl>Java_com_example_jni_tutorial_Util_staticClassMethod(JNIEnv *env,
+</span></span><span class=line><span class=cl>                                                     jclass clazz) {
+</span></span><span class=line><span class=cl>    logd(&#34;static class method called&#34;);
+</span></span><span class=line><span class=cl>    std::string hello = &#34;staticClassMethod&#34;;
+</span></span><span class=line><span class=cl>    return env-&gt;NewStringUTF(hello.c_str());
+</span></span><span class=line><span class=cl>}
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>extern &#34;C&#34;
+</span></span><span class=line><span class=cl>JNIEXPORT jstring JNICALL
+</span></span><span class=line><span class=cl>Java_com_example_jni_tutorial_Util_staticObjectMethod(JNIEnv *env,
+</span></span><span class=line><span class=cl>                                                      jobject thiz) {
+</span></span><span class=line><span class=cl>    logd(&#34;static object method called&#34;);
+</span></span><span class=line><span class=cl>    std::string hello = &#34;staticObjectMethod&#34;;
+</span></span><span class=line><span class=cl>    return env-&gt;NewStringUTF(hello.c_str());
+</span></span><span class=line><span class=cl>}
+</span></span></code></pre></td></tr></table></div></div><h2 id=动态注册>动态注册</h2><ol><li>在kotlin侧定义native方法</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-go data-lang=go><span class=line><span class=cl><span class=kn>package</span> <span class=nx>com</span><span class=p>.</span><span class=nx>example</span><span class=p>.</span><span class=nx>jni</span><span class=p>.</span><span class=nx>tutorial</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nx>class</span> <span class=nx>Util</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nx>companion</span> <span class=nx>object</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=err>@</span><span class=nx>JvmStatic</span>
+</span></span><span class=line><span class=cl>        <span class=nx>external</span> <span class=nx>fun</span> <span class=nf>dynamicClassMethod</span><span class=p>():</span> <span class=nx>String</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=nx>external</span> <span class=nx>fun</span> <span class=nf>dynamicObjectMethod</span><span class=p>():</span> <span class=nx>String</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><ol start=2><li>在C++侧定义对应的方法，由于是动态注册，方法名可以随意命名，但是方法参数和返回值还是需要按照native方法的定义来。</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>jstring dynamicClassMethod(JNIEnv *env, jclass clazz) {
+</span></span><span class=line><span class=cl>    logd(&#34;dynamic class method called&#34;);
+</span></span><span class=line><span class=cl>    std::string hello = &#34;dynamicClassMethod&#34;;
+</span></span><span class=line><span class=cl>    return env-&gt;NewStringUTF(hello.c_str());
+</span></span><span class=line><span class=cl>}
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>jstring dynamicObjectMethod(JNIEnv *env, jobject obj) {
+</span></span><span class=line><span class=cl>    logd(&#34;dynamic object method called&#34;);
+</span></span><span class=line><span class=cl>    std::string hello = &#34;dynamicObjectMethod&#34;;
+</span></span><span class=line><span class=cl>    return env-&gt;NewStringUTF(hello.c_str());
+</span></span><span class=line><span class=cl>}
+</span></span></code></pre></td></tr></table></div></div><ol start=3><li>实现 JNI_Onload，动态注册方法，JNI_Onload会在 System.loadLibrary执行成功后执行。</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-gdscript3 data-lang=gdscript3><span class=line><span class=cl><span class=k>static</span> <span class=k>const</span> <span class=n>JNINativeMethod</span> <span class=n>methods</span><span class=p>[]</span> <span class=o>=</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=p>{</span><span class=s2>&#34;dynamicClassMethod&#34;</span><span class=p>,</span>  <span class=s2>&#34;()Ljava/lang/String;&#34;</span><span class=p>,</span> <span class=p>(</span><span class=n>void</span> <span class=o>*</span><span class=p>)</span> <span class=n>dynamicClassMethod</span><span class=p>},</span>
+</span></span><span class=line><span class=cl>    <span class=p>{</span><span class=s2>&#34;dynamicObjectMethod&#34;</span><span class=p>,</span> <span class=s2>&#34;()Ljava/lang/String;&#34;</span><span class=p>,</span> <span class=p>(</span><span class=n>void</span> <span class=o>*</span><span class=p>)</span> <span class=n>dynamicObjectMethod</span><span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>const</span> <span class=n>char</span> <span class=o>*</span><span class=n>className</span> <span class=o>=</span> <span class=s2>&#34;com/example/jni/tutorial/Util&#34;</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=ne>int</span> <span class=n>JNI_OnLoad</span><span class=p>(</span><span class=n>JavaVM</span> <span class=o>*</span><span class=n>vm</span><span class=p>,</span> <span class=n>void</span> <span class=o>*</span><span class=n>reserved</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>logd</span><span class=p>(</span><span class=s2>&#34;Jni_OnLoad called&#34;</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=n>JNIEnv</span> <span class=o>*</span><span class=n>env</span> <span class=o>=</span> <span class=n>nullptr</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=ne>int</span> <span class=n>registerResult</span> <span class=o>=</span> <span class=n>vm</span><span class=o>-&gt;</span><span class=n>GetEnv</span><span class=p>((</span><span class=n>void</span> <span class=o>**</span><span class=p>)</span> <span class=o>&amp;</span><span class=n>env</span><span class=p>,</span> <span class=n>JNI_VERSION_1_6</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>registerResult</span> <span class=o>!=</span> <span class=n>JNI_OK</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=o>-</span><span class=mi>1</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  <span class=n>jclass</span> <span class=n>jclazz</span> <span class=o>=</span> <span class=n>env</span><span class=o>-&gt;</span><span class=n>FindClass</span><span class=p>(</span><span class=n>className</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=n>env</span><span class=o>-&gt;</span><span class=n>RegisterNatives</span><span class=p>(</span><span class=n>jclazz</span><span class=p>,</span> <span class=n>methods</span><span class=p>,</span> <span class=n>sizeof</span><span class=p>(</span><span class=n>methods</span><span class=p>)</span> <span class=o>/</span> <span class=n>sizeof</span><span class=p>(</span><span class=n>JNINativeMethod</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=n>JNI_VERSION_1_6</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=在jni中输出log>在JNI中输出LOG</h2><ol><li>CMakeLists.txt中加载log库</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>find_library(
+</span></span><span class=line><span class=cl>    log-lib
+</span></span><span class=line><span class=cl>    log
+</span></span><span class=line><span class=cl>)
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>target_link_libraries(${CMAKE_PROJECT_NAME}
+</span></span><span class=line><span class=cl>    ${log-lib}
+</span></span><span class=line><span class=cl>)
+</span></span></code></pre></td></tr></table></div></div><ol start=2><li>C++中引用 android/log.h，输出log</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#ifndef LOG_TAG
+</span></span></span><span class=line><span class=cl><span class=cp>#define LOG_TAG &#34;Util&#34;
+</span></span></span><span class=line><span class=cl><span class=cp>#define logd(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+</span></span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span></code></pre></td></tr></table></div></div><p>在需要输出log的地方使用 logd 进行输出就可以了，LOG_TAG和log level都可以自定义。</p><h2 id=示例工程>示例工程</h2><p><a href=https://gitlab.com/bitristan/jni-tutorial target=_blank rel=noopener>https://gitlab.com/bitristan/jni-tutorial</a></p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span>
+<time>Jan 1, 0001</time></span></p><p class=meta><a class="basic-alignment right" href=/posts/2021011301/ title=zipflinger导致的UnsatisfiedLinkError分析>zipflinger导致的UnsatisfiedLinkError分析</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2024 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
