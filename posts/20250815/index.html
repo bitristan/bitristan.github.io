@@ -1,0 +1,156 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>使用clion搭建linux内核v6.15调试环境</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.148.2"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Aug 15, 2025
+- 3 minute read</p><h1 class=entry-title>使用clion搭建linux内核v6.15调试环境</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>本文以clion为开发工具，搭建一个linux6.15版本内核的调试环境。
+主机环境: debian 12.11 amd64</p><p>如果希望在macos 环境下调试，推荐使用 orbstack虚拟机，也非常方便。可以参考文章最后给出的链接。</p><h1 id=下载linux616内核源码并完成编译>下载linux6.16内核源码并完成编译</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>git clone --branch v6.15 --depth 1 https://github.com/torvalds/linux
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>make defconfig
+</span></span><span class=line><span class=cl>make -j8
+</span></span></code></pre></td></tr></table></div></div><h1 id=制作根文件系统>制作根文件系统</h1><p>一般使用busybox制作根文件系统比较方便。
+有几种方式，一种是下载busybox源码，使用静态链接方式编译出可执行文件，个人感觉这种稍微麻烦点。
+另外一种是直接使用系统自带的busybox，下面我们介绍这种方式。</p><p>一般的linux系统都会自带busybox工具，路径在 /usr/bin/busybox。
+但是大部分系统这个工具都是使用动态链接方式编译的，需要依赖共享库才能执行。</p><p>解决方式是安装 busybox-static 库，安装后 /usr/bin/busybox 会被替换为一个静态链接方式编译的可执行文件。</p><p>使用 file 命令可以确认可执行文件是动态链接还是静态链接的</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>file /usr/bin/busybox
+</span></span></code></pre></td></tr></table></div></div><p>我们将步骤封装成了一个脚本文件</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=cp>#!/bin/bash
+</span></span></span><span class=line><span class=cl><span class=cp></span><span class=nb>set</span> -e
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 配置参数</span>
+</span></span><span class=line><span class=cl><span class=nv>ROOTFS_DIR</span><span class=o>=</span><span class=s2>&#34;./rootfs&#34;</span>     <span class=c1># 根文件系统目录</span>
+</span></span><span class=line><span class=cl><span class=nv>OUTPUT_IMG</span><span class=o>=</span><span class=s2>&#34;rootfs.img&#34;</span>   <span class=c1># 输出镜像文件名</span>
+</span></span><span class=line><span class=cl><span class=nv>IMG_SIZE</span><span class=o>=</span><span class=s2>&#34;512M&#34;</span>           <span class=c1># 镜像大小</span>
+</span></span><span class=line><span class=cl><span class=nv>ARCH</span><span class=o>=</span><span class=s2>&#34;x86_64&#34;</span>             <span class=c1># 目标架构 (x86_64/arm/aarch64)</span>
+</span></span><span class=line><span class=cl><span class=nv>KERNEL_PATH</span><span class=o>=</span><span class=s2>&#34;./bzImage&#34;</span>   <span class=c1># 内核路径</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 清理旧文件</span>
+</span></span><span class=line><span class=cl>sudo umount -q <span class=s2>&#34;</span><span class=si>${</span><span class=nv>ROOTFS_DIR</span><span class=si>}</span><span class=s2>/mnt&#34;</span> 2&gt;/dev/null <span class=o>||</span> <span class=nb>true</span>
+</span></span><span class=line><span class=cl>rm -rf <span class=s2>&#34;</span><span class=si>${</span><span class=nv>ROOTFS_DIR</span><span class=si>}</span><span class=s2>&#34;</span> <span class=s2>&#34;</span><span class=si>${</span><span class=nv>OUTPUT_IMG</span><span class=si>}</span><span class=s2>&#34;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 创建根文件系统目录结构</span>
+</span></span><span class=line><span class=cl>mkdir -p <span class=s2>&#34;</span><span class=si>${</span><span class=nv>ROOTFS_DIR</span><span class=si>}</span><span class=s2>&#34;</span>/<span class=o>{</span>bin,dev,etc/init.d,lib,proc,sys,tmp,root,usr/<span class=o>{</span>bin,lib<span class=o>}</span>,mnt<span class=o>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 复制 BusyBox 并创建符号链接</span>
+</span></span><span class=line><span class=cl>sudo cp /usr/bin/busybox <span class=s2>&#34;</span><span class=si>${</span><span class=nv>ROOTFS_DIR</span><span class=si>}</span><span class=s2>/bin/&#34;</span>
+</span></span><span class=line><span class=cl>sudo chroot <span class=s2>&#34;</span><span class=si>${</span><span class=nv>ROOTFS_DIR</span><span class=si>}</span><span class=s2>&#34;</span> /bin/busybox --install /bin
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 生成启动脚本 /etc/init.d/rcS</span>
+</span></span><span class=line><span class=cl>cat &gt; <span class=s2>&#34;</span><span class=si>${</span><span class=nv>ROOTFS_DIR</span><span class=si>}</span><span class=s2>/etc/init.d/rcS&#34;</span> <span class=s>&lt;&lt;EOF
+</span></span></span><span class=line><span class=cl><span class=s>#!/bin/sh
+</span></span></span><span class=line><span class=cl><span class=s>mount -t proc none /proc
+</span></span></span><span class=line><span class=cl><span class=s>mount -t sysfs none /sys
+</span></span></span><span class=line><span class=cl><span class=s>
+</span></span></span><span class=line><span class=cl><span class=s>exec /bin/sh
+</span></span></span><span class=line><span class=cl><span class=s>EOF</span>
+</span></span><span class=line><span class=cl>sudo chmod +x <span class=s2>&#34;</span><span class=si>${</span><span class=nv>ROOTFS_DIR</span><span class=si>}</span><span class=s2>/etc/init.d/rcS&#34;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 创建磁盘镜像</span>
+</span></span><span class=line><span class=cl>dd <span class=k>if</span><span class=o>=</span>/dev/zero <span class=nv>of</span><span class=o>=</span><span class=s2>&#34;</span><span class=si>${</span><span class=nv>OUTPUT_IMG</span><span class=si>}</span><span class=s2>&#34;</span> <span class=nv>bs</span><span class=o>=</span><span class=si>${</span><span class=nv>IMG_SIZE</span><span class=si>}</span> <span class=nv>count</span><span class=o>=</span><span class=m>1</span>
+</span></span><span class=line><span class=cl>sudo mkfs.ext4 -F <span class=s2>&#34;</span><span class=si>${</span><span class=nv>OUTPUT_IMG</span><span class=si>}</span><span class=s2>&#34;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 挂载镜像并复制文件系统</span>
+</span></span><span class=line><span class=cl><span class=nv>MOUNT_DIR</span><span class=o>=</span><span class=s2>&#34;./mnt&#34;</span>
+</span></span><span class=line><span class=cl>mkdir -p <span class=s2>&#34;</span><span class=si>${</span><span class=nv>MOUNT_DIR</span><span class=si>}</span><span class=s2>&#34;</span>
+</span></span><span class=line><span class=cl>sudo mount -o loop <span class=s2>&#34;</span><span class=si>${</span><span class=nv>OUTPUT_IMG</span><span class=si>}</span><span class=s2>&#34;</span> <span class=s2>&#34;</span><span class=si>${</span><span class=nv>MOUNT_DIR</span><span class=si>}</span><span class=s2>&#34;</span>
+</span></span><span class=line><span class=cl>sudo cp -ra <span class=s2>&#34;</span><span class=si>${</span><span class=nv>ROOTFS_DIR</span><span class=si>}</span><span class=s2>/&#34;</span>* <span class=s2>&#34;</span><span class=si>${</span><span class=nv>MOUNT_DIR</span><span class=si>}</span><span class=s2>/&#34;</span>
+</span></span><span class=line><span class=cl>sudo umount <span class=s2>&#34;</span><span class=si>${</span><span class=nv>MOUNT_DIR</span><span class=si>}</span><span class=s2>&#34;</span>
+</span></span><span class=line><span class=cl>rm -rf <span class=s2>&#34;</span><span class=si>${</span><span class=nv>MOUNT_DIR</span><span class=si>}</span><span class=s2>&#34;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 清理临时目录</span>
+</span></span><span class=line><span class=cl>rm -rf <span class=s2>&#34;</span><span class=si>${</span><span class=nv>ROOTFS_DIR</span><span class=si>}</span><span class=s2>&#34;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> <span class=s2>&#34;--------------------------------------------------&#34;</span>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> <span class=s2>&#34;rootfs.img 生成成功！&#34;</span>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> <span class=s2>&#34;--------------------------------------------------&#34;</span>
+</span></span></code></pre></td></tr></table></div></div><p>注意拷贝运行上述脚本的时候请看清楚理解清楚再运行。脚本中包含sudo和rm -rf 命令，弄错了可能会导致意外。
+执行上述脚本文件，会在当前目录下生成一个 rootfs.img文件，使用这个镜像可以引导linux kernel启动。</p><h1 id=使用qemu启动linux内核>使用qemu启动linux内核</h1><h2 id=x86_64下的启动命令>x86_64下的启动命令</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>qemu-system-x86_64 \
+</span></span><span class=line><span class=cl>    -kernel bzImage \
+</span></span><span class=line><span class=cl>    -append &#34;console=ttyS0 root=/dev/sda rw init=/bin/init&#34; \
+</span></span><span class=line><span class=cl>    -drive &#34;file=rootfs.img,format=raw&#34; \
+</span></span><span class=line><span class=cl>    -nographic
+</span></span></code></pre></td></tr></table></div></div><p>注意bzImage 需要在当前目录下，或者替换为完整的文件路径。</p><h2 id=aarch64下的启动命令>aarch64下的启动命令</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>qemu-system-x86_64 \
+</span></span><span class=line><span class=cl>    -M virt \
+</span></span><span class=line><span class=cl>    -cpu cortex-a53 \
+</span></span><span class=line><span class=cl>    -kernel bzImage \
+</span></span><span class=line><span class=cl>    -append &#34;console=ttyAMA0 root=/dev/vda rw init=/bin/init&#34; \
+</span></span><span class=line><span class=cl>    -drive &#34;file=rootfs.img,format=raw&#34; \
+</span></span><span class=line><span class=cl>    -nographic
+</span></span></code></pre></td></tr></table></div></div><h2 id=以调试模式启动>以调试模式启动</h2><p>调试模式启动只需要在正常的启动命令上加上 -s -S 即可</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>qemu-system-x86_64 \
+</span></span><span class=line><span class=cl>    -kernel bzImage \
+</span></span><span class=line><span class=cl>    -append &#34;console=ttyS0 root=/dev/sda rw init=/bin/init&#34; \
+</span></span><span class=line><span class=cl>    -drive &#34;file=rootfs.img,format=raw&#34; \
+</span></span><span class=line><span class=cl>    -nographic \
+</span></span><span class=line><span class=cl>    -s \
+</span></span><span class=line><span class=cl>    -S
+</span></span></code></pre></td></tr></table></div></div><h1 id=使用clion调试内核>使用clion调试内核</h1><ol><li>使用clion打开linux内核源码</li><li>找到菜单 Run -> Edit Configurations 点击打开</li><li>点击 + ，选择 Remote Debug</li><li>Name随意输入，例如 kernel-debug</li><li>Debugger保持默认的 Bundled GDB</li><li>target remote args输入 :1234</li><li>Symbol file选择linux源码路径下的vmlinux文件</li><li>点击OK即完成设置</li></ol><p><img src=/images/20250815/1.png alt></p><p>以调试模式启动linux内核后，打开 init/main.c 文件，在 start_kernel 函数开始处设置断点，在clion中选择kernel-debug，点击debug按钮，此时就会停留在刚才设置的断点处，可以开始调试内核代码了。</p><h1 id=参考资料>参考资料</h1><ul><li><p><a href="https://mp.weixin.qq.com/s?__biz=Mzg5NjUzMTY3Mg==&amp;mid=2247486967&amp;idx=1&amp;sn=ef7507eca5bd61b3ba105fe33b6ee5a6&amp;chksm=c1006cd478cbcc656a109f5fd54b83c79b5db8e21d0c60e556d757fd85876e0526eabd2c2552&amp;poc_token=HNLxnWija3Jkf-lht9NJBUNZwdXQicbx3Rj64yVx" target=_blank rel=noopener>如何在 Mac M1 Pro 上 debug Linux Kernel | 基于 Ubuntu 24 工具链和 QEMU</a></p></li><li><p><a href=https://zhuanlan.zhihu.com/p/412604505 target=_blank rel=noopener>使用 Clion + QEMU/GDB 远程调试Linux内核</a></p></li></ul></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Aug 15, 2025</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/20240611/ title=WebRTC源码中添加自定义target>WebRTC源码中添加自定义target</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2025 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
