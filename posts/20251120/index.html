@@ -1,221 +1,115 @@
 <!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Android ART dex2oat 编译器过滤器参数完全指南</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.152.2"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Nov 20, 2025
-- 8 minute read</p><h1 class=entry-title>Android ART dex2oat 编译器过滤器参数完全指南</h1></header><div class=entry-content><h1 id=android-art-编译器过滤器详解dex2oat-参数配置与最佳实践>Android ART 编译器过滤器详解：dex2oat 参数配置与最佳实践</h1><p>在 Android 系统中，ART（Android Runtime）作为应用的核心运行时，负责将 DEX（Dalvik Executable）文件编译为机器码（OAT 文件）并执行，而这一编译过程的核心控制者是 <code>dex2oat</code> 工具 ——ART 的 AOT（预编译）编译器。本文聚焦的「编译器过滤器」（Compiler Filter），正是 <code>dex2oat</code> 最关键的配置参数之一，用于定义编译策略：包括是否验证 DEX 文件、编译范围、优化目标（速度 / 空间）等，直接影响应用的安装速度、存储占用和运行性能。</p><h2 id=一核心背景编译器过滤器的作用>一、核心背景：编译器过滤器的作用</h2><p>ART 替代 Dalvik 后，引入了「AOT 预编译 + JIT 即时编译」的混合执行模式。编译器过滤器的核心价值，是<strong>在「编译时间」「存储占用」「运行性能」三个维度之间找到平衡</strong>：</p><ul><li><p>编译时间：应用安装 / 更新时，<code>dex2oat</code> 编译 DEX 到 OAT 的耗时（影响用户安装体验）；</p></li><li><p>存储占用：编译生成的 OAT 文件体积（影响设备存储开销）；</p></li><li><p>运行性能：应用启动速度、运行流畅度（影响用户使用体验）。</p></li></ul><p>本文分析的 <code>ParseCompilerFilter</code> 函数，正是 ART 中解析编译器过滤器参数的核心逻辑，它定义了参数的映射关系（过时参数兼容）和最终的编译策略。以下是该函数的完整代码实现：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>  1
-</span><span class=lnt>  2
-</span><span class=lnt>  3
-</span><span class=lnt>  4
-</span><span class=lnt>  5
-</span><span class=lnt>  6
-</span><span class=lnt>  7
-</span><span class=lnt>  8
-</span><span class=lnt>  9
-</span><span class=lnt> 10
-</span><span class=lnt> 11
-</span><span class=lnt> 12
-</span><span class=lnt> 13
-</span><span class=lnt> 14
-</span><span class=lnt> 15
-</span><span class=lnt> 16
-</span><span class=lnt> 17
-</span><span class=lnt> 18
-</span><span class=lnt> 19
-</span><span class=lnt> 20
-</span><span class=lnt> 21
-</span><span class=lnt> 22
-</span><span class=lnt> 23
-</span><span class=lnt> 24
-</span><span class=lnt> 25
-</span><span class=lnt> 26
-</span><span class=lnt> 27
-</span><span class=lnt> 28
-</span><span class=lnt> 29
-</span><span class=lnt> 30
-</span><span class=lnt> 31
-</span><span class=lnt> 32
-</span><span class=lnt> 33
-</span><span class=lnt> 34
-</span><span class=lnt> 35
-</span><span class=lnt> 36
-</span><span class=lnt> 37
-</span><span class=lnt> 38
-</span><span class=lnt> 39
-</span><span class=lnt> 40
-</span><span class=lnt> 41
-</span><span class=lnt> 42
-</span><span class=lnt> 43
-</span><span class=lnt> 44
-</span><span class=lnt> 45
-</span><span class=lnt> 46
-</span><span class=lnt> 47
-</span><span class=lnt> 48
-</span><span class=lnt> 49
-</span><span class=lnt> 50
-</span><span class=lnt> 51
-</span><span class=lnt> 52
-</span><span class=lnt> 53
-</span><span class=lnt> 54
-</span><span class=lnt> 55
-</span><span class=lnt> 56
-</span><span class=lnt> 57
-</span><span class=lnt> 58
-</span><span class=lnt> 59
-</span><span class=lnt> 60
-</span><span class=lnt> 61
-</span><span class=lnt> 62
-</span><span class=lnt> 63
-</span><span class=lnt> 64
-</span><span class=lnt> 65
-</span><span class=lnt> 66
-</span><span class=lnt> 67
-</span><span class=lnt> 68
-</span><span class=lnt> 69
-</span><span class=lnt> 70
-</span><span class=lnt> 71
-</span><span class=lnt> 72
-</span><span class=lnt> 73
-</span><span class=lnt> 74
-</span><span class=lnt> 75
-</span><span class=lnt> 76
-</span><span class=lnt> 77
-</span><span class=lnt> 78
-</span><span class=lnt> 79
-</span><span class=lnt> 80
-</span><span class=lnt> 81
-</span><span class=lnt> 82
-</span><span class=lnt> 83
-</span><span class=lnt> 84
-</span><span class=lnt> 85
-</span><span class=lnt> 86
-</span><span class=lnt> 87
-</span><span class=lnt> 88
-</span><span class=lnt> 89
-</span><span class=lnt> 90
-</span><span class=lnt> 91
-</span><span class=lnt> 92
-</span><span class=lnt> 93
-</span><span class=lnt> 94
-</span><span class=lnt> 95
-</span><span class=lnt> 96
-</span><span class=lnt> 97
-</span><span class=lnt> 98
-</span><span class=lnt> 99
-</span><span class=lnt>100
-</span><span class=lnt>101
-</span><span class=lnt>102
-</span><span class=lnt>103
-</span><span class=lnt>104
-</span><span class=lnt>105
-</span><span class=lnt>106
-</span><span class=lnt>107
-</span><span class=lnt>108
-</span><span class=lnt>109
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-gdscript3 data-lang=gdscript3><span class=line><span class=cl><span class=ne>bool</span> <span class=n>CompilerFilter</span><span class=p>::</span><span class=n>ParseCompilerFilter</span><span class=p>(</span><span class=k>const</span> <span class=n>char</span>\<span class=o>*</span> <span class=n>option</span><span class=p>,</span> <span class=n>Filter</span>\<span class=o>*</span> <span class=n>filter</span><span class=p>)</span> <span class=p>{</span>
+- 8 minute read</p><h1 class=entry-title>Android ART dex2oat 编译器过滤器参数完全指南</h1></header><div class=entry-content><h1 id=android-art-编译器过滤器详解dex2oat-参数配置与最佳实践>Android ART 编译器过滤器详解：dex2oat 参数配置与最佳实践</h1><p>在 Android 系统中，ART（Android Runtime）作为应用的核心运行时，负责将 DEX（Dalvik Executable）文件编译为机器码（OAT 文件）并执行，而这一编译过程的核心控制者是 <code>dex2oat</code> 工具 ——ART 的 AOT（预编译）编译器。本文聚焦的「编译器过滤器」（Compiler Filter），正是 <code>dex2oat</code> 最关键的配置参数之一，用于定义编译策略：包括是否验证 DEX 文件、编译范围、优化目标（速度 / 空间）等，直接影响应用的安装速度、存储占用和运行性能。</p><h2 id=一核心背景编译器过滤器的作用>一、核心背景：编译器过滤器的作用</h2><p>ART 替代 Dalvik 后，引入了「AOT 预编译 + JIT 即时编译」的混合执行模式。编译器过滤器的核心价值，是<strong>在「编译时间」「存储占用」「运行性能」三个维度之间找到平衡</strong>：</p><ul><li><p>编译时间：应用安装 / 更新时，<code>dex2oat</code> 编译 DEX 到 OAT 的耗时（影响用户安装体验）；</p></li><li><p>存储占用：编译生成的 OAT 文件体积（影响设备存储开销）；</p></li><li><p>运行性能：应用启动速度、运行流畅度（影响用户使用体验）。</p></li></ul><p>本文分析的 <code>ParseCompilerFilter</code> 函数，正是 ART 中解析编译器过滤器参数的核心逻辑，它定义了参数的映射关系（过时参数兼容）和最终的编译策略。以下是该函数的完整代码实现：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span><span class=lnt>55
+</span><span class=lnt>56
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-gdscript3 data-lang=gdscript3><span class=line><span class=cl><span class=ne>bool</span> <span class=n>CompilerFilter</span><span class=p>::</span><span class=n>ParseCompilerFilter</span><span class=p>(</span><span class=k>const</span> <span class=n>char</span><span class=o>*</span> <span class=n>option</span><span class=p>,</span> <span class=n>Filter</span><span class=o>*</span> <span class=n>filter</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>CHECK</span><span class=p>(</span><span class=n>filter</span> <span class=o>!=</span> <span class=n>nullptr</span><span class=p>);</span>
 </span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; CHECK(filter != nullptr);</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; if (strcmp(option, &#34;verify-none&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   LOG(WARNING) &lt;&lt; &#34;&#39;verify-none&#39; is an obsolete compiler filter name that will be &#34;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;                &lt;&lt; &#34;removed in future releases, please use &#39;assume-verified&#39; instead.&#34;;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kAssumeVerified;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;interpret-only&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   LOG(WARNING) &lt;&lt; &#34;&#39;interpret-only&#39; is an obsolete compiler filter name that will be &#34;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;                &lt;&lt; &#34;removed in future releases, please use &#39;verify&#39; instead.&#34;;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kVerify;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;verify-profile&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   LOG(WARNING) &lt;&lt; &#34;&#39;verify-profile&#39; is an obsolete compiler filter name that will be &#34;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;                &lt;&lt; &#34;removed in future releases, please use &#39;verify&#39; instead.&#34;;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kVerify;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;verify-at-runtime&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   LOG(WARNING) &lt;&lt; &#34;&#39;verify-at-runtime&#39; is an obsolete compiler filter name that will be &#34;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;                &lt;&lt; &#34;removed in future releases, please use &#39;verify&#39; instead.&#34;;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kVerify;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;balanced&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   LOG(WARNING) &lt;&lt; &#34;&#39;balanced&#39; is an obsolete compiler filter name that will be &#34;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;                &lt;&lt; &#34;removed in future releases, please use &#39;speed&#39; instead.&#34;;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kSpeed;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;time&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   LOG(WARNING) &lt;&lt; &#34;&#39;time&#39; is an obsolete compiler filter name that will be &#34;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;                &lt;&lt; &#34;removed in future releases, please use &#39;space&#39; instead.&#34;;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kSpace;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;extract&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   LOG(WARNING) &lt;&lt; &#34;&#39;extract&#39; is an obsolete compiler filter name that will be &#34;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;                &lt;&lt; &#34;removed in future releases, please use &#39;verify&#39; instead.&#34;;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kVerify;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;quicken&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   LOG(WARNING) &lt;&lt; &#34;&#39;quicken&#39; is an obsolete compiler filter name that will be &#34;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;                &lt;&lt; &#34;removed in future releases, please use &#39;verify&#39; instead.&#34;;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kVerify;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;assume-verified&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kAssumeVerified;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;verify&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kVerify;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;space&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kSpace;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;space-profile&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kSpaceProfile;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;speed&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kSpeed;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;speed-profile&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kSpeedProfile;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;everything&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kEverything;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else if (strcmp(option, &#34;everything-profile&#34;) == 0) {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   \*filter = kEverythingProfile;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; } else {</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20;   return false;</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; }</span>
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl><span class=o>&amp;</span><span class=c1>#x20; return true;</span>
-</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;verify-none&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>LOG</span><span class=p>(</span><span class=n>WARNING</span><span class=p>)</span> <span class=o>&lt;&lt;</span> <span class=s2>&#34;&#39;verify-none&#39; is an obsolete compiler filter name that will be &#34;</span>
+</span></span><span class=line><span class=cl>                 <span class=o>&lt;&lt;</span> <span class=s2>&#34;removed in future releases, please use &#39;assume-verified&#39; instead.&#34;</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kAssumeVerified</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;interpret-only&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>LOG</span><span class=p>(</span><span class=n>WARNING</span><span class=p>)</span> <span class=o>&lt;&lt;</span> <span class=s2>&#34;&#39;interpret-only&#39; is an obsolete compiler filter name that will be &#34;</span>
+</span></span><span class=line><span class=cl>                 <span class=o>&lt;&lt;</span> <span class=s2>&#34;removed in future releases, please use &#39;verify&#39; instead.&#34;</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kVerify</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;verify-profile&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>LOG</span><span class=p>(</span><span class=n>WARNING</span><span class=p>)</span> <span class=o>&lt;&lt;</span> <span class=s2>&#34;&#39;verify-profile&#39; is an obsolete compiler filter name that will be &#34;</span>
+</span></span><span class=line><span class=cl>                 <span class=o>&lt;&lt;</span> <span class=s2>&#34;removed in future releases, please use &#39;verify&#39; instead.&#34;</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kVerify</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;verify-at-runtime&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>LOG</span><span class=p>(</span><span class=n>WARNING</span><span class=p>)</span> <span class=o>&lt;&lt;</span> <span class=s2>&#34;&#39;verify-at-runtime&#39; is an obsolete compiler filter name that will be &#34;</span>
+</span></span><span class=line><span class=cl>                 <span class=o>&lt;&lt;</span> <span class=s2>&#34;removed in future releases, please use &#39;verify&#39; instead.&#34;</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kVerify</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;balanced&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>LOG</span><span class=p>(</span><span class=n>WARNING</span><span class=p>)</span> <span class=o>&lt;&lt;</span> <span class=s2>&#34;&#39;balanced&#39; is an obsolete compiler filter name that will be &#34;</span>
+</span></span><span class=line><span class=cl>                 <span class=o>&lt;&lt;</span> <span class=s2>&#34;removed in future releases, please use &#39;speed&#39; instead.&#34;</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kSpeed</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;time&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>LOG</span><span class=p>(</span><span class=n>WARNING</span><span class=p>)</span> <span class=o>&lt;&lt;</span> <span class=s2>&#34;&#39;time&#39; is an obsolete compiler filter name that will be &#34;</span>
+</span></span><span class=line><span class=cl>                 <span class=o>&lt;&lt;</span> <span class=s2>&#34;removed in future releases, please use &#39;space&#39; instead.&#34;</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kSpace</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;extract&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>LOG</span><span class=p>(</span><span class=n>WARNING</span><span class=p>)</span> <span class=o>&lt;&lt;</span> <span class=s2>&#34;&#39;extract&#39; is an obsolete compiler filter name that will be &#34;</span>
+</span></span><span class=line><span class=cl>                 <span class=o>&lt;&lt;</span> <span class=s2>&#34;removed in future releases, please use &#39;verify&#39; instead.&#34;</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kVerify</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;quicken&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>LOG</span><span class=p>(</span><span class=n>WARNING</span><span class=p>)</span> <span class=o>&lt;&lt;</span> <span class=s2>&#34;&#39;quicken&#39; is an obsolete compiler filter name that will be &#34;</span>
+</span></span><span class=line><span class=cl>                 <span class=o>&lt;&lt;</span> <span class=s2>&#34;removed in future releases, please use &#39;verify&#39; instead.&#34;</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kVerify</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;assume-verified&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kAssumeVerified</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;verify&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kVerify</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;space&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kSpace</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;space-profile&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kSpaceProfile</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;speed&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kSpeed</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;speed-profile&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kSpeedProfile</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;everything&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kEverything</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>strcmp</span><span class=p>(</span><span class=n>option</span><span class=p>,</span> <span class=s2>&#34;everything-profile&#34;</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=o>*</span><span class=n>filter</span> <span class=o>=</span> <span class=n>kEverythingProfile</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=bp>false</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=bp>true</span><span class=p>;</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
 </span></span></code></pre></td></tr></table></div></div><p>代码逻辑说明：函数接收参数字符串 <code>option</code> 和输出指针 <code>filter</code>，通过 <code>strcmp</code> 匹配参数值，将过时参数映射到新参数并输出 WARNING 日志，合法参数直接赋值对应的 <code>Filter</code> 枚举值，不匹配则返回 <code>false</code> 表示参数无效。</p><h2 id=二参数映射关系过时参数与新参数对应>二、参数映射关系：过时参数与新参数对应</h2><p>代码中明确标记了「过时参数」（obsolete），并映射到新参数（未来版本将移除旧参数）。以下是完整的参数映射表，对应 <code>Filter</code> 枚举值与实际编译策略：</p><table><thead><tr><th>过时参数（将移除）</th><th>替代新参数</th><th>对应枚举值</th><th>核心说明</th></tr></thead><tbody><tr><td><code>verify-none</code></td><td><code>assume-verified</code></td><td><code>kAssumeVerified</code></td><td>跳过 DEX 验证，直接编译</td></tr><tr><td><code>interpret-only</code></td><td><code>verify</code></td><td><code>kVerify</code></td><td>仅验证 DEX，少量编译</td></tr><tr><td><code>verify-profile</code></td><td><code>verify</code></td><td><code>kVerify</code></td><td>验证 DEX + 参考配置文件</td></tr><tr><td><code>verify-at-runtime</code></td><td><code>verify</code></td><td><code>kVerify</code></td><td>运行时验证 DEX</td></tr><tr><td><code>extract</code></td><td><code>verify</code></td><td><code>kVerify</code></td><td>提取 DEX 元数据 + 验证</td></tr><tr><td><code>quicken</code></td><td><code>verify</code></td><td><code>kVerify</code></td><td>轻量优化 DEX + 验证</td></tr><tr><td><code>balanced</code></td><td><code>speed</code></td><td><code>kSpeed</code></td><td>平衡优化 → 优先速度优化</td></tr><tr><td><code>time</code></td><td><code>space</code></td><td><code>kSpace</code></td><td>时间优化 → 优先空间优化</td></tr></tbody></table><blockquote><p>注意：使用过时参数时，</p><p><code>dex2oat</code></p><p>会输出 WARNING 日志，提醒迁移至新参数，避免未来版本兼容性问题。</p></blockquote><h2 id=三核心参数详解新参数>三、核心参数详解（新参数）</h2><p>以下是当前支持的非过时参数，按「验证策略 → 基础优化 → 智能优化 → 全量优化」的逻辑分类，详细说明其作用、效果和适用场景：</p><h3 id=1-验证相关参数控制-dex-验证行为>1. 验证相关参数：控制 DEX 验证行为</h3><h4 id=assume-verified对应-kassumeverified><code>assume-verified</code>（对应 <code>kAssumeVerified</code>）</h4><ul><li><p><strong>核心行为</strong>：假设输入的 DEX 文件已通过完整性和安全性验证（如系统预装应用、厂商签名的可信应用），编译时直接跳过 DEX 验证步骤。</p></li><li><p><strong>效果</strong>：</p><ul><li><p>优点：编译速度最快（省去验证开销），适合快速安装；</p></li><li><p>缺点：安全性降低（若 DEX 被篡改，可能导致应用崩溃或安全风险）。</p></li></ul></li><li><p><strong>适用场景</strong>：系统核心应用（如 Launcher、Settings）、可信来源的预安装应用，普通第三方应用不推荐。</p></li></ul><h4 id=verify对应-kverify><code>verify</code>（对应 <code>kVerify</code>）</h4><ul><li><p><strong>核心行为</strong>：编译前执行完整的 DEX 验证（检查语法正确性、类型安全、权限合规等），验证通过后仅编译「启动必需的少量代码」，其余代码依赖 JIT 即时编译。</p></li><li><p><strong>效果</strong>：</p><ul><li><p>优点：安全性高（避免恶意 DEX 执行），安装速度较快；</p></li><li><p>缺点：运行时可能有 JIT 编译开销，性能中等。</p></li></ul></li><li><p><strong>适用场景</strong>：安全性要求高的轻量应用、第三方应用（无特殊性能需求）。</p></li></ul><h3 id=2-基础优化参数固定优化目标速度--空间>2. 基础优化参数：固定优化目标（速度 / 空间）</h3><h4 id=space对应-kspace><code>space</code>（对应 <code>kSpace</code>）</h4><ul><li><p><strong>核心行为</strong>：优先优化「存储占用」，采用空间高效的编译策略（如简化代码优化、移除冗余指令、压缩机器码），编译所有必要代码但不做激进优化。</p></li><li><p><strong>效果</strong>：</p><ul><li><p>优点：OAT 文件体积最小，存储开销低，编译速度较快；</p></li><li><p>缺点：运行性能中等（牺牲部分速度换空间）。</p></li></ul></li><li><p><strong>适用场景</strong>：存储紧张的设备（如入门级手机）、轻量工具类应用（如计算器、记事本）。</p></li></ul><h4 id=speed对应-kspeed><code>speed</code>（对应 <code>kSpeed</code>）</h4><ul><li><p><strong>核心行为</strong>：优先优化「运行性能」，采用激进的速度优化（如循环展开、函数内联、常量传播、寄存器分配优化），编译所有核心代码。</p></li><li><p><strong>效果</strong>：</p><ul><li><p>优点：应用启动速度快、运行流畅（无明显 JIT 开销）；</p></li><li><p>缺点：OAT 文件体积大，编译时间长（安装慢）。</p></li></ul></li><li><p><strong>适用场景</strong>：性能敏感应用（如游戏、视频编辑、导航软件、大型电商 App）。</p></li></ul><h3 id=3-智能优化参数结合-profile-热点数据>3. 智能优化参数：结合 Profile 热点数据</h3><p>（带 <code>profile</code> 后缀的参数，是 Android 7.0+ 推荐的默认策略，核心是「针对性优化」）</p><h4 id=space-profile对应-kspaceprofile><code>space-profile</code>（对应 <code>kSpaceProfile</code>）</h4><ul><li><p><strong>核心行为</strong>：结合应用的「运行时配置文件（Profile）」—— 记录用户常用的热点代码（如首页、高频功能），仅对热点代码做空间优化编译，非热点代码轻量处理或不编译。</p></li><li><p><strong>效果</strong>：平衡「空间占用」和「性能」，热点代码优化空间，非热点代码不浪费存储，编译时间比 <code>space</code> 稍长但更高效。</p></li><li><p><strong>适用场景</strong>：大多数普通应用，尤其是用户常用但非性能关键的应用（如社交 App、新闻客户端）。</p></li></ul><h4 id=speed-profile对应-kspeedprofile><code>speed-profile</code>（对应 <code>kSpeedProfile</code>）</h4><ul><li><p><strong>核心行为</strong>：结合 Profile 热点数据，仅对热点代码做激进的速度优化，非热点代码采用轻量编译（或依赖 JIT）。</p></li><li><p><strong>效果</strong>：</p><ul><li><p>优点：安装时间、存储占用、运行性能三者最佳平衡（热点代码快，非热点不浪费资源）；</p></li><li><p>缺点：首次安装时无 Profile 数据，需运行后生成 Profile 再优化（Android 会在应用后台重新编译）。</p></li></ul></li><li><p><strong>适用场景</strong>：Android 系统默认推荐策略，覆盖 90% 以上的第三方应用（如微信、支付宝、抖音等）。</p></li></ul><h3 id=4-全量优化参数编译所有代码>4. 全量优化参数：编译所有代码</h3><h4 id=everything对应-keverything><code>everything</code>（对应 <code>kEverything</code>）</h4><ul><li><p><strong>核心行为</strong>：编译 DEX 文件中的「所有代码」（无遗漏），且对所有代码做激进的速度优化，完全不依赖 JIT 编译。</p></li><li><p><strong>效果</strong>：</p><ul><li><p>优点：运行性能极致（无任何编译开销）；</p></li><li><p>缺点：编译时间极长（安装慢到用户不可接受），OAT 文件体积超大（存储开销极高）。</p></li></ul></li><li><p><strong>适用场景</strong>：极少使用，仅针对特殊需求的核心系统应用（如支付安全组件、实时系统工具）。</p></li></ul><h4 id=everything-profile对应-keverythingprofile><code>everything-profile</code>（对应 <code>kEverythingProfile</code>）</h4><ul><li><p><strong>核心行为</strong>：编译所有代码，同时结合 Profile 数据 —— 热点代码做深度速度优化，非热点代码做基础优化。</p></li><li><p><strong>效果</strong>：比 <code>everything</code> 更平衡，但编译时间和存储占用仍较大，仅适用于对性能要求极致且无存储限制的场景（如高端设备的系统核心服务）。</p></li></ul><h2 id=四参数使用方式>四、参数使用方式</h2><p>编译器过滤器参数通过 <code>dex2oat</code> 工具传递，常见使用场景包括：</p><h3 id=1-命令行直接调用开发--调试>1. 命令行直接调用（开发 / 调试）</h3><p>手动编译 DEX 文件时，通过 <code>--compiler-filter</code> 指定参数：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
@@ -223,46 +117,32 @@
 </span><span class=lnt>4
 </span><span class=lnt>5
 </span><span class=lnt>6
-</span><span class=lnt>7
-</span><span class=lnt>8
-</span><span class=lnt>9
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>\# 示例：用 speed-profile 策略编译 app.dex 为 app.oat
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl># 示例：用 speed-profile 策略编译 app.dex 为 app.oat
 </span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>dex2oat --compiler-filter=speed-profile \\
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>&amp;#x20;       \--dex=./app.dex \\
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>&amp;#x20;       \--oat=./app.oat \\
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>&amp;#x20;       \--instruction-set=arm64-v8a  # 适配目标架构
+</span></span><span class=line><span class=cl>dex2oat --compiler-filter=speed-profile \
+</span></span><span class=line><span class=cl>    --dex=./app.dex \
+</span></span><span class=line><span class=cl>    --oat=./app.oat \
+</span></span><span class=line><span class=cl>    --instruction-set=arm64-v8a
 </span></span></code></pre></td></tr></table></div></div><h3 id=2-系统全局配置需-root--系统编译>2. 系统全局配置（需 Root / 系统编译）</h3><p>修改系统属性 <code>ro.dalvik.vm.compiler_filter</code>，设置全局默认编译策略：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
 </span><span class=lnt>5
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>\# 示例：全局默认使用 space 策略（适用于存储紧张的设备）
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl># 示例：全局默认使用 space 策略（适用于存储紧张的设备）
 </span></span><span class=line><span class=cl>
 </span></span><span class=line><span class=cl>su  # 获取 Root 权限
 </span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>setprop ro.dalvik.vm.compiler\_filter space
+</span></span><span class=line><span class=cl>setprop ro.dalvik.vm.compiler_filter space
 </span></span></code></pre></td></tr></table></div></div><h3 id=3-应用级配置android-80>3. 应用级配置（Android 8.0+）</h3><p>通过 <code>AndroidManifest.xml</code> 的 <code>application</code> 标签添加元数据，指定应用专属编译策略（需系统支持）：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
 </span><span class=lnt>5
-</span><span class=lnt>6
-</span><span class=lnt>7
-</span><span class=lnt>8
-</span><span class=lnt>9
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>\&lt;application&gt;
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>&amp;#x20;   \&lt;meta-data
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>&amp;#x20;       android:name=&#34;dalvik.vm.compiler\_filter&#34;
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>&amp;#x20;       android:value=&#34;speed&#34; /&gt;
-</span></span><span class=line><span class=cl>
-</span></span><span class=line><span class=cl>\&lt;/application&gt;
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>&lt;application&gt;
+</span></span><span class=line><span class=cl>    &lt;meta-data
+</span></span><span class=line><span class=cl>        android:name=&#34;dalvik.vm.compiler_filter&#34;
+</span></span><span class=line><span class=cl>        android:value=&#34;speed&#34; /&gt;
+</span></span><span class=line><span class=cl>&lt;/application&gt;
 </span></span></code></pre></td></tr></table></div></div><h2 id=五最佳实践总结>五、最佳实践总结</h2><ol><li><p><strong>优先使用系统默认策略</strong>：Android 7.0+ 默认采用 <code>speed-profile</code>，兼顾性能、存储和安装速度，无需手动修改；</p></li><li><p><strong>性能敏感应用选 </strong><code>speed</code>：游戏、视频编辑等应用，牺牲安装时间和存储换极致性能；</p></li><li><p><strong>存储紧张选 </strong><code>space</code>：入门级设备或轻量应用，优先控制 OAT 文件体积；</p></li><li><p><strong>系统应用选 </strong><code>assume-verified</code>：可信的系统组件，跳过验证加速安装；</p></li><li><p><strong>避免使用过时参数</strong>：尽快将 <code>verify-none</code>「<code>balanced</code> 等旧参数迁移至新参数，避免未来版本兼容问题；</p></li><li><p><strong>谨慎使用 </strong><code>everything</code><strong> 系列</strong>：仅特殊场景使用，否则会导致安装体验极差。</p></li></ol><h2 id=六总结>六、总结</h2><p>编译器过滤器是 ART 运行时的核心配置，通过 <code>dex2oat</code> 的参数灵活控制编译行为，实现「安装速度」「存储占用」「运行性能」的动态平衡。开发和运维人员需根据应用类型、设备配置选择合适的参数 —— 普通应用无需手动干预（依赖系统默认 <code>speed-profile</code>），特殊场景（性能 / 存储敏感）可针对性调整，同时需注意避免使用过时参数，确保兼容性和稳定性。</p><p>了解这些参数，不仅能帮助优化应用体验，也能深入理解 Android ART 运行时的工作原理，为问题排查（如安装慢、占用空间大、运行卡顿）提供方向。</p><blockquote><p>（注：文档部分内容可能由 AI 生成）</p></blockquote></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Nov 20, 2025</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/20250815/ title=使用clion搭建linux内核v6.15调试环境>使用clion搭建linux内核v6.15调试环境</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
 <a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
 <a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2025 bitristan - <a href=/license/>License</a> -
