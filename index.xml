@@ -1,371 +1,372 @@
-<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>学而时习之</title><link>/</link><description>Recent content on 学而时习之</description><generator>Hugo</generator><language>zh-cn</language><lastBuildDate>Fri, 15 Aug 2025 08:04:45 +0800</lastBuildDate><atom:link href="/index.xml" rel="self" type="application/rss+xml"/><item><title>使用clion搭建linux内核v6.15调试环境</title><link>/posts/20250815/</link><pubDate>Fri, 15 Aug 2025 08:04:45 +0800</pubDate><guid>/posts/20250815/</guid><description>&lt;h1 id="概述">概述&lt;/h1>
-&lt;p>本文以clion为开发工具，搭建一个linux6.15版本内核的调试环境。
-主机环境: debian 12.11 amd64&lt;/p>
-&lt;p>如果希望在macos 环境下调试，推荐使用 orbstack虚拟机，也非常方便。可以参考文章最后给出的链接。&lt;/p></description></item><item><title>WebRTC源码中添加自定义target</title><link>/posts/20240611/</link><pubDate>Tue, 11 Jun 2024 15:53:32 +0800</pubDate><guid>/posts/20240611/</guid><description>&lt;h1 id="概述">概述&lt;/h1>
-&lt;p>WebRTC是一个高度模块化的工程结构。在研究WebRTC源码的时候，我们可能经常需要在源码中添加一些测试代码。为了更方便管理，通常我们可能会添加一个独立的编译模块。&lt;/p></description></item><item><title>qemu运行riscv裸机程序</title><link>/posts/20240410/</link><pubDate>Wed, 10 Apr 2024 13:59:32 +0800</pubDate><guid>/posts/20240410/</guid><description>&lt;h1 id="概述">概述&lt;/h1>
-&lt;p>RISC-V，作为一种开源的指令集架构（ISA），因其简洁性和灵活性而受到广泛关注。&lt;/p>
-&lt;p>本文将指导您如何在QEMU模拟器上运行一个基于RISC-V 64位架构的裸机程序，该程序的功能是输出经典的&amp;quot;Hello, RISC-V!&amp;ldquo;消息。&lt;/p></description></item><item><title>操作系统相关学习资料</title><link>/posts/20231203/</link><pubDate>Sun, 03 Dec 2023 19:04:32 +0800</pubDate><guid>/posts/20231203/</guid><description>&lt;h1 id="书籍">书籍&lt;/h1>
-&lt;ul>
-&lt;li>《深入理解Linux内核》 Daniel P·Bovet&lt;/li>
-&lt;li>《Linux内核设计与实现》 Robert Love&lt;/li>
-&lt;li>《深入理解Linux虚拟内存管理》 Mel Gorman&lt;/li>
-&lt;li>《深入Linux内核架构》 Wolfgang Mauerer&lt;/li>
-&lt;li>《Linux内核完全注释》 赵炯&lt;/li>
-&lt;li>《Linux内核设计的艺术》 新设计团队&lt;/li>
-&lt;li>《Linux内核源代码情景分析》 毛德操 胡希明&lt;/li>
-&lt;li>《UNIX xv6内核源码深入剖析》 高联雄&lt;/li>
-&lt;li>《FreeBSD操作系统设计与实现》 Marshall Kirk McKusick&lt;/li>
-&lt;li>《ARM Linux内核源码剖析》 尹锡训&lt;/li>
-&lt;/ul>
-&lt;h1 id="阅读资料">阅读资料&lt;/h1>
-&lt;ul>
-&lt;li>
-&lt;a href="https://0xax.gitbooks.io/linux-insides/content/" target="_blank" rel="noopener">linux-insides&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://mp.weixin.qq.com/mp/appmsgalbum?__biz=Mzk0MjE3NDE0Ng==&amp;amp;action=getalbum&amp;amp;album_id=2123743679373688834&amp;amp;subscene=159&amp;amp;subscene=&amp;amp;scenenote=https%3A%2F%2Fmp.weixin.qq.com%2Fs%2FtvbkGLfhDq03xxM-FZ4zuA&amp;amp;nolastread=1#wechat_redirect" target="_blank" rel="noopener">linux源码趣读&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://richardweiyang-2.gitbook.io/kernel-exploring/" target="_blank" rel="noopener">kernel exploring&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://www.kernel.org/doc/gorman/html/understand/" target="_blank" rel="noopener">Understanding the Linux Virtual Memory Management&lt;/a>&lt;/li>
-&lt;/ul>
-&lt;h1 id="操作系统动手实验">操作系统动手实验&lt;/h1>
-&lt;ul>
-&lt;li>
-&lt;a href="https://pdos.csail.mit.edu/6.828/2023/xv6.html" target="_blank" rel="noopener">Xv6, a simple Unix-like teaching operating system&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://xiayingp.gitbook.io/build_a_os/" target="_blank" rel="noopener">Learn OS with me&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://courses.cs.washington.edu/courses/csep551/19au/" target="_blank" rel="noopener">CSEP 551: Operating Systems&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/VOID001/neu-os" target="_blank" rel="noopener">neu-os&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/vitaminac/minios" target="_blank" rel="noopener">mini x86 Operating System&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://littleosbook.github.io/" target="_blank" rel="noopener">The little book about OS development&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://samypesse.gitbook.io/how-to-create-an-operating-system" target="_blank" rel="noopener">How to make an Operating System&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/Simple-XX/SimpleKernel" target="_blank" rel="noopener">Simple kernel for learning operating systems&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="http://skelix.net/skelixos/index_en.html" target="_blank" rel="noopener">Skelix OS&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://www.askpure.com/course_KH3775IW-COUS3DX1-1Y2VUM3Q-CE78MA15.html" target="_blank" rel="noopener">跟我一起写操作系统&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://www.bilibili.com/video/BV1Q5411w7z5/?p=1&amp;amp;vd_source=d171f6a26f4398ae1b70be5853bfb735" target="_blank" rel="noopener">循序渐进，学习开发一个RISC-V上的操作系统&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/plctlab/riscv-operating-system-mooc" target="_blank" rel="noopener">《从头写一个RISC-V OS》课程配套的资源&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/cccriscv/mini-riscv-os" target="_blank" rel="noopener">Build a minimal multi-tasking OS kernel for RISC-V from scratch&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://osblog.stephenmarz.com/" target="_blank" rel="noopener">The Adventures of OS: Making a RISC-V Operating System using Rust&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/jserv/mini-arm-os" target="_blank" rel="noopener">Build a minimal multi-tasking OS kernel for ARM from scratch&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/phil-opp/blog_os" target="_blank" rel="noopener">Writing an OS in Rust&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://rcore-os.cn/rCore-Tutorial-Book-v3/index.html" target="_blank" rel="noopener">从零开始用Rust语言写一个基于RISC-V架构的类Unix内核&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/yifengyou/os-elephant" target="_blank" rel="noopener">操作系统真相还原&lt;/a>&lt;/li>
-&lt;/ul>
-&lt;h1 id="源码">源码&lt;/h1>
-&lt;ul>
-&lt;li>
-&lt;a href="https://github.com/torvalds/linux" target="_blank" rel="noopener">Linux&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/freebsd/freebsd-src" target="_blank" rel="noopener">FreeBSD&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://www.openbsd.org/" target="_blank" rel="noopener">OpenBSD&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="http://gerrit.minix3.org/" target="_blank" rel="noopener">minix3&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/mit-pdos/xv6-public" target="_blank" rel="noopener">xv6-public&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/mit-pdos/xv6-riscv" target="_blank" rel="noopener">xv6-riscv&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://gitee.com/openharmony" target="_blank" rel="noopener">OpenHarmony&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/webosose" target="_blank" rel="noopener">WebOS&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/azure-rtos/threadx" target="_blank" rel="noopener">ThreadX&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/apache/nuttx" target="_blank" rel="noopener">apache/nuttx&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/FreeRTOS/FreeRTOS" target="_blank" rel="noopener">FreeRTOS&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/RT-Thread/rt-thread" target="_blank" rel="noopener">RT-Thread&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://atomgit.com/OpenAtomFoundation/TobudOS" target="_blank" rel="noopener">TobudOS&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/alibaba/AliOS-Things" target="_blank" rel="noopener">AliOS-Things&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://gitee.com/LiteOS" target="_blank" rel="noopener">Huawei LiteOS&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://github.com/redox-os/redox" target="_blank" rel="noopener">Redox&lt;/a>&lt;/li>
-&lt;li>
-&lt;a href="https://www.chromium.org/chromium-os" target="_blank" rel="noopener">Chromium OS&lt;/a>&lt;/li>
-&lt;/ul></description></item><item><title>搭建linux2.6.26内核编译调试环境</title><link>/posts/20231120/</link><pubDate>Sun, 19 Nov 2023 20:16:28 +0800</pubDate><guid>/posts/20231120/</guid><description>&lt;h1 id="概述">概述&lt;/h1>
-&lt;p>关于linux内核的基本经典书籍都是基于linux 2.4或者2.6版本，为了更好的阅读我们需要搭建一个老版本的linux内核调试环境。&lt;/p>
-&lt;p>本文以linux 2.6.26版本的内核为例，介绍如何使用docker搭建一个适用于mac/linux的linux内核32位i386编译调试环境。&lt;/p></description></item><item><title>nginx搭建rtmp推拉流服务器</title><link>/posts/20230729/</link><pubDate>Sat, 29 Jul 2023 14:40:10 +0800</pubDate><guid>/posts/20230729/</guid><description>&lt;h1 id="概述">概述&lt;/h1>
-&lt;p>使用nginx搭建rtmp/hls/http-flv推拉流服务。
-环境: Debian bullseye。&lt;/p>
-&lt;h1 id="nginx安装">nginx安装&lt;/h1>
-&lt;p>1.下载 nginx，nginx-http-flv-module 到同一路径下，由于 http-flv-module 支持 http-flv/rtmp/hls，所以只需要添加这一个模块就行了&lt;/p></description></item><item><title>x86系统最简单的bootloader引导扇区</title><link>/posts/20230105/</link><pubDate>Thu, 05 Jan 2023 14:21:31 +0800</pubDate><guid>/posts/20230105/</guid><description>&lt;h1 id="x86启动过程">X86启动过程&lt;/h1>
-&lt;p>x86的计算机启动时，BIOS检测到启动设备的第一个扇区如果是以0x55aa结尾，那么就会将第一个扇区加载到内存0x7c00处，并跳转到这个地方执行。具体的流程网上资料很多，不再赘述。&lt;/p></description></item><item><title>安卓使用prefab特性在AAR中导出和导入原生so依赖</title><link>/posts/2022032601/</link><pubDate>Sat, 26 Mar 2022 16:16:00 +0800</pubDate><guid>/posts/2022032601/</guid><description>&lt;h1 id="概述">概述&lt;/h1>
-&lt;p>我们知道AAR中的so是无法被直接gradle引用的，要使用AAR中的so，要么手动将so解压出来，要么定义一个gradle task自动将so解压到指定路径进行引用。&lt;/p></description></item><item><title>RecyclerView嵌套RecyclerView自动滚动的问题</title><link>/posts/2022031901/</link><pubDate>Sat, 19 Mar 2022 22:12:10 +0800</pubDate><guid>/posts/2022031901/</guid><description>&lt;h1 id="问题描述">问题描述&lt;/h1>
-&lt;p>最近发现一个比较有意思的问题，在RecyclerView的item布局中存在RecyclerView的时候，界面会在没有操作的时候自动滚动。&lt;/p></description></item><item><title>Android JNI静态注册和动态注册</title><link>/posts/20220317/</link><pubDate>Thu, 17 Mar 2022 08:26:16 +0800</pubDate><guid>/posts/20220317/</guid><description>&lt;h1 id="android-jni静态注册和动态注册">Android JNI静态注册和动态注册&lt;/h1>
-&lt;h2 id="静态注册">静态注册&lt;/h2>
-&lt;ol>
-&lt;li>首先在kotlin侧定义native方法&lt;/li>
-&lt;/ol>
-&lt;div class="highlight">&lt;div class="chroma">
-&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
-&lt;/span>&lt;span class="lnt"> 2
-&lt;/span>&lt;span class="lnt"> 3
-&lt;/span>&lt;span class="lnt"> 4
-&lt;/span>&lt;span class="lnt"> 5
-&lt;/span>&lt;span class="lnt"> 6
-&lt;/span>&lt;span class="lnt"> 7
-&lt;/span>&lt;span class="lnt"> 8
-&lt;/span>&lt;span class="lnt"> 9
-&lt;/span>&lt;span class="lnt">10
-&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
-&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code class="language-go" data-lang="go">&lt;span class="line">&lt;span class="cl">&lt;span class="kn">package&lt;/span> &lt;span class="nx">com&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="nx">example&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="nx">jni&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="nx">tutorial&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nx">class&lt;/span> &lt;span class="nx">Util&lt;/span> &lt;span class="p">{&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nx">companion&lt;/span> &lt;span class="nx">object&lt;/span> &lt;span class="p">{&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="err">@&lt;/span>&lt;span class="nx">JvmStatic&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nx">external&lt;/span> &lt;span class="nx">fun&lt;/span> &lt;span class="nf">staticClassMethod&lt;/span>&lt;span class="p">():&lt;/span> &lt;span class="nx">String&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nx">external&lt;/span> &lt;span class="nx">fun&lt;/span> &lt;span class="nf">staticObjectMethod&lt;/span>&lt;span class="p">():&lt;/span> &lt;span class="nx">String&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
-&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
-&lt;/div>
-&lt;/div>&lt;ol start="2">
-&lt;li>然后在C++侧定义对应的方法实现，方法名称按照规则，需要注意的是静态方法有一个jclass类型的参数，而非静态方法则是一个jobject类型的参数，分别表示类和对象的信息。&lt;/li>
-&lt;/ol>
-&lt;div class="highlight">&lt;div class="chroma">
-&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
-&lt;/span>&lt;span class="lnt"> 2
-&lt;/span>&lt;span class="lnt"> 3
-&lt;/span>&lt;span class="lnt"> 4
-&lt;/span>&lt;span class="lnt"> 5
-&lt;/span>&lt;span class="lnt"> 6
-&lt;/span>&lt;span class="lnt"> 7
-&lt;/span>&lt;span class="lnt"> 8
-&lt;/span>&lt;span class="lnt"> 9
-&lt;/span>&lt;span class="lnt">10
-&lt;/span>&lt;span class="lnt">11
-&lt;/span>&lt;span class="lnt">12
-&lt;/span>&lt;span class="lnt">13
-&lt;/span>&lt;span class="lnt">14
-&lt;/span>&lt;span class="lnt">15
-&lt;/span>&lt;span class="lnt">16
-&lt;/span>&lt;span class="lnt">17
-&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
-&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code class="language-fallback" data-lang="fallback">&lt;span class="line">&lt;span class="cl">extern &amp;#34;C&amp;#34;
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">JNIEXPORT jstring JNICALL
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">Java_com_example_jni_tutorial_Util_staticClassMethod(JNIEnv *env,
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> jclass clazz) {
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> logd(&amp;#34;static class method called&amp;#34;);
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> std::string hello = &amp;#34;staticClassMethod&amp;#34;;
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> return env-&amp;gt;NewStringUTF(hello.c_str());
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">}
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">extern &amp;#34;C&amp;#34;
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">JNIEXPORT jstring JNICALL
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">Java_com_example_jni_tutorial_Util_staticObjectMethod(JNIEnv *env,
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> jobject thiz) {
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> logd(&amp;#34;static object method called&amp;#34;);
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> std::string hello = &amp;#34;staticObjectMethod&amp;#34;;
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> return env-&amp;gt;NewStringUTF(hello.c_str());
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">}
-&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
-&lt;/div>
-&lt;/div>&lt;h2 id="动态注册">动态注册&lt;/h2>
-&lt;ol>
-&lt;li>在kotlin侧定义native方法&lt;/li>
-&lt;/ol>
-&lt;div class="highlight">&lt;div class="chroma">
-&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
-&lt;/span>&lt;span class="lnt"> 2
-&lt;/span>&lt;span class="lnt"> 3
-&lt;/span>&lt;span class="lnt"> 4
-&lt;/span>&lt;span class="lnt"> 5
-&lt;/span>&lt;span class="lnt"> 6
-&lt;/span>&lt;span class="lnt"> 7
-&lt;/span>&lt;span class="lnt"> 8
-&lt;/span>&lt;span class="lnt"> 9
-&lt;/span>&lt;span class="lnt">10
-&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
-&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code class="language-go" data-lang="go">&lt;span class="line">&lt;span class="cl">&lt;span class="kn">package&lt;/span> &lt;span class="nx">com&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="nx">example&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="nx">jni&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="nx">tutorial&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nx">class&lt;/span> &lt;span class="nx">Util&lt;/span> &lt;span class="p">{&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nx">companion&lt;/span> &lt;span class="nx">object&lt;/span> &lt;span class="p">{&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="err">@&lt;/span>&lt;span class="nx">JvmStatic&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nx">external&lt;/span> &lt;span class="nx">fun&lt;/span> &lt;span class="nf">dynamicClassMethod&lt;/span>&lt;span class="p">():&lt;/span> &lt;span class="nx">String&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nx">external&lt;/span> &lt;span class="nx">fun&lt;/span> &lt;span class="nf">dynamicObjectMethod&lt;/span>&lt;span class="p">():&lt;/span> &lt;span class="nx">String&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
-&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
-&lt;/div>
-&lt;/div>&lt;ol start="2">
-&lt;li>在C++侧定义对应的方法，由于是动态注册，方法名可以随意命名，但是方法参数和返回值还是需要按照native方法的定义来。&lt;/li>
-&lt;/ol>
-&lt;div class="highlight">&lt;div class="chroma">
-&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
-&lt;/span>&lt;span class="lnt"> 2
-&lt;/span>&lt;span class="lnt"> 3
-&lt;/span>&lt;span class="lnt"> 4
-&lt;/span>&lt;span class="lnt"> 5
-&lt;/span>&lt;span class="lnt"> 6
-&lt;/span>&lt;span class="lnt"> 7
-&lt;/span>&lt;span class="lnt"> 8
-&lt;/span>&lt;span class="lnt"> 9
-&lt;/span>&lt;span class="lnt">10
-&lt;/span>&lt;span class="lnt">11
-&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
-&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code class="language-fallback" data-lang="fallback">&lt;span class="line">&lt;span class="cl">jstring dynamicClassMethod(JNIEnv *env, jclass clazz) {
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> logd(&amp;#34;dynamic class method called&amp;#34;);
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> std::string hello = &amp;#34;dynamicClassMethod&amp;#34;;
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> return env-&amp;gt;NewStringUTF(hello.c_str());
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">}
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">jstring dynamicObjectMethod(JNIEnv *env, jobject obj) {
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> logd(&amp;#34;dynamic object method called&amp;#34;);
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> std::string hello = &amp;#34;dynamicObjectMethod&amp;#34;;
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> return env-&amp;gt;NewStringUTF(hello.c_str());
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">}
-&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
-&lt;/div>
-&lt;/div>&lt;ol start="3">
-&lt;li>实现 JNI_Onload，动态注册方法，JNI_Onload会在 System.loadLibrary执行成功后执行。&lt;/li>
-&lt;/ol>
-&lt;div class="highlight">&lt;div class="chroma">
-&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
-&lt;/span>&lt;span class="lnt"> 2
-&lt;/span>&lt;span class="lnt"> 3
-&lt;/span>&lt;span class="lnt"> 4
-&lt;/span>&lt;span class="lnt"> 5
-&lt;/span>&lt;span class="lnt"> 6
-&lt;/span>&lt;span class="lnt"> 7
-&lt;/span>&lt;span class="lnt"> 8
-&lt;/span>&lt;span class="lnt"> 9
-&lt;/span>&lt;span class="lnt">10
-&lt;/span>&lt;span class="lnt">11
-&lt;/span>&lt;span class="lnt">12
-&lt;/span>&lt;span class="lnt">13
-&lt;/span>&lt;span class="lnt">14
-&lt;/span>&lt;span class="lnt">15
-&lt;/span>&lt;span class="lnt">16
-&lt;/span>&lt;span class="lnt">17
-&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
-&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code class="language-gdscript3" data-lang="gdscript3">&lt;span class="line">&lt;span class="cl">&lt;span class="k">static&lt;/span> &lt;span class="k">const&lt;/span> &lt;span class="n">JNINativeMethod&lt;/span> &lt;span class="n">methods&lt;/span>&lt;span class="p">[]&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="p">{&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>&lt;span class="s2">&amp;#34;dynamicClassMethod&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s2">&amp;#34;()Ljava/lang/String;&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">void&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="n">dynamicClassMethod&lt;/span>&lt;span class="p">},&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">{&lt;/span>&lt;span class="s2">&amp;#34;dynamicObjectMethod&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="s2">&amp;#34;()Ljava/lang/String;&amp;#34;&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">void&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="n">dynamicObjectMethod&lt;/span>&lt;span class="p">}&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">};&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="k">static&lt;/span> &lt;span class="k">const&lt;/span> &lt;span class="n">char&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">className&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="s2">&amp;#34;com/example/jni/tutorial/Util&amp;#34;&lt;/span>&lt;span class="p">;&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="ne">int&lt;/span> &lt;span class="n">JNI_OnLoad&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">JavaVM&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">vm&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">void&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">reserved&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="p">{&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">logd&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="s2">&amp;#34;Jni_OnLoad called&amp;#34;&lt;/span>&lt;span class="p">);&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">JNIEnv&lt;/span> &lt;span class="o">*&lt;/span>&lt;span class="n">env&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">nullptr&lt;/span>&lt;span class="p">;&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="ne">int&lt;/span> &lt;span class="n">registerResult&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">vm&lt;/span>&lt;span class="o">-&amp;gt;&lt;/span>&lt;span class="n">GetEnv&lt;/span>&lt;span class="p">((&lt;/span>&lt;span class="n">void&lt;/span> &lt;span class="o">**&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">&amp;amp;&lt;/span>&lt;span class="n">env&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">JNI_VERSION_1_6&lt;/span>&lt;span class="p">);&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="p">(&lt;/span>&lt;span class="n">registerResult&lt;/span> &lt;span class="o">!=&lt;/span> &lt;span class="n">JNI_OK&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="p">{&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">return&lt;/span> &lt;span class="o">-&lt;/span>&lt;span class="mi">1&lt;/span>&lt;span class="p">;&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="p">}&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">jclass&lt;/span> &lt;span class="n">jclazz&lt;/span> &lt;span class="o">=&lt;/span> &lt;span class="n">env&lt;/span>&lt;span class="o">-&amp;gt;&lt;/span>&lt;span class="n">FindClass&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">className&lt;/span>&lt;span class="p">);&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="n">env&lt;/span>&lt;span class="o">-&amp;gt;&lt;/span>&lt;span class="n">RegisterNatives&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">jclazz&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">methods&lt;/span>&lt;span class="p">,&lt;/span> &lt;span class="n">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">methods&lt;/span>&lt;span class="p">)&lt;/span> &lt;span class="o">/&lt;/span> &lt;span class="n">sizeof&lt;/span>&lt;span class="p">(&lt;/span>&lt;span class="n">JNINativeMethod&lt;/span>&lt;span class="p">));&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">return&lt;/span> &lt;span class="n">JNI_VERSION_1_6&lt;/span>&lt;span class="p">;&lt;/span>
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="p">}&lt;/span>
-&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
-&lt;/div>
-&lt;/div>&lt;h2 id="在jni中输出log">在JNI中输出LOG&lt;/h2>
-&lt;ol>
-&lt;li>CMakeLists.txt中加载log库&lt;/li>
-&lt;/ol>
-&lt;div class="highlight">&lt;div class="chroma">
-&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
-&lt;/span>&lt;span class="lnt">2
-&lt;/span>&lt;span class="lnt">3
-&lt;/span>&lt;span class="lnt">4
-&lt;/span>&lt;span class="lnt">5
-&lt;/span>&lt;span class="lnt">6
-&lt;/span>&lt;span class="lnt">7
-&lt;/span>&lt;span class="lnt">8
-&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
-&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code class="language-fallback" data-lang="fallback">&lt;span class="line">&lt;span class="cl">find_library(
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> log-lib
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> log
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">)
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">target_link_libraries(${CMAKE_PROJECT_NAME}
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> ${log-lib}
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">)
-&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
-&lt;/div>
-&lt;/div>&lt;ol start="2">
-&lt;li>C++中引用 android/log.h，输出log&lt;/li>
-&lt;/ol>
-&lt;div class="highlight">&lt;div class="chroma">
-&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
-&lt;/span>&lt;span class="lnt">2
-&lt;/span>&lt;span class="lnt">3
-&lt;/span>&lt;span class="lnt">4
-&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
-&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code class="language-c" data-lang="c">&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#ifndef LOG_TAG
-&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#define LOG_TAG &amp;#34;Util&amp;#34;
-&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#define logd(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
-&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#endif
-&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
-&lt;/div>
-&lt;/div>&lt;p>在需要输出log的地方使用 logd 进行输出就可以了，LOG_TAG和log level都可以自定义。&lt;/p></description></item><item><title>OpenGL ES 3.x 实战系列 相机实时滤镜</title><link>/posts/2021052101/</link><pubDate>Fri, 21 May 2021 22:40:39 +0800</pubDate><guid>/posts/2021052101/</guid><description>&lt;h1 id="概述">概述&lt;/h1>
-&lt;p>我们将在Android平台下基于Jetpack CameraX库实现一个简单的OpelGLES3相机预览。&lt;/p>
-&lt;p>CameraX的相关使用可以参考 
-&lt;a href="https://github.com/android/camera-samples" target="_blank" rel="noopener">Google camera-samples&lt;/a>。
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>学而时习之</title><link>/</link><description>Recent content on 学而时习之</description><generator>Hugo</generator><language>zh-cn</language><lastBuildDate>Thu, 20 Nov 2025 08:13:39 +0800</lastBuildDate><atom:link href="/index.xml" rel="self" type="application/rss+xml"/><item><title>20251120</title><link>/posts/20251120/</link><pubDate>Thu, 20 Nov 2025 08:13:39 +0800</pubDate><guid>/posts/20251120/</guid><description>&lt;h1 id="android-art-编译器过滤器详解dex2oat-参数配置与最佳实践"&gt;Android ART 编译器过滤器详解：dex2oat 参数配置与最佳实践&lt;/h1&gt;
+&lt;p&gt;在 Android 系统中，ART（Android Runtime）作为应用的核心运行时，负责将 DEX（Dalvik Executable）文件编译为机器码（OAT 文件）并执行，而这一编译过程的核心控制者是 &lt;code&gt;dex2oat&lt;/code&gt; 工具 ——ART 的 AOT（预编译）编译器。本文聚焦的「编译器过滤器」（Compiler Filter），正是 &lt;code&gt;dex2oat&lt;/code&gt; 最关键的配置参数之一，用于定义编译策略：包括是否验证 DEX 文件、编译范围、优化目标（速度 / 空间）等，直接影响应用的安装速度、存储占用和运行性能。&lt;/p&gt;</description></item><item><title>使用clion搭建linux内核v6.15调试环境</title><link>/posts/20250815/</link><pubDate>Fri, 15 Aug 2025 08:04:45 +0800</pubDate><guid>/posts/20250815/</guid><description>&lt;h1 id="概述"&gt;概述&lt;/h1&gt;
+&lt;p&gt;本文以clion为开发工具，搭建一个linux6.15版本内核的调试环境。
+主机环境: debian 12.11 amd64&lt;/p&gt;
+&lt;p&gt;如果希望在macos 环境下调试，推荐使用 orbstack虚拟机，也非常方便。可以参考文章最后给出的链接。&lt;/p&gt;</description></item><item><title>WebRTC源码中添加自定义target</title><link>/posts/20240611/</link><pubDate>Tue, 11 Jun 2024 15:53:32 +0800</pubDate><guid>/posts/20240611/</guid><description>&lt;h1 id="概述"&gt;概述&lt;/h1&gt;
+&lt;p&gt;WebRTC是一个高度模块化的工程结构。在研究WebRTC源码的时候，我们可能经常需要在源码中添加一些测试代码。为了更方便管理，通常我们可能会添加一个独立的编译模块。&lt;/p&gt;</description></item><item><title>qemu运行riscv裸机程序</title><link>/posts/20240410/</link><pubDate>Wed, 10 Apr 2024 13:59:32 +0800</pubDate><guid>/posts/20240410/</guid><description>&lt;h1 id="概述"&gt;概述&lt;/h1&gt;
+&lt;p&gt;RISC-V，作为一种开源的指令集架构（ISA），因其简洁性和灵活性而受到广泛关注。&lt;/p&gt;
+&lt;p&gt;本文将指导您如何在QEMU模拟器上运行一个基于RISC-V 64位架构的裸机程序，该程序的功能是输出经典的&amp;quot;Hello, RISC-V!&amp;ldquo;消息。&lt;/p&gt;</description></item><item><title>操作系统相关学习资料</title><link>/posts/20231203/</link><pubDate>Sun, 03 Dec 2023 19:04:32 +0800</pubDate><guid>/posts/20231203/</guid><description>&lt;h1 id="书籍"&gt;书籍&lt;/h1&gt;
+&lt;ul&gt;
+&lt;li&gt;《深入理解Linux内核》 Daniel P·Bovet&lt;/li&gt;
+&lt;li&gt;《Linux内核设计与实现》 Robert Love&lt;/li&gt;
+&lt;li&gt;《深入理解Linux虚拟内存管理》 Mel Gorman&lt;/li&gt;
+&lt;li&gt;《深入Linux内核架构》 Wolfgang Mauerer&lt;/li&gt;
+&lt;li&gt;《Linux内核完全注释》 赵炯&lt;/li&gt;
+&lt;li&gt;《Linux内核设计的艺术》 新设计团队&lt;/li&gt;
+&lt;li&gt;《Linux内核源代码情景分析》 毛德操 胡希明&lt;/li&gt;
+&lt;li&gt;《UNIX xv6内核源码深入剖析》 高联雄&lt;/li&gt;
+&lt;li&gt;《FreeBSD操作系统设计与实现》 Marshall Kirk McKusick&lt;/li&gt;
+&lt;li&gt;《ARM Linux内核源码剖析》 尹锡训&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id="阅读资料"&gt;阅读资料&lt;/h1&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;a href="https://0xax.gitbooks.io/linux-insides/content/" target="_blank" rel="noopener"&gt;linux-insides&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://mp.weixin.qq.com/mp/appmsgalbum?__biz=Mzk0MjE3NDE0Ng==&amp;amp;action=getalbum&amp;amp;album_id=2123743679373688834&amp;amp;subscene=159&amp;amp;subscene=&amp;amp;scenenote=https%3A%2F%2Fmp.weixin.qq.com%2Fs%2FtvbkGLfhDq03xxM-FZ4zuA&amp;amp;nolastread=1#wechat_redirect" target="_blank" rel="noopener"&gt;linux源码趣读&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://richardweiyang-2.gitbook.io/kernel-exploring/" target="_blank" rel="noopener"&gt;kernel exploring&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://www.kernel.org/doc/gorman/html/understand/" target="_blank" rel="noopener"&gt;Understanding the Linux Virtual Memory Management&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id="操作系统动手实验"&gt;操作系统动手实验&lt;/h1&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;a href="https://pdos.csail.mit.edu/6.828/2023/xv6.html" target="_blank" rel="noopener"&gt;Xv6, a simple Unix-like teaching operating system&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://xiayingp.gitbook.io/build_a_os/" target="_blank" rel="noopener"&gt;Learn OS with me&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://courses.cs.washington.edu/courses/csep551/19au/" target="_blank" rel="noopener"&gt;CSEP 551: Operating Systems&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/VOID001/neu-os" target="_blank" rel="noopener"&gt;neu-os&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/vitaminac/minios" target="_blank" rel="noopener"&gt;mini x86 Operating System&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://littleosbook.github.io/" target="_blank" rel="noopener"&gt;The little book about OS development&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://samypesse.gitbook.io/how-to-create-an-operating-system" target="_blank" rel="noopener"&gt;How to make an Operating System&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/Simple-XX/SimpleKernel" target="_blank" rel="noopener"&gt;Simple kernel for learning operating systems&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="http://skelix.net/skelixos/index_en.html" target="_blank" rel="noopener"&gt;Skelix OS&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://www.askpure.com/course_KH3775IW-COUS3DX1-1Y2VUM3Q-CE78MA15.html" target="_blank" rel="noopener"&gt;跟我一起写操作系统&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://www.bilibili.com/video/BV1Q5411w7z5/?p=1&amp;amp;vd_source=d171f6a26f4398ae1b70be5853bfb735" target="_blank" rel="noopener"&gt;循序渐进，学习开发一个RISC-V上的操作系统&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/plctlab/riscv-operating-system-mooc" target="_blank" rel="noopener"&gt;《从头写一个RISC-V OS》课程配套的资源&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/cccriscv/mini-riscv-os" target="_blank" rel="noopener"&gt;Build a minimal multi-tasking OS kernel for RISC-V from scratch&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://osblog.stephenmarz.com/" target="_blank" rel="noopener"&gt;The Adventures of OS: Making a RISC-V Operating System using Rust&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/jserv/mini-arm-os" target="_blank" rel="noopener"&gt;Build a minimal multi-tasking OS kernel for ARM from scratch&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/phil-opp/blog_os" target="_blank" rel="noopener"&gt;Writing an OS in Rust&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://rcore-os.cn/rCore-Tutorial-Book-v3/index.html" target="_blank" rel="noopener"&gt;从零开始用Rust语言写一个基于RISC-V架构的类Unix内核&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/yifengyou/os-elephant" target="_blank" rel="noopener"&gt;操作系统真相还原&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h1 id="源码"&gt;源码&lt;/h1&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/torvalds/linux" target="_blank" rel="noopener"&gt;Linux&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/freebsd/freebsd-src" target="_blank" rel="noopener"&gt;FreeBSD&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://www.openbsd.org/" target="_blank" rel="noopener"&gt;OpenBSD&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="http://gerrit.minix3.org/" target="_blank" rel="noopener"&gt;minix3&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/mit-pdos/xv6-public" target="_blank" rel="noopener"&gt;xv6-public&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/mit-pdos/xv6-riscv" target="_blank" rel="noopener"&gt;xv6-riscv&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://gitee.com/openharmony" target="_blank" rel="noopener"&gt;OpenHarmony&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/webosose" target="_blank" rel="noopener"&gt;WebOS&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/azure-rtos/threadx" target="_blank" rel="noopener"&gt;ThreadX&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/apache/nuttx" target="_blank" rel="noopener"&gt;apache/nuttx&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/FreeRTOS/FreeRTOS" target="_blank" rel="noopener"&gt;FreeRTOS&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/RT-Thread/rt-thread" target="_blank" rel="noopener"&gt;RT-Thread&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://atomgit.com/OpenAtomFoundation/TobudOS" target="_blank" rel="noopener"&gt;TobudOS&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/alibaba/AliOS-Things" target="_blank" rel="noopener"&gt;AliOS-Things&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://gitee.com/LiteOS" target="_blank" rel="noopener"&gt;Huawei LiteOS&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/redox-os/redox" target="_blank" rel="noopener"&gt;Redox&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://www.chromium.org/chromium-os" target="_blank" rel="noopener"&gt;Chromium OS&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;</description></item><item><title>搭建linux2.6.26内核编译调试环境</title><link>/posts/20231120/</link><pubDate>Sun, 19 Nov 2023 20:16:28 +0800</pubDate><guid>/posts/20231120/</guid><description>&lt;h1 id="概述"&gt;概述&lt;/h1&gt;
+&lt;p&gt;关于linux内核的基本经典书籍都是基于linux 2.4或者2.6版本，为了更好的阅读我们需要搭建一个老版本的linux内核调试环境。&lt;/p&gt;
+&lt;p&gt;本文以linux 2.6.26版本的内核为例，介绍如何使用docker搭建一个适用于mac/linux的linux内核32位i386编译调试环境。&lt;/p&gt;</description></item><item><title>nginx搭建rtmp推拉流服务器</title><link>/posts/20230729/</link><pubDate>Sat, 29 Jul 2023 14:40:10 +0800</pubDate><guid>/posts/20230729/</guid><description>&lt;h1 id="概述"&gt;概述&lt;/h1&gt;
+&lt;p&gt;使用nginx搭建rtmp/hls/http-flv推拉流服务。
+环境: Debian bullseye。&lt;/p&gt;
+&lt;h1 id="nginx安装"&gt;nginx安装&lt;/h1&gt;
+&lt;p&gt;1.下载 nginx，nginx-http-flv-module 到同一路径下，由于 http-flv-module 支持 http-flv/rtmp/hls，所以只需要添加这一个模块就行了&lt;/p&gt;</description></item><item><title>x86系统最简单的bootloader引导扇区</title><link>/posts/20230105/</link><pubDate>Thu, 05 Jan 2023 14:21:31 +0800</pubDate><guid>/posts/20230105/</guid><description>&lt;h1 id="x86启动过程"&gt;X86启动过程&lt;/h1&gt;
+&lt;p&gt;x86的计算机启动时，BIOS检测到启动设备的第一个扇区如果是以0x55aa结尾，那么就会将第一个扇区加载到内存0x7c00处，并跳转到这个地方执行。具体的流程网上资料很多，不再赘述。&lt;/p&gt;</description></item><item><title>安卓使用prefab特性在AAR中导出和导入原生so依赖</title><link>/posts/2022032601/</link><pubDate>Sat, 26 Mar 2022 16:16:00 +0800</pubDate><guid>/posts/2022032601/</guid><description>&lt;h1 id="概述"&gt;概述&lt;/h1&gt;
+&lt;p&gt;我们知道AAR中的so是无法被直接gradle引用的，要使用AAR中的so，要么手动将so解压出来，要么定义一个gradle task自动将so解压到指定路径进行引用。&lt;/p&gt;</description></item><item><title>RecyclerView嵌套RecyclerView自动滚动的问题</title><link>/posts/2022031901/</link><pubDate>Sat, 19 Mar 2022 22:12:10 +0800</pubDate><guid>/posts/2022031901/</guid><description>&lt;h1 id="问题描述"&gt;问题描述&lt;/h1&gt;
+&lt;p&gt;最近发现一个比较有意思的问题，在RecyclerView的item布局中存在RecyclerView的时候，界面会在没有操作的时候自动滚动。&lt;/p&gt;</description></item><item><title>Android JNI静态注册和动态注册</title><link>/posts/20220317/</link><pubDate>Thu, 17 Mar 2022 08:26:16 +0800</pubDate><guid>/posts/20220317/</guid><description>&lt;h1 id="android-jni静态注册和动态注册"&gt;Android JNI静态注册和动态注册&lt;/h1&gt;
+&lt;h2 id="静态注册"&gt;静态注册&lt;/h2&gt;
+&lt;ol&gt;
+&lt;li&gt;首先在kotlin侧定义native方法&lt;/li&gt;
+&lt;/ol&gt;
+&lt;div class="highlight"&gt;&lt;div class="chroma"&gt;
+&lt;table class="lntable"&gt;&lt;tr&gt;&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code&gt;&lt;span class="lnt"&gt; 1
+&lt;/span&gt;&lt;span class="lnt"&gt; 2
+&lt;/span&gt;&lt;span class="lnt"&gt; 3
+&lt;/span&gt;&lt;span class="lnt"&gt; 4
+&lt;/span&gt;&lt;span class="lnt"&gt; 5
+&lt;/span&gt;&lt;span class="lnt"&gt; 6
+&lt;/span&gt;&lt;span class="lnt"&gt; 7
+&lt;/span&gt;&lt;span class="lnt"&gt; 8
+&lt;/span&gt;&lt;span class="lnt"&gt; 9
+&lt;/span&gt;&lt;span class="lnt"&gt;10
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-go" data-lang="go"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="kn"&gt;package&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;com&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;example&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;jni&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;tutorial&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;&lt;/span&gt;&lt;span class="nx"&gt;class&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;Util&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;companion&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;object&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="err"&gt;@&lt;/span&gt;&lt;span class="nx"&gt;JvmStatic&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;external&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;fun&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;staticClassMethod&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;String&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;external&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;fun&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;staticObjectMethod&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;String&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;&lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;ol start="2"&gt;
+&lt;li&gt;然后在C++侧定义对应的方法实现，方法名称按照规则，需要注意的是静态方法有一个jclass类型的参数，而非静态方法则是一个jobject类型的参数，分别表示类和对象的信息。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;div class="highlight"&gt;&lt;div class="chroma"&gt;
+&lt;table class="lntable"&gt;&lt;tr&gt;&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code&gt;&lt;span class="lnt"&gt; 1
+&lt;/span&gt;&lt;span class="lnt"&gt; 2
+&lt;/span&gt;&lt;span class="lnt"&gt; 3
+&lt;/span&gt;&lt;span class="lnt"&gt; 4
+&lt;/span&gt;&lt;span class="lnt"&gt; 5
+&lt;/span&gt;&lt;span class="lnt"&gt; 6
+&lt;/span&gt;&lt;span class="lnt"&gt; 7
+&lt;/span&gt;&lt;span class="lnt"&gt; 8
+&lt;/span&gt;&lt;span class="lnt"&gt; 9
+&lt;/span&gt;&lt;span class="lnt"&gt;10
+&lt;/span&gt;&lt;span class="lnt"&gt;11
+&lt;/span&gt;&lt;span class="lnt"&gt;12
+&lt;/span&gt;&lt;span class="lnt"&gt;13
+&lt;/span&gt;&lt;span class="lnt"&gt;14
+&lt;/span&gt;&lt;span class="lnt"&gt;15
+&lt;/span&gt;&lt;span class="lnt"&gt;16
+&lt;/span&gt;&lt;span class="lnt"&gt;17
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-fallback" data-lang="fallback"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;extern &amp;#34;C&amp;#34;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;JNIEXPORT jstring JNICALL
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;Java_com_example_jni_tutorial_Util_staticClassMethod(JNIEnv *env,
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; jclass clazz) {
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; logd(&amp;#34;static class method called&amp;#34;);
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; std::string hello = &amp;#34;staticClassMethod&amp;#34;;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; return env-&amp;gt;NewStringUTF(hello.c_str());
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;}
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;extern &amp;#34;C&amp;#34;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;JNIEXPORT jstring JNICALL
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;Java_com_example_jni_tutorial_Util_staticObjectMethod(JNIEnv *env,
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; jobject thiz) {
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; logd(&amp;#34;static object method called&amp;#34;);
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; std::string hello = &amp;#34;staticObjectMethod&amp;#34;;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; return env-&amp;gt;NewStringUTF(hello.c_str());
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;}
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h2 id="动态注册"&gt;动态注册&lt;/h2&gt;
+&lt;ol&gt;
+&lt;li&gt;在kotlin侧定义native方法&lt;/li&gt;
+&lt;/ol&gt;
+&lt;div class="highlight"&gt;&lt;div class="chroma"&gt;
+&lt;table class="lntable"&gt;&lt;tr&gt;&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code&gt;&lt;span class="lnt"&gt; 1
+&lt;/span&gt;&lt;span class="lnt"&gt; 2
+&lt;/span&gt;&lt;span class="lnt"&gt; 3
+&lt;/span&gt;&lt;span class="lnt"&gt; 4
+&lt;/span&gt;&lt;span class="lnt"&gt; 5
+&lt;/span&gt;&lt;span class="lnt"&gt; 6
+&lt;/span&gt;&lt;span class="lnt"&gt; 7
+&lt;/span&gt;&lt;span class="lnt"&gt; 8
+&lt;/span&gt;&lt;span class="lnt"&gt; 9
+&lt;/span&gt;&lt;span class="lnt"&gt;10
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-go" data-lang="go"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="kn"&gt;package&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;com&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;example&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;jni&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;tutorial&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;&lt;/span&gt;&lt;span class="nx"&gt;class&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;Util&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;companion&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;object&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="err"&gt;@&lt;/span&gt;&lt;span class="nx"&gt;JvmStatic&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;external&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;fun&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;dynamicClassMethod&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;String&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;external&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;fun&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;dynamicObjectMethod&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;String&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;&lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;ol start="2"&gt;
+&lt;li&gt;在C++侧定义对应的方法，由于是动态注册，方法名可以随意命名，但是方法参数和返回值还是需要按照native方法的定义来。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;div class="highlight"&gt;&lt;div class="chroma"&gt;
+&lt;table class="lntable"&gt;&lt;tr&gt;&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code&gt;&lt;span class="lnt"&gt; 1
+&lt;/span&gt;&lt;span class="lnt"&gt; 2
+&lt;/span&gt;&lt;span class="lnt"&gt; 3
+&lt;/span&gt;&lt;span class="lnt"&gt; 4
+&lt;/span&gt;&lt;span class="lnt"&gt; 5
+&lt;/span&gt;&lt;span class="lnt"&gt; 6
+&lt;/span&gt;&lt;span class="lnt"&gt; 7
+&lt;/span&gt;&lt;span class="lnt"&gt; 8
+&lt;/span&gt;&lt;span class="lnt"&gt; 9
+&lt;/span&gt;&lt;span class="lnt"&gt;10
+&lt;/span&gt;&lt;span class="lnt"&gt;11
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-fallback" data-lang="fallback"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;jstring dynamicClassMethod(JNIEnv *env, jclass clazz) {
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; logd(&amp;#34;dynamic class method called&amp;#34;);
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; std::string hello = &amp;#34;dynamicClassMethod&amp;#34;;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; return env-&amp;gt;NewStringUTF(hello.c_str());
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;}
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;jstring dynamicObjectMethod(JNIEnv *env, jobject obj) {
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; logd(&amp;#34;dynamic object method called&amp;#34;);
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; std::string hello = &amp;#34;dynamicObjectMethod&amp;#34;;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; return env-&amp;gt;NewStringUTF(hello.c_str());
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;}
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;ol start="3"&gt;
+&lt;li&gt;实现 JNI_Onload，动态注册方法，JNI_Onload会在 System.loadLibrary执行成功后执行。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;div class="highlight"&gt;&lt;div class="chroma"&gt;
+&lt;table class="lntable"&gt;&lt;tr&gt;&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code&gt;&lt;span class="lnt"&gt; 1
+&lt;/span&gt;&lt;span class="lnt"&gt; 2
+&lt;/span&gt;&lt;span class="lnt"&gt; 3
+&lt;/span&gt;&lt;span class="lnt"&gt; 4
+&lt;/span&gt;&lt;span class="lnt"&gt; 5
+&lt;/span&gt;&lt;span class="lnt"&gt; 6
+&lt;/span&gt;&lt;span class="lnt"&gt; 7
+&lt;/span&gt;&lt;span class="lnt"&gt; 8
+&lt;/span&gt;&lt;span class="lnt"&gt; 9
+&lt;/span&gt;&lt;span class="lnt"&gt;10
+&lt;/span&gt;&lt;span class="lnt"&gt;11
+&lt;/span&gt;&lt;span class="lnt"&gt;12
+&lt;/span&gt;&lt;span class="lnt"&gt;13
+&lt;/span&gt;&lt;span class="lnt"&gt;14
+&lt;/span&gt;&lt;span class="lnt"&gt;15
+&lt;/span&gt;&lt;span class="lnt"&gt;16
+&lt;/span&gt;&lt;span class="lnt"&gt;17
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-gdscript3" data-lang="gdscript3"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="k"&gt;static&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;JNINativeMethod&lt;/span&gt; &lt;span class="n"&gt;methods&lt;/span&gt;&lt;span class="p"&gt;[]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="s2"&gt;&amp;#34;dynamicClassMethod&amp;#34;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;&amp;#34;()Ljava/lang/String;&amp;#34;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;void&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="n"&gt;dynamicClassMethod&lt;/span&gt;&lt;span class="p"&gt;},&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="s2"&gt;&amp;#34;dynamicObjectMethod&amp;#34;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;&amp;#34;()Ljava/lang/String;&amp;#34;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;void&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="n"&gt;dynamicObjectMethod&lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="p"&gt;};&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="k"&gt;static&lt;/span&gt; &lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="n"&gt;char&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;className&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;#34;com/example/jni/tutorial/Util&amp;#34;&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="ne"&gt;int&lt;/span&gt; &lt;span class="n"&gt;JNI_OnLoad&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;JavaVM&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;vm&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;void&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;reserved&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="n"&gt;logd&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;#34;Jni_OnLoad called&amp;#34;&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="n"&gt;JNIEnv&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nullptr&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="ne"&gt;int&lt;/span&gt; &lt;span class="n"&gt;registerResult&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;vm&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;GetEnv&lt;/span&gt;&lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;void&lt;/span&gt; &lt;span class="o"&gt;**&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;JNI_VERSION_1_6&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;registerResult&lt;/span&gt; &lt;span class="o"&gt;!=&lt;/span&gt; &lt;span class="n"&gt;JNI_OK&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="n"&gt;jclass&lt;/span&gt; &lt;span class="n"&gt;jclazz&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;FindClass&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;className&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;RegisterNatives&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;jclazz&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;methods&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;sizeof&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;methods&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;sizeof&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;JNINativeMethod&lt;/span&gt;&lt;span class="p"&gt;));&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;JNI_VERSION_1_6&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;h2 id="在jni中输出log"&gt;在JNI中输出LOG&lt;/h2&gt;
+&lt;ol&gt;
+&lt;li&gt;CMakeLists.txt中加载log库&lt;/li&gt;
+&lt;/ol&gt;
+&lt;div class="highlight"&gt;&lt;div class="chroma"&gt;
+&lt;table class="lntable"&gt;&lt;tr&gt;&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code&gt;&lt;span class="lnt"&gt;1
+&lt;/span&gt;&lt;span class="lnt"&gt;2
+&lt;/span&gt;&lt;span class="lnt"&gt;3
+&lt;/span&gt;&lt;span class="lnt"&gt;4
+&lt;/span&gt;&lt;span class="lnt"&gt;5
+&lt;/span&gt;&lt;span class="lnt"&gt;6
+&lt;/span&gt;&lt;span class="lnt"&gt;7
+&lt;/span&gt;&lt;span class="lnt"&gt;8
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-fallback" data-lang="fallback"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;find_library(
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; log-lib
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; log
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;)
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;target_link_libraries(${CMAKE_PROJECT_NAME}
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; ${log-lib}
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;)
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;ol start="2"&gt;
+&lt;li&gt;C++中引用 android/log.h，输出log&lt;/li&gt;
+&lt;/ol&gt;
+&lt;div class="highlight"&gt;&lt;div class="chroma"&gt;
+&lt;table class="lntable"&gt;&lt;tr&gt;&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code&gt;&lt;span class="lnt"&gt;1
+&lt;/span&gt;&lt;span class="lnt"&gt;2
+&lt;/span&gt;&lt;span class="lnt"&gt;3
+&lt;/span&gt;&lt;span class="lnt"&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-c" data-lang="c"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="cp"&gt;#ifndef LOG_TAG
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="cp"&gt;#define LOG_TAG &amp;#34;Util&amp;#34;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="cp"&gt;#define logd(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="cp"&gt;#endif
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;在需要输出log的地方使用 logd 进行输出就可以了，LOG_TAG和log level都可以自定义。&lt;/p&gt;</description></item><item><title>OpenGL ES 3.x 实战系列 相机实时滤镜</title><link>/posts/2021052101/</link><pubDate>Fri, 21 May 2021 22:40:39 +0800</pubDate><guid>/posts/2021052101/</guid><description>&lt;h1 id="概述"&gt;概述&lt;/h1&gt;
+&lt;p&gt;我们将在Android平台下基于Jetpack CameraX库实现一个简单的OpelGLES3相机预览。&lt;/p&gt;
+&lt;p&gt;CameraX的相关使用可以参考 
+&lt;a href="https://github.com/android/camera-samples" target="_blank" rel="noopener"&gt;Google camera-samples&lt;/a&gt;。
 本文源码 
-&lt;a href="https://github.com/bitristan/OpenGLES3_tutorial" target="_blank" rel="noopener">OpenGLES3_tutorial&lt;/a>。&lt;/p></description></item><item><title>OpenGL ES 3.x 实战系列 纹理映射</title><link>/posts/2021052001/</link><pubDate>Thu, 20 May 2021 22:40:36 +0800</pubDate><guid>/posts/2021052001/</guid><description>&lt;h1 id="概述">概述&lt;/h1>
-&lt;p>本文介绍OpenGL ES上纹理的一些使用方式。使用3.x版本。对应代码见 
-&lt;a href="https://github.com/bitristan/OpenGLES3_tutorial" target="_blank" rel="noopener">OpenGLES3_tutorial&lt;/a>。&lt;/p>
-&lt;h1 id="绘制单个纹理">绘制单个纹理&lt;/h1>
-&lt;p>&lt;img src="/images/20210520/1.webp" alt="坐标系">&lt;/p>
-&lt;p>纹理坐标系和顶点坐标系不一样，具体区别如上所示。只要我们在绘制的时候将其一一对应，就能绘制出纹理了。&lt;/p></description></item><item><title>OpenGL ES 3.x 实战系列 绘制三角形</title><link>/posts/2021051901/</link><pubDate>Wed, 19 May 2021 22:40:31 +0800</pubDate><guid>/posts/2021051901/</guid><description>&lt;h1 id="概述">概述&lt;/h1>
-&lt;p>OpenGL ES的基础知识不再赘述，网上很多相关的资料，推荐几个学教程：&lt;/p>
-&lt;ul>
-&lt;li>《Open GL ES 3.x游戏开发》&lt;/li>
-&lt;li>
-&lt;a href="https://learnopengl.com/Introduction" target="_blank" rel="noopener">Learn OpenGL&lt;/a>&lt;/li>
-&lt;/ul>
-&lt;p>本文使用OpenGL ES 3.x 版本在Android上绘制一个三角形。具体代码见 
-&lt;a href="https://github.com/bitristan/OpenGLES3_tutorial" target="_blank" rel="noopener">OpenGL ES 3 Tutorial&lt;/a>&lt;/p></description></item><item><title>关于extractNativeLibs默认值的调研</title><link>/posts/2021020701/</link><pubDate>Sun, 07 Feb 2021 21:36:09 +0800</pubDate><guid>/posts/2021020701/</guid><description>&lt;p>extractNativeLibs这个属性相信安卓开发者都不会陌生，先引用官方文档说明一下此属性的含义&lt;/p>
-&lt;div class="highlight">&lt;div class="chroma">
-&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
-&lt;/span>&lt;span class="lnt">2
-&lt;/span>&lt;span class="lnt">3
-&lt;/span>&lt;span class="lnt">4
-&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
-&lt;td class="lntd">
-&lt;pre tabindex="0" class="chroma">&lt;code class="language-xml" data-lang="xml">&lt;span class="line">&lt;span class="cl">android:extractNativeLibs
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">软件包安装程序是否将原生库从 APK 提取到文件系统。如果设为 false，则原生库必须保持页面对齐状态并以未压缩的形式
-&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">存储在 APK 中。无需更改代码，因为链接器在运行时直接从 APK 加载库。默认值为 &amp;#34;true&amp;#34;。
-&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
-&lt;/div>
-&lt;/div>&lt;p>含义比较明确，就是如果这个属性设置为 false，那么 apk 的体积会变大，但是 apk 安装后系统会直接使用 apk 中的 so，
+&lt;a href="https://github.com/bitristan/OpenGLES3_tutorial" target="_blank" rel="noopener"&gt;OpenGLES3_tutorial&lt;/a&gt;。&lt;/p&gt;</description></item><item><title>OpenGL ES 3.x 实战系列 纹理映射</title><link>/posts/2021052001/</link><pubDate>Thu, 20 May 2021 22:40:36 +0800</pubDate><guid>/posts/2021052001/</guid><description>&lt;h1 id="概述"&gt;概述&lt;/h1&gt;
+&lt;p&gt;本文介绍OpenGL ES上纹理的一些使用方式。使用3.x版本。对应代码见 
+&lt;a href="https://github.com/bitristan/OpenGLES3_tutorial" target="_blank" rel="noopener"&gt;OpenGLES3_tutorial&lt;/a&gt;。&lt;/p&gt;
+&lt;h1 id="绘制单个纹理"&gt;绘制单个纹理&lt;/h1&gt;
+&lt;p&gt;&lt;img src="/images/20210520/1.webp" alt="坐标系"&gt;&lt;/p&gt;
+&lt;p&gt;纹理坐标系和顶点坐标系不一样，具体区别如上所示。只要我们在绘制的时候将其一一对应，就能绘制出纹理了。&lt;/p&gt;</description></item><item><title>OpenGL ES 3.x 实战系列 绘制三角形</title><link>/posts/2021051901/</link><pubDate>Wed, 19 May 2021 22:40:31 +0800</pubDate><guid>/posts/2021051901/</guid><description>&lt;h1 id="概述"&gt;概述&lt;/h1&gt;
+&lt;p&gt;OpenGL ES的基础知识不再赘述，网上很多相关的资料，推荐几个学教程：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;《Open GL ES 3.x游戏开发》&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://learnopengl.com/Introduction" target="_blank" rel="noopener"&gt;Learn OpenGL&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;本文使用OpenGL ES 3.x 版本在Android上绘制一个三角形。具体代码见 
+&lt;a href="https://github.com/bitristan/OpenGLES3_tutorial" target="_blank" rel="noopener"&gt;OpenGL ES 3 Tutorial&lt;/a&gt;&lt;/p&gt;</description></item><item><title>关于extractNativeLibs默认值的调研</title><link>/posts/2021020701/</link><pubDate>Sun, 07 Feb 2021 21:36:09 +0800</pubDate><guid>/posts/2021020701/</guid><description>&lt;p&gt;extractNativeLibs这个属性相信安卓开发者都不会陌生，先引用官方文档说明一下此属性的含义&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;div class="chroma"&gt;
+&lt;table class="lntable"&gt;&lt;tr&gt;&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code&gt;&lt;span class="lnt"&gt;1
+&lt;/span&gt;&lt;span class="lnt"&gt;2
+&lt;/span&gt;&lt;span class="lnt"&gt;3
+&lt;/span&gt;&lt;span class="lnt"&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-xml" data-lang="xml"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;android:extractNativeLibs
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;软件包安装程序是否将原生库从 APK 提取到文件系统。如果设为 false，则原生库必须保持页面对齐状态并以未压缩的形式
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;存储在 APK 中。无需更改代码，因为链接器在运行时直接从 APK 加载库。默认值为 &amp;#34;true&amp;#34;。
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;含义比较明确，就是如果这个属性设置为 false，那么 apk 的体积会变大，但是 apk 安装后系统会直接使用 apk 中的 so，
 这样就节约了用户的存储空间。反之，如果这个属性设置为 true，那么 apk 的体积会更小，因为 so 是压缩存储的，但是在 apk
-安装的时候，系统会把 apk 中的 so 解压重新存储一份，导致占用的存储空间变大。&lt;/p></description></item><item><title>zipflinger导致的UnsatisfiedLinkError分析</title><link>/posts/2021011301/</link><pubDate>Wed, 13 Jan 2021 10:36:28 +0800</pubDate><guid>/posts/2021011301/</guid><description>&lt;p>笔者在安卓源码环境下做一些开发工作。几日前碰到了一个奇怪的问题，预装的 APP 突然报了一个 &lt;code>UnsatisfiedLinkError&lt;/code> 的崩溃。查了一下最近的改动记录，只是将 AGP(Androidd gradle plugin) 从 &lt;code>3.6.1&lt;/code> 版本升级到了 &lt;code>4.1.0&lt;/code> 版本。&lt;/p></description></item></channel></rss>
+安装的时候，系统会把 apk 中的 so 解压重新存储一份，导致占用的存储空间变大。&lt;/p&gt;</description></item><item><title>zipflinger导致的UnsatisfiedLinkError分析</title><link>/posts/2021011301/</link><pubDate>Wed, 13 Jan 2021 10:36:28 +0800</pubDate><guid>/posts/2021011301/</guid><description>&lt;p&gt;笔者在安卓源码环境下做一些开发工作。几日前碰到了一个奇怪的问题，预装的 APP 突然报了一个 &lt;code&gt;UnsatisfiedLinkError&lt;/code&gt; 的崩溃。查了一下最近的改动记录，只是将 AGP(Androidd gradle plugin) 从 &lt;code&gt;3.6.1&lt;/code&gt; 版本升级到了 &lt;code&gt;4.1.0&lt;/code&gt; 版本。&lt;/p&gt;</description></item></channel></rss>
