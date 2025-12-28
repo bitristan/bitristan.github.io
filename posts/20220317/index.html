@@ -1,4 +1,4 @@
-<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Android JNI静态注册和动态注册</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.152.2"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Mar 17, 2022
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Android JNI静态注册和动态注册</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.153.3"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Mar 17, 2022
 - 2 minute read</p><h1 class=entry-title>Android JNI静态注册和动态注册</h1></header><div class=entry-content><h1 id=android-jni静态注册和动态注册>Android JNI静态注册和动态注册</h1><h2 id=静态注册>静态注册</h2><ol><li>首先在kotlin侧定义native方法</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
@@ -11,14 +11,14 @@
 </span><span class=lnt>10
 </span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-go data-lang=go><span class=line><span class=cl><span class=kn>package</span><span class=w> </span><span class=nx>com</span><span class=p>.</span><span class=nx>example</span><span class=p>.</span><span class=nx>jni</span><span class=p>.</span><span class=nx>tutorial</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>
-</span></span></span><span class=line><span class=cl><span class=w></span><span class=nx>class</span><span class=w> </span><span class=nx>Util</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=nx>class</span><span class=w> </span><span class=nx>Util</span><span class=w> </span><span class=p>{</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>    </span><span class=nx>companion</span><span class=w> </span><span class=nx>object</span><span class=w> </span><span class=p>{</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>        </span><span class=err>@</span><span class=nx>JvmStatic</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>        </span><span class=nx>external</span><span class=w> </span><span class=nx>fun</span><span class=w> </span><span class=nf>staticClassMethod</span><span class=p>():</span><span class=w> </span><span class=nx>String</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>    </span><span class=p>}</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>    </span><span class=nx>external</span><span class=w> </span><span class=nx>fun</span><span class=w> </span><span class=nf>staticObjectMethod</span><span class=p>():</span><span class=w> </span><span class=nx>String</span><span class=w>
-</span></span></span><span class=line><span class=cl><span class=w></span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
 </span></span></span></code></pre></td></tr></table></div></div><ol start=2><li>然后在C++侧定义对应的方法实现，方法名称按照规则，需要注意的是静态方法有一个jclass类型的参数，而非静态方法则是一个jobject类型的参数，分别表示类和对象的信息。</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
@@ -65,14 +65,14 @@
 </span><span class=lnt>10
 </span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-go data-lang=go><span class=line><span class=cl><span class=kn>package</span><span class=w> </span><span class=nx>com</span><span class=p>.</span><span class=nx>example</span><span class=p>.</span><span class=nx>jni</span><span class=p>.</span><span class=nx>tutorial</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>
-</span></span></span><span class=line><span class=cl><span class=w></span><span class=nx>class</span><span class=w> </span><span class=nx>Util</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=nx>class</span><span class=w> </span><span class=nx>Util</span><span class=w> </span><span class=p>{</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>    </span><span class=nx>companion</span><span class=w> </span><span class=nx>object</span><span class=w> </span><span class=p>{</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>        </span><span class=err>@</span><span class=nx>JvmStatic</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>        </span><span class=nx>external</span><span class=w> </span><span class=nx>fun</span><span class=w> </span><span class=nf>dynamicClassMethod</span><span class=p>():</span><span class=w> </span><span class=nx>String</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>    </span><span class=p>}</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>    </span><span class=nx>external</span><span class=w> </span><span class=nx>fun</span><span class=w> </span><span class=nf>dynamicObjectMethod</span><span class=p>():</span><span class=w> </span><span class=nx>String</span><span class=w>
-</span></span></span><span class=line><span class=cl><span class=w></span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
 </span></span></span></code></pre></td></tr></table></div></div><ol start=2><li>在C++侧定义对应的方法，由于是动态注册，方法名可以随意命名，但是方法参数和返回值还是需要按照native方法的定义来。</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3

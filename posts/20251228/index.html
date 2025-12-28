@@ -1,0 +1,107 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>使用PyTorch实现线性回归 (入门)</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.153.3"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Dec 28, 2025
+- 4 minute read</p><h1 class=entry-title>使用PyTorch实现线性回归 (入门)</h1></header><div class=entry-content><h1 id=使用pytorch实现线性回归>使用PyTorch实现线性回归</h1><p>线性回归是机器学习中最基础的回归任务，核心是拟合输入与输出之间的线性关系。PyTorch作为主流深度学习框架，提供了简洁的API支持线性回归的快速实现。本文将从数据准备、模型定义、损失函数与优化器选择、模型训练到模型测试，完整讲解如何用PyTorch实现线性回归。</p><h2 id=一环境准备与数据构造>一、环境准备与数据构造</h2><p>首先需导入PyTorch库，随后构造线性回归的训练数据。线性回归的核心关系为 <code>y = wx + b</code>，此处我们构造满足 <code>y = 2x</code> 规律的数据（偏置项b=0），用于验证模型拟合效果。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-python data-lang=python><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=kn>import</span> <span class=nn>torch</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 构造训练数据，输入x_data和输出y_data均为二维张量（形状：样本数×特征数）</span>
+</span></span><span class=line><span class=cl><span class=n>x_data</span> <span class=o>=</span> <span class=n>torch</span><span class=o>.</span><span class=n>Tensor</span><span class=p>([[</span><span class=mf>1.0</span><span class=p>],</span> <span class=p>[</span><span class=mf>2.0</span><span class=p>],</span> <span class=p>[</span><span class=mf>3.0</span><span class=p>]])</span>
+</span></span><span class=line><span class=cl><span class=n>y_data</span> <span class=o>=</span> <span class=n>torch</span><span class=o>.</span><span class=n>Tensor</span><span class=p>([[</span><span class=mf>2.0</span><span class=p>],</span> <span class=p>[</span><span class=mf>4.0</span><span class=p>],</span> <span class=p>[</span><span class=mf>6.0</span><span class=p>]])</span>
+</span></span></code></pre></td></tr></table></div></div><p>说明：PyTorch的线性层要求输入为二维张量，因此即使单个样本只有1个特征，也需构造为<code>[n, 1]</code>的形状（n为样本数）。</p><h2 id=二定义线性回归模型>二、定义线性回归模型</h2><p>通过继承<code>torch.nn.Module</code>类自定义线性回归模型，模型内部使用<code>torch.nn.Linear</code>（线性层，也叫全连接层）实现核心的线性变换。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-python data-lang=python><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>LinearModel</span><span class=p>(</span><span class=n>torch</span><span class=o>.</span><span class=n>nn</span><span class=o>.</span><span class=n>Module</span><span class=p>):</span>
+</span></span><span class=line><span class=cl>    <span class=k>def</span> <span class=fm>__init__</span><span class=p>(</span><span class=bp>self</span><span class=p>):</span>
+</span></span><span class=line><span class=cl>        <span class=nb>super</span><span class=p>(</span><span class=n>LinearModel</span><span class=p>,</span> <span class=bp>self</span><span class=p>)</span><span class=o>.</span><span class=fm>__init__</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>        <span class=c1># 定义线性层：输入特征数1，输出特征数1</span>
+</span></span><span class=line><span class=cl>        <span class=bp>self</span><span class=o>.</span><span class=n>linear</span> <span class=o>=</span> <span class=n>torch</span><span class=o>.</span><span class=n>nn</span><span class=o>.</span><span class=n>Linear</span><span class=p>(</span><span class=mi>1</span><span class=p>,</span> <span class=mi>1</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>def</span> <span class=nf>forward</span><span class=p>(</span><span class=bp>self</span><span class=p>,</span> <span class=n>x</span><span class=p>):</span>
+</span></span><span class=line><span class=cl>        <span class=c1># 前向传播：定义数据流向，输入x经过线性层得到预测值y_pred</span>
+</span></span><span class=line><span class=cl>        <span class=n>y_pred</span> <span class=o>=</span> <span class=bp>self</span><span class=o>.</span><span class=n>linear</span><span class=p>(</span><span class=n>x</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=n>y_pred</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 实例化模型</span>
+</span></span><span class=line><span class=cl><span class=n>model</span> <span class=o>=</span> <span class=n>LinearModel</span><span class=p>()</span>
+</span></span></code></pre></td></tr></table></div></div><p>说明：<code>torch.nn.Linear(1, 1)</code>接收两个核心参数，分别为输入特征数（in_features）和输出特征数（out_features），此处均为1，对应单变量线性回归；模型需实现<code>forward</code>方法定义前向传播逻辑，反向传播由PyTorch自动实现。</p><h2 id=三选择损失函数与优化器>三、选择损失函数与优化器</h2><p>线性回归的损失函数通常使用均方误差（MSE），衡量预测值与真实值的偏差；优化器选择随机梯度下降（SGD），用于更新模型参数（权重w和偏置b）以最小化损失。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-python data-lang=python><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 定义损失函数：均方误差损失，size_average=False表示不计算平均损失</span>
+</span></span><span class=line><span class=cl><span class=n>criterion</span> <span class=o>=</span> <span class=n>torch</span><span class=o>.</span><span class=n>nn</span><span class=o>.</span><span class=n>MSELoss</span><span class=p>(</span><span class=n>size_average</span><span class=o>=</span><span class=kc>False</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=c1># 定义优化器：SGD优化器，优化模型所有可学习参数，学习率lr=0.01</span>
+</span></span><span class=line><span class=cl><span class=n>optimizer</span> <span class=o>=</span> <span class=n>torch</span><span class=o>.</span><span class=n>optim</span><span class=o>.</span><span class=n>SGD</span><span class=p>(</span><span class=n>model</span><span class=o>.</span><span class=n>parameters</span><span class=p>(),</span> <span class=n>lr</span><span class=o>=</span><span class=mf>0.01</span><span class=p>)</span>
+</span></span></code></pre></td></tr></table></div></div><p>说明：学习率（lr）控制参数更新的步长，过大易震荡不收敛，过小则训练速度过慢；<code>model.parameters()</code>会自动获取模型中所有可学习的参数（此处为linear层的w和b）。</p><h2 id=四模型训练过程>四、模型训练过程</h2><p>训练过程通过多轮迭代（epoch）实现，每轮迭代包含前向传播（求预测值）、计算损失、反向传播（求梯度）、参数更新四个核心步骤。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-python data-lang=python><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 迭代训练1000轮</span>
+</span></span><span class=line><span class=cl><span class=k>for</span> <span class=n>epoch</span> <span class=ow>in</span> <span class=nb>range</span><span class=p>(</span><span class=mi>1000</span><span class=p>):</span>
+</span></span><span class=line><span class=cl>    <span class=c1># 1. 前向传播：输入x_data，得到预测值y_pred</span>
+</span></span><span class=line><span class=cl>    <span class=n>y_pred</span> <span class=o>=</span> <span class=n>model</span><span class=p>(</span><span class=n>x_data</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=c1># 2. 计算损失：对比y_pred与真实值y_data的均方误差</span>
+</span></span><span class=line><span class=cl>    <span class=n>loss</span> <span class=o>=</span> <span class=n>criterion</span><span class=p>(</span><span class=n>y_pred</span><span class=p>,</span> <span class=n>y_data</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=c1># 打印当前迭代轮数和损失值</span>
+</span></span><span class=line><span class=cl>    <span class=nb>print</span><span class=p>(</span><span class=n>epoch</span><span class=p>,</span> <span class=n>loss</span><span class=o>.</span><span class=n>item</span><span class=p>())</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1># 3. 反向传播前清空梯度（防止梯度累积）</span>
+</span></span><span class=line><span class=cl>    <span class=n>optimizer</span><span class=o>.</span><span class=n>zero_grad</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=c1># 4. 反向传播：计算损失对各参数的梯度</span>
+</span></span><span class=line><span class=cl>    <span class=n>loss</span><span class=o>.</span><span class=n>backward</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=c1># 5. 优化器更新参数：根据梯度调整w和b</span>
+</span></span><span class=line><span class=cl>    <span class=n>optimizer</span><span class=o>.</span><span class=n>step</span><span class=p>()</span>
+</span></span></code></pre></td></tr></table></div></div><p>说明：每次反向传播前必须调用<code>optimizer.zero_grad()</code>清空梯度，否则梯度会叠加，导致参数更新异常；<code>loss.item()</code>用于获取损失值的标量（剥离张量外壳），方便打印查看。</p><h2 id=五模型测试与结果验证>五、模型测试与结果验证</h2><p>训练完成后，提取模型学到的参数（w和b），并通过新的测试数据验证模型拟合效果。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-python data-lang=python><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 打印训练后得到的权重w和偏置b</span>
+</span></span><span class=line><span class=cl><span class=nb>print</span><span class=p>(</span><span class=s1>&#39;w = &#39;</span><span class=p>,</span> <span class=n>model</span><span class=o>.</span><span class=n>linear</span><span class=o>.</span><span class=n>weight</span><span class=o>.</span><span class=n>item</span><span class=p>())</span>
+</span></span><span class=line><span class=cl><span class=nb>print</span><span class=p>(</span><span class=s1>&#39;b = &#39;</span><span class=p>,</span> <span class=n>model</span><span class=o>.</span><span class=n>linear</span><span class=o>.</span><span class=n>bias</span><span class=o>.</span><span class=n>item</span><span class=p>())</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 构造测试数据x_test（输入4.0）</span>
+</span></span><span class=line><span class=cl><span class=n>x_test</span> <span class=o>=</span> <span class=n>torch</span><span class=o>.</span><span class=n>Tensor</span><span class=p>([[</span><span class=mf>4.0</span><span class=p>]])</span>
+</span></span><span class=line><span class=cl><span class=c1># 测试模型：输入x_test，得到预测值y_test</span>
+</span></span><span class=line><span class=cl><span class=n>y_test</span> <span class=o>=</span> <span class=n>model</span><span class=p>(</span><span class=n>x_test</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nb>print</span><span class=p>(</span><span class=s1>&#39;y_pred = &#39;</span><span class=p>,</span> <span class=n>y_test</span><span class=o>.</span><span class=n>data</span><span class=p>)</span>
+</span></span></code></pre></td></tr></table></div></div><p>预期结果：训练后w应接近2，b接近0；输入x_test=4.0时，y_pred应接近8.0，与我们构造数据的真实规律（y=2x）一致，说明模型拟合成功。</p><h2 id=六总结>六、总结</h2><p>用PyTorch实现线性回归的核心流程可概括为：构造数据→定义模型→选择损失函数与优化器→迭代训练→测试验证。PyTorch通过封装线性层、自动求梯度等功能，大幅简化了实现难度，让开发者更专注于模型逻辑而非底层计算。上述代码可直接运行，适合线性回归入门学习。</p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Dec 28, 2025</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/20251205/ title=JDK中Lambda表达式的实现原理>JDK中Lambda表达式的实现原理</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2025 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>

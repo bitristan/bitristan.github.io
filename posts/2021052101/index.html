@@ -1,4 +1,4 @@
-<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>OpenGL ES 3.x 实战系列 相机实时滤镜</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.152.2"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>May 21, 2021
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>OpenGL ES 3.x 实战系列 相机实时滤镜</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.153.3"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>May 21, 2021
 - 4 minute read</p><h1 class=entry-title>OpenGL ES 3.x 实战系列 相机实时滤镜</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>我们将在Android平台下基于Jetpack CameraX库实现一个简单的OpelGLES3相机预览。</p><p>CameraX的相关使用可以参考
 <a href=https://github.com/android/camera-samples target=_blank rel=noopener>Google camera-samples</a>。
 本文源码
@@ -77,14 +77,14 @@
 </span></span><span class=line><span class=cl>        <span class=p>.</span><span class=n>build</span><span class=p>()</span>
 </span></span><span class=line><span class=cl>
 </span></span><span class=line><span class=cl>    <span class=c1>// ...
-</span></span></span><span class=line><span class=cl><span class=c1></span>
+</span></span></span><span class=line><span class=cl>
 </span></span><span class=line><span class=cl>    <span class=c1>// Must unbind the use-cases before rebinding them
-</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=n>cameraProvider</span><span class=o>?.</span><span class=n>unbindAll</span><span class=p>()</span>
+</span></span></span><span class=line><span class=cl>    <span class=n>cameraProvider</span><span class=o>?.</span><span class=n>unbindAll</span><span class=p>()</span>
 </span></span><span class=line><span class=cl>
 </span></span><span class=line><span class=cl>    <span class=k>try</span> <span class=p>{</span>
 </span></span><span class=line><span class=cl>        <span class=c1>// A variable number of use-cases can be passed here -
-</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=c1>// camera provides access to CameraControl &amp; CameraInfo
-</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=n>camera</span> <span class=p>=</span> <span class=n>cameraProvider</span><span class=o>?.</span><span class=n>bindToLifecycle</span><span class=p>(</span><span class=k>this</span><span class=p>,</span>
+</span></span></span><span class=line><span class=cl>        <span class=c1>// camera provides access to CameraControl &amp; CameraInfo
+</span></span></span><span class=line><span class=cl>        <span class=n>camera</span> <span class=p>=</span> <span class=n>cameraProvider</span><span class=o>?.</span><span class=n>bindToLifecycle</span><span class=p>(</span><span class=k>this</span><span class=p>,</span>
 </span></span><span class=line><span class=cl>            <span class=n>cameraSelector</span><span class=p>,</span> <span class=n>preview</span><span class=p>,</span> <span class=n>imageCapture</span><span class=p>,</span> <span class=n>imageAnalyzer</span><span class=p>)</span>
 </span></span><span class=line><span class=cl>
 </span></span><span class=line><span class=cl>        <span class=n>preview</span><span class=o>?.</span><span class=n>setSurfaceProvider</span><span class=p>(</span><span class=n>previewView</span><span class=p>.</span><span class=n>surfaceProvider</span><span class=p>)</span>
@@ -116,7 +116,7 @@
 </span><span class=lnt>4
 </span><span class=lnt>5
 </span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>init</span> <span class=p>{</span>
-</span></span><span class=line><span class=cl>    <span class=n>setEGLContextClientVersion</span><span class=p>(</span><span class=m>3</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>setEGLContextClientVersion</span><span class=p>(</span><span class=mi>3</span><span class=p>)</span>
 </span></span><span class=line><span class=cl>    <span class=n>setRenderer</span><span class=p>(</span><span class=k>this</span><span class=p>)</span>
 </span></span><span class=line><span class=cl>    <span class=n>renderMode</span> <span class=p>=</span> <span class=n>RENDERMODE_WHEN_DIRTY</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
@@ -126,9 +126,9 @@
 </span><span class=lnt>3
 </span><span class=lnt>4
 </span><span class=lnt>5
-</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>val</span> <span class=py>ids</span> <span class=p>=</span> <span class=n>IntArray</span><span class=p>(</span><span class=m>1</span><span class=p>)</span>
-</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glGenTextures</span><span class=p>(</span><span class=m>1</span><span class=p>,</span> <span class=n>ids</span><span class=p>,</span> <span class=m>0</span><span class=p>)</span>
-</span></span><span class=line><span class=cl><span class=n>textureId</span> <span class=p>=</span> <span class=n>ids</span><span class=p>[</span><span class=m>0</span><span class=p>]</span>
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>val</span> <span class=py>ids</span> <span class=p>=</span> <span class=n>IntArray</span><span class=p>(</span><span class=mi>1</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>GLES30</span><span class=p>.</span><span class=n>glGenTextures</span><span class=p>(</span><span class=mi>1</span><span class=p>,</span> <span class=n>ids</span><span class=p>,</span> <span class=mi>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=n>textureId</span> <span class=p>=</span> <span class=n>ids</span><span class=p>[</span><span class=mi>0</span><span class=p>]</span>
 </span></span><span class=line><span class=cl><span class=n>surfaceTexture</span> <span class=p>=</span> <span class=n>SurfaceTexture</span><span class=p>(</span><span class=n>textureId</span><span class=p>)</span>
 </span></span><span class=line><span class=cl><span class=n>surfaceTexture</span><span class=o>!!</span><span class=p>.</span><span class=n>setOnFrameAvailableListener</span><span class=p>(</span><span class=k>this</span><span class=p>)</span>
 </span></span></code></pre></td></tr></table></div></div><p>实现OnFrameAvailableListener回调，每次frame更新的时候调用requestRender触发渲染</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
@@ -168,7 +168,7 @@
 </span></span><span class=line><span class=cl><span class=p>}</span>
 </span></span><span class=line><span class=cl>
 </span></span><span class=line><span class=cl><span class=c1>// 在bindCameraUseCases中将相机preview和GlSurfaceView绑定
-</span></span></span><span class=line><span class=cl><span class=c1></span><span class=n>preview</span><span class=o>?.</span><span class=n>let</span> <span class=p>{</span>
+</span></span></span><span class=line><span class=cl><span class=n>preview</span><span class=o>?.</span><span class=n>let</span> <span class=p>{</span>
 </span></span><span class=line><span class=cl>    <span class=n>glSurfaceView</span><span class=p>.</span><span class=n>attachPreview</span><span class=p>(</span><span class=k>it</span><span class=p>)</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
 </span></span></code></pre></td></tr></table></div></div><p>注意一定要使用surfaceTexture.setDefaultBufferSize设置一下分辨率，否则预览会非常模糊。</p><h2 id=绑定并更新gl_texture_external_oes纹理>绑定并更新GL_TEXTURE_EXTERNAL_OES纹理</h2><p>对应的顶点着色器</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1

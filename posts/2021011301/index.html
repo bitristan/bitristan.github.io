@@ -1,4 +1,4 @@
-<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>zipflinger导致的UnsatisfiedLinkError分析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.152.2"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Jan 13, 2021
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>zipflinger导致的UnsatisfiedLinkError分析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.153.3"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Jan 13, 2021
 - 6 minute read</p><h1 class=entry-title>zipflinger导致的UnsatisfiedLinkError分析</h1></header><div class=entry-content><p>笔者在安卓源码环境下做一些开发工作。几日前碰到了一个奇怪的问题，预装的 APP 突然报了一个 <code>UnsatisfiedLinkError</code> 的崩溃。查了一下最近的改动记录，只是将 AGP(Androidd gradle plugin) 从 <code>3.6.1</code> 版本升级到了 <code>4.1.0</code> 版本。</p><p>源码环境为 Android 9.0，app预装在 /system/priv-app下，且app中包含有so。为了简化问题，写了一个极简的
 <a href=https://github.com/bitristan/SoLoadDebug target=_blank rel=noopener>Demo app</a>，将这个app预装在 /system/priv-app下，使用AGP 4.0及其以下的版本都正常，一旦使用AGP 4.1及其以上的版本打出来的apk包，就会报 UnsatisfiedLinkError 的错误。</p><p>app预装的配置</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
@@ -116,13 +116,13 @@
 </span></span><span class=line><span class=cl><span class=c1>#</span>
 </span></span><span class=line><span class=cl>define uncompress-dexs
 </span></span><span class=line><span class=cl><span class=k>$(</span>hide<span class=k>)</span> <span class=k>if</span> <span class=o>(</span>zipinfo <span class=nv>$@</span> <span class=s1>&#39;*.dex&#39;</span> 2&gt;/dev/null <span class=p>|</span> grep -v <span class=s1>&#39; stor &#39;</span> &gt;/dev/null<span class=o>)</span> <span class=p>;</span> <span class=k>then</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>  <span class=nv>tmpdir</span><span class=o>=</span><span class=nv>$@</span>.tmpdir<span class=p>;</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>  rm -rf <span class=nv>$$</span>tmpdir <span class=o>&amp;&amp;</span> mkdir <span class=nv>$$</span>tmpdir<span class=p>;</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>  unzip -q <span class=nv>$@</span> <span class=s1>&#39;*.dex&#39;</span> -d <span class=nv>$$</span>tmpdir <span class=o>&amp;&amp;</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>  zip -qd <span class=nv>$@</span> <span class=s1>&#39;*.dex&#39;</span> <span class=o>&amp;&amp;</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>  <span class=o>(</span> <span class=nb>cd</span> <span class=nv>$$</span>tmpdir <span class=o>&amp;&amp;</span> find . -type f <span class=p>|</span> sort <span class=p>|</span> zip -qD -X -0 ../<span class=k>$(</span>notdir <span class=nv>$@</span><span class=k>)</span> -@ <span class=o>)</span> <span class=o>&amp;&amp;</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>  rm -rf <span class=nv>$$</span>tmpdir<span class=p>;</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>  <span class=k>fi</span>
+</span></span></span><span class=line><span class=cl>  <span class=nv>tmpdir</span><span class=o>=</span><span class=nv>$@</span>.tmpdir<span class=p>;</span> <span class=se>\
+</span></span></span><span class=line><span class=cl>  rm -rf <span class=nv>$$</span>tmpdir <span class=o>&amp;&amp;</span> mkdir <span class=nv>$$</span>tmpdir<span class=p>;</span> <span class=se>\
+</span></span></span><span class=line><span class=cl>  unzip -q <span class=nv>$@</span> <span class=s1>&#39;*.dex&#39;</span> -d <span class=nv>$$</span>tmpdir <span class=o>&amp;&amp;</span> <span class=se>\
+</span></span></span><span class=line><span class=cl>  zip -qd <span class=nv>$@</span> <span class=s1>&#39;*.dex&#39;</span> <span class=o>&amp;&amp;</span> <span class=se>\
+</span></span></span><span class=line><span class=cl>  <span class=o>(</span> <span class=nb>cd</span> <span class=nv>$$</span>tmpdir <span class=o>&amp;&amp;</span> find . -type f <span class=p>|</span> sort <span class=p>|</span> zip -qD -X -0 ../<span class=k>$(</span>notdir <span class=nv>$@</span><span class=k>)</span> -@ <span class=o>)</span> <span class=o>&amp;&amp;</span> <span class=se>\
+</span></span></span><span class=line><span class=cl>  rm -rf <span class=nv>$$</span>tmpdir<span class=p>;</span> <span class=se>\
+</span></span></span><span class=line><span class=cl>  <span class=k>fi</span>
 </span></span><span class=line><span class=cl>endef
 </span></span></code></pre></td></tr></table></div></div><p>分析发现，这个处理就是判断 apk 中的 dex 后缀的文件是否是压缩存储的，如果不是压缩存储的那么不做任何操作，如果是压缩存储的，那么将其变为不压缩存储的方式。（zip文件中的文件项目的存储方式分为不压缩存储(stored)和压缩存储(deflated))</p><p>继续分析发现经过 <code>uncompress-dexs</code> 之后，编译系统对这个 apk 还进行了一步 <code>align-package</code> 的操作，定义还是在 <strong>build/core/definitions.mk</strong> 中</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
@@ -141,14 +141,14 @@
 </span></span><span class=line><span class=cl><span class=c1>#</span>
 </span></span><span class=line><span class=cl>define align-package
 </span></span><span class=line><span class=cl><span class=k>$(</span>hide<span class=k>)</span> <span class=k>if</span> ! <span class=k>$(</span>ZIPALIGN<span class=k>)</span> -c <span class=k>$(</span>ZIPALIGN_PAGE_ALIGN_FLAGS<span class=k>)</span> <span class=m>4</span> <span class=nv>$@</span> &gt;/dev/null <span class=p>;</span> <span class=k>then</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>  mv <span class=nv>$@</span> <span class=nv>$@</span>.unaligned<span class=p>;</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>  <span class=k>$(</span>ZIPALIGN<span class=k>)</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>    -f <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>    <span class=k>$(</span>ZIPALIGN_PAGE_ALIGN_FLAGS<span class=k>)</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>    <span class=m>4</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>    <span class=nv>$@</span>.unaligned <span class=nv>$@</span>.aligned<span class=p>;</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>  mv <span class=nv>$@</span>.aligned <span class=nv>$@</span><span class=p>;</span> <span class=se>\
-</span></span></span><span class=line><span class=cl><span class=se></span>  <span class=k>fi</span>
+</span></span></span><span class=line><span class=cl>  mv <span class=nv>$@</span> <span class=nv>$@</span>.unaligned<span class=p>;</span> <span class=se>\
+</span></span></span><span class=line><span class=cl>  <span class=k>$(</span>ZIPALIGN<span class=k>)</span> <span class=se>\
+</span></span></span><span class=line><span class=cl>    -f <span class=se>\
+</span></span></span><span class=line><span class=cl>    <span class=k>$(</span>ZIPALIGN_PAGE_ALIGN_FLAGS<span class=k>)</span> <span class=se>\
+</span></span></span><span class=line><span class=cl>    <span class=m>4</span> <span class=se>\
+</span></span></span><span class=line><span class=cl>    <span class=nv>$@</span>.unaligned <span class=nv>$@</span>.aligned<span class=p>;</span> <span class=se>\
+</span></span></span><span class=line><span class=cl>  mv <span class=nv>$@</span>.aligned <span class=nv>$@</span><span class=p>;</span> <span class=se>\
+</span></span></span><span class=line><span class=cl>  <span class=k>fi</span>
 </span></span><span class=line><span class=cl>endef
 </span></span></code></pre></td></tr></table></div></div><p>那现在问题比较明显了，就是对于 AGP4.1 打出来的 apk 包，经过 <code>uncompress-dexs</code> 操作后，再重新执行 <code>zipalign</code>，生成的 apk 文件的对齐是有问题的。为了方便 debug，将 <code>uncompress-dexs</code> 对应的操作写了一个shell脚本
 <a href=https://github.com/bitristan/SoLoadDebug/blob/main/scripts/uncompress-dexs.sh target=_blank rel=noopener>uncompress-dexs</a></p><p>那么为什么系统会对apk做这样的处理呢，<code>LOCAL_UNCOMPRESS_DEX</code> 这个参数我们似乎也没有定义呀，查看 <code>LOCAL_UNCOMPRESS_DEX</code> 这个参数的定义和用法，在 <strong>build/core/dex_preopt_odex_install.mk</strong> 中</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
@@ -165,7 +165,7 @@
 </span><span class=lnt>12
 </span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-make data-lang=make><span class=line><span class=cl><span class=c># We explicitly uncompress APKs of privileged apps, and used by
 </span></span></span><span class=line><span class=cl><span class=c># privileged apps
-</span></span></span><span class=line><span class=cl><span class=c></span><span class=nv>LOCAL_UNCOMPRESS_DEX</span> <span class=o>:=</span> <span class=nb>false</span>
+</span></span></span><span class=line><span class=cl><span class=nv>LOCAL_UNCOMPRESS_DEX</span> <span class=o>:=</span> <span class=nb>false</span>
 </span></span><span class=line><span class=cl><span class=err>ifneq</span> <span class=err>(true,</span><span class=k>$(</span><span class=nv>DONT_UNCOMPRESS_PRIV_APPS_DEXS</span><span class=k>)</span><span class=err>)</span>
 </span></span><span class=line><span class=cl><span class=err>ifeq</span> <span class=err>(true,</span><span class=k>$(</span><span class=nv>LOCAL_PRIVILEGED_MODULE</span><span class=k>)</span><span class=err>)</span>
 </span></span><span class=line><span class=cl>  <span class=nv>LOCAL_UNCOMPRESS_DEX</span> <span class=o>:=</span> <span class=nb>true</span>
@@ -174,7 +174,7 @@
 </span></span><span class=line><span class=cl>    <span class=nv>LOCAL_UNCOMPRESS_DEX</span> <span class=o>:=</span> <span class=nb>true</span>
 </span></span><span class=line><span class=cl>  endif  <span class=c1># PRODUCT_LOADED_BY_PRIVILEGED_MODULES</span>
 </span></span><span class=line><span class=cl><span class=err>endif</span>  <span class=c># LOCAL_PRIVILEGED_MODULE
-</span></span></span><span class=line><span class=cl><span class=c></span><span class=err>endif</span>  <span class=c># DONT_UNCOMPRESS_PRIV_APPS_DEXS
+</span></span></span><span class=line><span class=cl><span class=err>endif</span>  <span class=c># DONT_UNCOMPRESS_PRIV_APPS_DEXS
 </span></span></span></code></pre></td></tr></table></div></div><p>分析发现，如果 <code>DONT_UNCOMPRESS_PRIV_APPS_DEXS</code> 为默认值 false，那么系统会对 privileged app，也就是 /system/priv-app/ 下的 app 执行 uncompress-dexs 操作。</p><p>那么现在就需要去调研AGP4.1到底有什么改动，导致uncompress-dexs这个操作会对zipalign造成影响。</p><p>经过一些搜索最终发现，google从AGP 3.6版本开始加入了一个新的打包工具 <code>zipflinger</code>，不过只在构建调试版本的时候生效，但是从 AGP4.1 开始，构建 release 版本默认也会启用 zipflinger。通过在 gradle.properties 中加入以下属性可禁用 zipflinger</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-groovy data-lang=groovy><span class=line><span class=cl><span class=n>android</span><span class=o>.</span><span class=na>useNewApkCreator</span><span class=o>=</span><span class=kc>false</span>
 </span></span></code></pre></td></tr></table></div></div><p>我们使用AGP4.1，加入这个配置打包测试，发现问题果然解决了。</p><p>虽然问题解决了，不过难道我们就不能在系统集成的时候，集成启用了 zipflinger 工具打包的 apk 吗？ google 既然推出了这个工具想必是做了充分的测试的吧。由于我们目前使用的是 Android 9.0 的源码，那我们看看最新的 master 上的这部分代码是如何处理的，查看代码果然发现了一些改动。在最新的 aosp 源码中， uncompress-dexs 的实现如下
@@ -188,7 +188,7 @@
 </span><span class=lnt>8
 </span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-make data-lang=make><span class=line><span class=cl><span class=c># Uncompress dex files embedded in an apk.
 </span></span></span><span class=line><span class=cl><span class=c>#
-</span></span></span><span class=line><span class=cl><span class=c></span><span class=err>define</span> <span class=err>uncompress-dexs</span>
+</span></span></span><span class=line><span class=cl><span class=err>define</span> <span class=err>uncompress-dexs</span>
 </span></span><span class=line><span class=cl>  <span class=err>if</span> <span class=err>(zipinfo</span> <span class=k>$@</span> <span class=s1>&#39;*.dex&#39;</span> <span class=err>2&gt;/dev/null</span> <span class=err>|</span> <span class=err>grep</span> <span class=err>-v</span> <span class=s1>&#39; stor &#39;</span> <span class=err>&gt;/dev/null)</span> <span class=err>;</span> <span class=err>then</span> <span class=err>\</span>
 </span></span><span class=line><span class=cl>    <span class=k>$(</span><span class=nv>ZIP</span>2<span class=nv>ZIP</span><span class=k>)</span> <span class=err>-i</span> <span class=k>$@</span> <span class=err>-o</span> <span class=k>$@</span><span class=err>.tmp</span> <span class=err>-0</span> <span class=s2>&#34;classes*.dex&#34;</span> <span class=err>&amp;&amp;</span> <span class=err>\</span>
 </span></span><span class=line><span class=cl>    <span class=err>mv</span> <span class=err>-f</span> <span class=k>$@</span><span class=err>.tmp</span> <span class=k>$@</span> <span class=err>;</span> <span class=err>\</span>
