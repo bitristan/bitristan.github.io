@@ -1,0 +1,683 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Android Input ANR 机制深度解析：从三个典型案例理解超时检测原理</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.157.0"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Mar 14, 2026
+- 11 minute read</p><h1 class=entry-title>Android Input ANR 机制深度解析：从三个典型案例理解超时检测原理</h1></header><div class=entry-content><h2 id=一引言>一、引言</h2><p>ANR（Application Not Responding）是 Android 开发中常见的问题，指应用程序在规定时间内未能响应系统请求。常见的 ANR 类型包括：</p><ul><li><strong>Service ANR</strong>：前台服务 5 秒未执行完成，后台服务 200 秒</li><li><strong>Broadcast ANR</strong>：前台广播 10 秒，后台广播 60 秒</li><li><strong>ContentProvider ANR</strong>：内容提供者 10 秒未响应</li><li><strong>Input ANR</strong>：输入事件 5 秒未处理完成</li></ul><p>本文聚焦于 <strong>Input ANR</strong>，它是最常见也最容易误解的 ANR 类型。通过三个典型案例的分析，深入理解 Input ANR 的触发机制。</p><hr><h2 id=二前置知识>二、前置知识</h2><h3 id=21-input-系统架构概览>2.1 Input 系统架构概览</h3><p>Android 输入系统的核心组件运行在 <code>system_server</code> 进程中：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    system_server 进程                        │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  ┌──────────────┐      ┌──────────────────┐                │
+</span></span><span class=line><span class=cl>│  │ InputReader  │ ───▶ │ InputDispatcher  │                │
+</span></span><span class=line><span class=cl>│  │  (读取事件)   │      │   (分发事件)      │                │
+</span></span><span class=line><span class=cl>│  └──────────────┘      └──────────────────┘                │
+</span></span><span class=line><span class=cl>│         ▲                      │                           │
+</span></span><span class=line><span class=cl>│         │                      ▼                           │
+</span></span><span class=line><span class=cl>│  ┌──────────────┐      ┌──────────────────┐                │
+</span></span><span class=line><span class=cl>│  │ EventHub     │      │  AnrTracker      │                │
+</span></span><span class=line><span class=cl>│  │ (监听设备)    │      │  (超时追踪)       │                │
+</span></span><span class=line><span class=cl>│  └──────────────┘      └──────────────────┘                │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                              │
+</span></span><span class=line><span class=cl>                              │ Socket (socketpair)
+</span></span><span class=line><span class=cl>                              ▼
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                     应用进程                                 │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│  ┌──────────────────────────────────────────┐              │
+</span></span><span class=line><span class=cl>│  │           InputEventReceiver              │              │
+</span></span><span class=line><span class=cl>│  │              (接收事件)                    │              │
+</span></span><span class=line><span class=cl>│  └──────────────────────────────────────────┘              │
+</span></span><span class=line><span class=cl>│                       │                                     │
+</span></span><span class=line><span class=cl>│                       ▼                                     │
+</span></span><span class=line><span class=cl>│  ┌──────────────────────────────────────────┐              │
+</span></span><span class=line><span class=cl>│  │              ViewRootImpl                 │              │
+</span></span><span class=line><span class=cl>│  │            (事件分发处理)                  │              │
+</span></span><span class=line><span class=cl>│  └──────────────────────────────────────────┘              │
+</span></span><span class=line><span class=cl>│                       │                                     │
+</span></span><span class=line><span class=cl>│                       ▼                                     │
+</span></span><span class=line><span class=cl>│  ┌──────────────────────────────────────────┐              │
+</span></span><span class=line><span class=cl>│  │              主线程                        │              │
+</span></span><span class=line><span class=cl>│  │           (消息队列处理)                   │              │
+</span></span><span class=line><span class=cl>│  └──────────────────────────────────────────┘              │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h4 id=为什么选择-socket-而非-binder>为什么选择 Socket 而非 Binder？</h4><p>输入事件分发使用 <code>socketpair</code> 而非 Binder 进行进程间通信，原因如下：</p><table><thead><tr><th>特性</th><th>Socket</th><th>Binder</th></tr></thead><tbody><tr><td>通信方式</td><td>全双工，可双向独立发送</td><td>需要握手机制</td></tr><tr><td>可阻塞状态</td><td>可检测对端阻塞状态</td><td>无法检测</td></tr><tr><td>死锁风险</td><td>低，可通过 poll 检测</td><td>高，可能导致系统死锁</td></tr><tr><td>适用场景</td><td>高频输入事件</td><td>一般 RPC 调用</td></tr></tbody></table><p><strong>关键优势</strong>：InputDispatcher 可以通过 <code>poll</code> 检测 Socket 对端（应用进程）是否阻塞，从而判断事件是否能被及时处理。</p><h4 id=三大核心队列>三大核心队列</h4><p>InputDispatcher 维护三个关键队列：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>mInboundQueue    ← 从 InputReader 接收的原始事件
+</span></span><span class=line><span class=cl>      ↓
+</span></span><span class=line><span class=cl>outboundQueue    ← 准备发送给焦点窗口的事件
+</span></span><span class=line><span class=cl>      ↓
+</span></span><span class=line><span class=cl>waitQueue        ← 已发送但等待确认的事件（ANR 检测的关键）
+</span></span></code></pre></td></tr></table></div></div><p><strong>waitQueue 是 Input ANR 检测的核心</strong>：只有当事件进入 waitQueue 且超时未确认时，才会触发 ANR。</p><h3 id=22-anr-弹窗显示机制>2.2 ANR 弹窗显示机制</h3><p>重要发现：<strong>ANR 弹窗由 system_server 进程显示，与应用主线程无关</strong>。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=c1>// frameworks/base/services/core/java/com/android/server/am/AppNotRespondingDialog.java:85</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=k>if</span><span class=w> </span><span class=p>(</span><span class=n>data</span><span class=p>.</span><span class=na>aboveSystem</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>getWindow</span><span class=p>().</span><span class=na>setType</span><span class=p>(</span><span class=n>WindowManager</span><span class=p>.</span><span class=na>LayoutParams</span><span class=p>.</span><span class=na>TYPE_SYSTEM_ERROR</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><p><code>TYPE_SYSTEM_ERROR</code> 是系统级窗口，具有最高优先级，可以覆盖在所有应用之上。这个窗口由 system_server 进程创建和显示，因此即使应用主线程完全阻塞，ANR 弹窗依然能够正常显示。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    ANR 弹窗显示流程                          │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  InputDispatcher (system_server)                            │
+</span></span><span class=line><span class=cl>│       │                                                     │
+</span></span><span class=line><span class=cl>│       ├─ processAnrsLocked() → 检测超时                     │
+</span></span><span class=line><span class=cl>│       │                                                     │
+</span></span><span class=line><span class=cl>│       └─ onAnrLocked(connection)                            │
+</span></span><span class=line><span class=cl>│              │                                              │
+</span></span><span class=line><span class=cl>│              ▼                                              │
+</span></span><span class=line><span class=cl>│  ActivityManagerService (system_server)                     │
+</span></span><span class=line><span class=cl>│       │                                                     │
+</span></span><span class=line><span class=cl>│       ├─ appNotResponding()                                 │
+</span></span><span class=line><span class=cl>│       │                                                     │
+</span></span><span class=line><span class=cl>│       └─ mUiHandler.sendMessage(SHOW_NOT_RESPONDING_UI_MSG) │
+</span></span><span class=line><span class=cl>│              │                                              │
+</span></span><span class=line><span class=cl>│              ▼                                              │
+</span></span><span class=line><span class=cl>│  AppErrors.handleShowAnrUi()                                │
+</span></span><span class=line><span class=cl>│       │                                                     │
+</span></span><span class=line><span class=cl>│       └─ showAnrDialogs(data)                               │
+</span></span><span class=line><span class=cl>│              │                                              │
+</span></span><span class=line><span class=cl>│              ▼                                              │
+</span></span><span class=line><span class=cl>│  AppNotRespondingDialog (TYPE_SYSTEM_ERROR)                 │
+</span></span><span class=line><span class=cl>│       │                                                     │
+</span></span><span class=line><span class=cl>│       └─ 由 system_server 显示，无需应用主线程参与          │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  ─────────────────────────────────────────────────────────  │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  应用主线程: sleep(15000) ← 完全阻塞，但弹窗仍能显示        │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h2 id=三三个典型案例分析>三、三个典型案例分析</h2><h3 id=31-case-1单次点击无后续操作不触发-anr>3.1 Case 1：单次点击无后续操作，不触发 ANR</h3><p><strong>测试代码</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=n>button</span><span class=p>.</span><span class=na>setOnClickListener</span><span class=p>(</span><span class=n>v</span><span class=w> </span><span class=o>-&gt;</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>Log</span><span class=p>.</span><span class=na>d</span><span class=p>(</span><span class=s>&#34;ANR_TEST&#34;</span><span class=p>,</span><span class=w> </span><span class=s>&#34;onClick start&#34;</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=k>try</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=n>Thread</span><span class=p>.</span><span class=na>sleep</span><span class=p>(</span><span class=n>15000</span><span class=p>);</span><span class=w>  </span><span class=c1>// 阻塞 15 秒</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=p>}</span><span class=w> </span><span class=k>catch</span><span class=w> </span><span class=p>(</span><span class=n>InterruptedException</span><span class=w> </span><span class=n>e</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=n>e</span><span class=p>.</span><span class=na>printStackTrace</span><span class=p>();</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>Log</span><span class=p>.</span><span class=na>d</span><span class=p>(</span><span class=s>&#34;ANR_TEST&#34;</span><span class=p>,</span><span class=w> </span><span class=s>&#34;onClick end&#34;</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>});</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><p><strong>场景</strong>：T=0s 点击 button，再无任何操作，T=15s 输出 &ldquo;end&rdquo;</p><p><strong>结果</strong>：<strong>不发生 ANR</strong></p><p><strong>原因分析</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>时间线分析：
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>T=0s: 用户点击 button
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ ACTION_DOWN 事件发送
+</span></span><span class=line><span class=cl>      │   └─ InputDispatcher: 加入 waitQueue
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ ACTION_UP 事件发送
+</span></span><span class=line><span class=cl>      │   └─ InputDispatcher: 加入 waitQueue
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ View.onTouchEvent() 被调用
+</span></span><span class=line><span class=cl>      │   │
+</span></span><span class=line><span class=cl>      │   ├─ 检测到点击动作
+</span></span><span class=line><span class=cl>      │   │
+</span></span><span class=line><span class=cl>      │   ├─ post(mPerformClick) ─→ onClick 加入消息队列
+</span></span><span class=line><span class=cl>      │   │
+</span></span><span class=line><span class=cl>      │   └─ 返回 true
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ finishInputEvent() 被调用
+</span></span><span class=line><span class=cl>      │   └─ 发送 FINISHED 消息到 InputDispatcher
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      └─ InputDispatcher 收到 FINISHED
+</span></span><span class=line><span class=cl>          └─ 从 waitQueue 移除事件
+</span></span><span class=line><span class=cl>          └─ waitQueue 为空，无超时检测对象
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>T=0s+: 消息队列处理下一个消息
+</span></span><span class=line><span class=cl>       │
+</span></span><span class=line><span class=cl>       └─ PerformClick.run() 执行
+</span></span><span class=line><span class=cl>           └─ onClick() 开始执行
+</span></span><span class=line><span class=cl>               └─ Thread.sleep(15000) 阻塞
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>T=15s: sleep 结束
+</span></span><span class=line><span class=cl>       └─ 输出 &#34;end&#34;
+</span></span><span class=line><span class=cl>       └─ onClick 执行完成
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>结论：整个过程中 waitQueue 始终为空（或事件已确认），没有超时检测对象，因此不会触发 ANR。
+</span></span></code></pre></td></tr></table></div></div><p><strong>核心原因</strong>：</p><table><thead><tr><th>步骤</th><th>时间点</th><th>waitQueue 状态</th><th>说明</th></tr></thead><tbody><tr><td>ACTION_DOWN 发送</td><td>T=0s</td><td>有事件</td><td>进入等待</td></tr><tr><td>ACTION_UP 发送</td><td>T=0s</td><td>有事件</td><td>进入等待</td></tr><tr><td>onTouchEvent 返回</td><td>T=0s</td><td>空</td><td>事件已确认</td></tr><tr><td>onClick 执行</td><td>T=0s+</td><td>空</td><td>没有事件在等待</td></tr><tr><td>sleep 结束</td><td>T=15s</td><td>空</td><td>没有事件在等待</td></tr></tbody></table><p><strong>关键洞察</strong>：onClick 的异步执行设计，使得输入事件在 onClick 阻塞之前就已经被"确认"，从而避免了不必要的 ANR。</p><h3 id=32-case-2两次点击间隔小于超时时间触发-anr>3.2 Case 2：两次点击，间隔小于超时时间，触发 ANR</h3><p><strong>测试代码</strong>：同 Case 1</p><p><strong>场景</strong>：T=0s 点击 button，T=2s 再次点击 button</p><p><strong>结果</strong>：<strong>T=7s 弹出 ANR 弹窗</strong></p><p><strong>原因分析</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>时间线分析：
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>T=0s: 第一次点击
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ ACTION_DOWN_1、ACTION_UP_1 事件处理
+</span></span><span class=line><span class=cl>      │   └─ 正常确认，waitQueue 清空
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ onClick_1 加入消息队列（待执行）
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      └─ 主线程开始执行 onClick_1
+</span></span><span class=line><span class=cl>          └─ Thread.sleep(15000) 开始阻塞
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>T=2s: 第二次点击（主线程仍在 sleep 中）
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ ACTION_DOWN_2 事件发送到 Socket
+</span></span><span class=line><span class=cl>      │   └─ Socket 缓冲区中等待
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ ACTION_UP_2 事件发送到 Socket
+</span></span><span class=line><span class=cl>      │   └─ Socket 缓冲区中等待
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ InputDispatcher 将事件加入 waitQueue
+</span></span><span class=line><span class=cl>      │   └─ timeoutTime = T + 5s = 7s
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      └─ 应用主线程阻塞，无法读取 Socket
+</span></span><span class=line><span class=cl>          └─ 事件无法被确认
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>T=7s: ANR 检测
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ processAnrsLocked() 检测到超时
+</span></span><span class=line><span class=cl>      │   └─ waitQueue 中的事件超时（timeoutTime &lt;= 当前时间）
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ onAnrLocked() 被调用
+</span></span><span class=line><span class=cl>      │   └─ 通知 AMS
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      └─ AMS 显示 ANR 弹窗
+</span></span><span class=line><span class=cl>          └─ AppNotRespondingDialog (TYPE_SYSTEM_ERROR)
+</span></span><span class=line><span class=cl>          └─ 由 system_server 显示，应用主线程仍被阻塞
+</span></span></code></pre></td></tr></table></div></div><p><strong>核心原因</strong>：</p><table><thead><tr><th>时间点</th><th>发生事件</th><th>waitQueue 状态</th><th>超时时间</th></tr></thead><tbody><tr><td>T=0s</td><td>第一次点击，事件确认</td><td>空</td><td>-</td></tr><tr><td>T=0s+</td><td>onClick_1 开始 sleep</td><td>空</td><td>-</td></tr><tr><td>T=2s</td><td>第二次点击事件发送</td><td>有事件</td><td>T=7s</td></tr><tr><td>T=7s</td><td>ANR 触发</td><td>超时</td><td>-</td></tr></tbody></table><p><strong>为什么 ANR 弹窗能显示？</strong></p><table><thead><tr><th>组件</th><th>所属进程</th><th>T=7s 时状态</th></tr></thead><tbody><tr><td>ANR 检测</td><td>system_server</td><td>正常运行</td></tr><tr><td>ANR 弹窗</td><td>system_server</td><td>正常显示</td></tr><tr><td>应用主线程</td><td>应用进程</td><td>sleep 阻塞中</td></tr></tbody></table><h3 id=33-case-3两次点击间隔大于超时时间触发-anr>3.3 Case 3：两次点击，间隔大于超时时间，触发 ANR</h3><p><strong>测试代码</strong>：同 Case 1</p><p><strong>场景</strong>：T=0s 点击 button，T=7s 再次点击 button</p><p><strong>结果</strong>：<strong>T=12s 弹出 ANR 弹窗</strong></p><p><strong>原因分析</strong>：</p><p>Case 3 与 Case 2 的原理完全相同，只是时间点不同：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>时间线分析：
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>T=0s: 第一次点击
+</span></span><span class=line><span class=cl>      └─ 事件正常确认，onClick_1 开始 sleep
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>T=7s: 第二次点击（主线程仍在 sleep 中，已阻塞 7 秒）
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ ACTION_DOWN_3、ACTION_UP_3 事件发送
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      ├─ 事件加入 waitQueue
+</span></span><span class=line><span class=cl>      │   └─ timeoutTime = 7s + 5s = 12s
+</span></span><span class=line><span class=cl>      │
+</span></span><span class=line><span class=cl>      └─ 应用主线程阻塞，无法确认事件
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>T=12s: ANR 检测
+</span></span><span class=line><span class=cl>       │
+</span></span><span class=line><span class=cl>       ├─ processAnrsLocked() 检测到超时
+</span></span><span class=line><span class=cl>       │
+</span></span><span class=line><span class=cl>       └─ ANR 弹窗显示
+</span></span></code></pre></td></tr></table></div></div><p><strong>Case 2 与 Case 3 对比</strong>：</p><table><thead><tr><th>Case</th><th>第二次点击时间</th><th>超时时间</th><th>ANR 触发时间</th></tr></thead><tbody><tr><td>Case 2</td><td>T=2s</td><td>T=7s</td><td>T=7s</td></tr><tr><td>Case 3</td><td>T=7s</td><td>T=12s</td><td>T=12s</td></tr></tbody></table><p><strong>结论</strong>：无论第二次点击发生在何时，只要主线程阻塞无法确认事件，都会在事件发送后 5 秒触发 ANR。</p><hr><h2 id=四input-anr-核心原理总结>四、Input ANR 核心原理总结</h2><h3 id=41-anr-触发的三个必要条件>4.1 ANR 触发的三个必要条件</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                Input ANR 触发条件                           │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  条件 1: 有输入事件产生                                     │
+</span></span><span class=line><span class=cl>│          └─ 触摸、按键等输入事件                            │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  条件 2: 事件已发送到应用但未被确认                         │
+</span></span><span class=line><span class=cl>│          └─ 事件在 waitQueue 中                            │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  条件 3: 超过 5 秒未收到 FINISHED 消息                       │
+</span></span><span class=line><span class=cl>│          └─ timeoutTime &lt;= currentTime                     │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  ════════════════════════════════════════════════════════  │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  三个条件必须同时满足才能触发 Input ANR                     │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h3 id=42-超时检测机制>4.2 超时检测机制</h3><p>Input ANR 的超时检测通过以下机制实现：</p><h4 id=421-anrtracker-记录超时时间>4.2.1 AnrTracker 记录超时时间</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// frameworks/native/services/inputflinger/dispatcher/InputDispatcher.cpp
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>AnrTracker</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 使用最小堆存储超时时间
+</span></span></span><span class=line><span class=cl>    <span class=n>std</span><span class=o>::</span><span class=n>map</span><span class=o>&lt;</span><span class=n>nsecs_t</span><span class=p>,</span> <span class=n>sp</span><span class=o>&lt;</span><span class=n>Connection</span><span class=o>&gt;&gt;</span> <span class=n>mAnrTimeouts</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=kt>void</span> <span class=nf>insert</span><span class=p>(</span><span class=n>nsecs_t</span> <span class=n>timeoutTime</span><span class=p>,</span> <span class=k>const</span> <span class=n>sp</span><span class=o>&lt;</span><span class=n>Connection</span><span class=o>&gt;&amp;</span> <span class=n>connection</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>mAnrTimeouts</span><span class=p>.</span><span class=n>insert</span><span class=p>({</span><span class=n>timeoutTime</span><span class=p>,</span> <span class=n>connection</span><span class=p>});</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=n>nsecs_t</span> <span class=nf>firstTimeout</span><span class=p>()</span> <span class=k>const</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>mAnrTimeouts</span><span class=p>.</span><span class=n>empty</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>return</span> <span class=n>LONG_LONG_MAX</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=n>mAnrTimeouts</span><span class=p>.</span><span class=n>begin</span><span class=p>()</span><span class=o>-&gt;</span><span class=n>first</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h4 id=422-epoll_wait-定时唤醒>4.2.2 epoll_wait 定时唤醒</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// frameworks/native/services/inputflinger/dispatcher/InputDispatcher.cpp
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>InputDispatcher</span><span class=o>::</span><span class=n>dispatchOnce</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>nsecs_t</span> <span class=n>nextWakeupTime</span> <span class=o>=</span> <span class=n>LONG_LONG_MAX</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 获取最近的 ANR 检查时间
+</span></span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=n>nsecs_t</span> <span class=n>nextAnrCheck</span> <span class=o>=</span> <span class=n>processAnrsLocked</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=n>nextWakeupTime</span> <span class=o>=</span> <span class=n>std</span><span class=o>::</span><span class=n>min</span><span class=p>(</span><span class=n>nextWakeupTime</span><span class=p>,</span> <span class=n>nextAnrCheck</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 计算超时时间
+</span></span></span><span class=line><span class=cl>    <span class=n>nsecs_t</span> <span class=n>currentTime</span> <span class=o>=</span> <span class=n>now</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>timeoutMillis</span> <span class=o>=</span> <span class=n>toMillisecondTimeoutDelay</span><span class=p>(</span><span class=n>currentTime</span><span class=p>,</span> <span class=n>nextWakeupTime</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// epoll_wait 阻塞，直到有事件或超时
+</span></span></span><span class=line><span class=cl>    <span class=n>mLooper</span><span class=o>-&gt;</span><span class=n>pollOnce</span><span class=p>(</span><span class=n>timeoutMillis</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h4 id=423-processanrslocked-执行检测>4.2.3 processAnrsLocked 执行检测</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=n>nsecs_t</span> <span class=n>InputDispatcher</span><span class=o>::</span><span class=n>processAnrsLocked</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=n>nsecs_t</span> <span class=n>currentTime</span> <span class=o>=</span> <span class=n>now</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 检查 waitQueue 中是否有超时的事件
+</span></span></span><span class=line><span class=cl>    <span class=k>while</span> <span class=p>(</span><span class=o>!</span><span class=n>mAnrTracker</span><span class=p>.</span><span class=n>empty</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>nsecs_t</span> <span class=n>timeoutTime</span> <span class=o>=</span> <span class=n>mAnrTracker</span><span class=p>.</span><span class=n>firstTimeout</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>timeoutTime</span> <span class=o>&gt;</span> <span class=n>currentTime</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>return</span> <span class=n>timeoutTime</span><span class=p>;</span>  <span class=c1>// 还没超时，返回下次检查时间
+</span></span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>        
+</span></span><span class=line><span class=cl>        <span class=c1>// 超时了，触发 ANR
+</span></span></span><span class=line><span class=cl>        <span class=n>sp</span><span class=o>&lt;</span><span class=n>Connection</span><span class=o>&gt;</span> <span class=n>connection</span> <span class=o>=</span> <span class=n>mAnrTracker</span><span class=p>.</span><span class=n>firstTimeoutConnection</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>        <span class=n>onAnrLocked</span><span class=p>(</span><span class=n>connection</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>LONG_LONG_MAX</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h3 id=43-为什么-case-1-不会触发-anr>4.3 为什么 Case 1 不会触发 ANR？</h3><p>通过三个 Case 的对比，可以清晰地理解 Case 1 不触发 ANR 的原因：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Case 1 的事件生命周期：
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  T=0s: onTouchEvent() 开始                                  │
+</span></span><span class=line><span class=cl>│        │                                                    │
+</span></span><span class=line><span class=cl>│        ├── post(PerformClick)  ← onClick 异步调度           │
+</span></span><span class=line><span class=cl>│        │                                                    │
+</span></span><span class=line><span class=cl>│        └── onTouchEvent() 返回 true                         │
+</span></span><span class=line><span class=cl>│              │                                              │
+</span></span><span class=line><span class=cl>│              ▼                                              │
+</span></span><span class=line><span class=cl>│        finishInputEvent()                                   │
+</span></span><span class=line><span class=cl>│              │                                              │
+</span></span><span class=line><span class=cl>│              ▼                                              │
+</span></span><span class=line><span class=cl>│        InputDispatcher 收到 FINISHED                        │
+</span></span><span class=line><span class=cl>│              │                                              │
+</span></span><span class=line><span class=cl>│              ▼                                              │
+</span></span><span class=line><span class=cl>│        waitQueue 移除事件  ← 关键：事件确认完成！            │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  ─────────────────────────────────────────────────────────  │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  T=0s+: onClick() 开始执行                                  │
+</span></span><span class=line><span class=cl>│         │                                                   │
+</span></span><span class=line><span class=cl>│         └── Thread.sleep(15000)                             │
+</span></span><span class=line><span class=cl>│              │                                              │
+</span></span><span class=line><span class=cl>│              ▼                                              │
+</span></span><span class=line><span class=cl>│         waitQueue 状态: 空 ← 没有等待确认的事件              │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  ─────────────────────────────────────────────────────────  │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  T=15s: sleep 结束，onClick 完成                            │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  结论：事件在 onClick 阻塞之前就已经确认完成，               │
+</span></span><span class=line><span class=cl>│        waitQueue 始终为空，没有超时检测对象。               │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h2 id=五关键源码路径>五、关键源码路径</h2><h3 id=51-事件确认流程>5.1 事件确认流程</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>frameworks/base/core/java/android/view/View.java
+</span></span><span class=line><span class=cl>├── onTouchEvent()
+</span></span><span class=line><span class=cl>│   └── post(mPerformClick)  // onClick 异步执行
+</span></span><span class=line><span class=cl>└── performClickInternal()
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>frameworks/base/core/java/android/view/ViewRootImpl.java
+</span></span><span class=line><span class=cl>├── processMotionEvent()
+</span></span><span class=line><span class=cl>├── deliverMotionEvent()
+</span></span><span class=line><span class=cl>└── finishInputEvent()
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>frameworks/base/core/java/android/view/InputEventReceiver.java
+</span></span><span class=line><span class=cl>├── dispatchMotionEvent()
+</span></span><span class=line><span class=cl>└── finishInputEvent()
+</span></span><span class=line><span class=cl>    └── nativeFinishInputEvent()  // JNI 调用
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>frameworks/base/core/jni/android_view_InputEventReceiver.cpp
+</span></span><span class=line><span class=cl>└── nativeFinishInputEvent()
+</span></span><span class=line><span class=cl>    └── InputConsumer::sendFinishedSignal()
+</span></span></code></pre></td></tr></table></div></div><h3 id=52-onclick-异步执行>5.2 onClick 异步执行</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>frameworks/base/core/java/android/view/View.java:18125
+</span></span><span class=line><span class=cl>├── onTouchEvent()
+</span></span><span class=line><span class=cl>│   ├── if (!post(mPerformClick)) {  // 关键：异步 post
+</span></span><span class=line><span class=cl>│   │       performClickInternal();
+</span></span><span class=line><span class=cl>│   │   }
+</span></span><span class=line><span class=cl>│   └── return true;
+</span></span><span class=line><span class=cl>│
+</span></span><span class=line><span class=cl>└── class PerformClick implements Runnable
+</span></span><span class=line><span class=cl>    └── run() { performClickInternal(); }
+</span></span></code></pre></td></tr></table></div></div><h3 id=53-anr-检测流程>5.3 ANR 检测流程</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-gdscript3 data-lang=gdscript3><span class=line><span class=cl><span class=n>frameworks</span><span class=o>/</span><span class=n>native</span><span class=o>/</span><span class=n>services</span><span class=o>/</span><span class=n>inputflinger</span><span class=o>/</span><span class=n>dispatcher</span><span class=o>/</span><span class=n>InputDispatcher</span><span class=o>.</span><span class=n>cpp</span>
+</span></span><span class=line><span class=cl><span class=err>├──</span> <span class=n>dispatchOnce</span><span class=p>()</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>   <span class=err>├──</span> <span class=k>const</span> <span class=n>nsecs_t</span> <span class=n>nextAnrCheck</span> <span class=o>=</span> <span class=n>processAnrsLocked</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>   <span class=err>├──</span> <span class=n>nextWakeupTime</span> <span class=o>=</span> <span class=n>std</span><span class=p>::</span><span class=nb>min</span><span class=p>(</span><span class=n>nextWakeupTime</span><span class=p>,</span> <span class=n>nextAnrCheck</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>   <span class=err>└──</span> <span class=n>mLooper</span><span class=o>-&gt;</span><span class=n>pollOnce</span><span class=p>(</span><span class=n>timeoutMillis</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>├──</span> <span class=n>processAnrsLocked</span><span class=p>()</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>   <span class=err>└──</span> <span class=n>onAnrLocked</span><span class=p>(</span><span class=n>connection</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>└──</span> <span class=n>onAnrLocked</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=err>└──</span> <span class=n>mContext</span><span class=o>-&gt;</span><span class=n>getANRManager</span><span class=p>()</span><span class=o>-&gt;</span><span class=n>notifyAnr</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=n>frameworks</span><span class=o>/</span><span class=n>native</span><span class=o>/</span><span class=n>services</span><span class=o>/</span><span class=n>inputflinger</span><span class=o>/</span><span class=n>dispatcher</span><span class=o>/</span><span class=n>AnrTracker</span><span class=o>.</span><span class=n>h</span>
+</span></span><span class=line><span class=cl><span class=err>├──</span> <span class=n>insert</span><span class=p>()</span>
+</span></span><span class=line><span class=cl><span class=err>├──</span> <span class=n>firstTimeout</span><span class=p>()</span>
+</span></span><span class=line><span class=cl><span class=err>└──</span> <span class=n>erase</span><span class=p>()</span>
+</span></span></code></pre></td></tr></table></div></div><h3 id=54-anr-弹窗显示>5.4 ANR 弹窗显示</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java
+</span></span><span class=line><span class=cl>├── appNotResponding()
+</span></span><span class=line><span class=cl>└── mUiHandler.sendMessage(SHOW_NOT_RESPONDING_UI_MSG)
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>frameworks/base/services/core/java/com/android/server/am/AppErrors.java
+</span></span><span class=line><span class=cl>└── handleShowAnrUi()
+</span></span><span class=line><span class=cl>    └── showAnrDialogs(data)
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>frameworks/base/services/core/java/com/android/server/am/AppNotRespondingDialog.java
+</span></span><span class=line><span class=cl>├── 构造函数
+</span></span><span class=line><span class=cl>│   └── getWindow().setType(TYPE_SYSTEM_ERROR)  // 系统级窗口
+</span></span><span class=line><span class=cl>└── onCreate()
+</span></span></code></pre></td></tr></table></div></div><hr><h2 id=六总结>六、总结</h2><h3 id=input-anr-的本质>Input ANR 的本质</h3><p>Input ANR 的触发需要同时满足三个条件：</p><ol><li><strong>输入事件产生</strong>：用户触摸或按键</li><li><strong>事件等待确认</strong>：事件在 waitQueue 中</li><li><strong>超时未确认</strong>：超过 5 秒未收到 FINISHED 消息</li></ol><h3 id=onclick-异步执行的意义>onClick 异步执行的意义</h3><p>View 框架将 onClick 设计为异步执行是一个精妙的设计：</p><ul><li><strong>用户体验</strong>：让视觉状态先更新，再执行点击逻辑</li><li><strong>ANR 避免</strong>：事件确认在 onClick 阻塞之前完成，避免误判</li><li><strong>灵活性</strong>：应用可以在 onClick 中执行耗时操作而不触发 ANR（前提是没有后续输入事件）</li></ul><h3 id=实际开发注意事项>实际开发注意事项</h3><ol><li><p><strong>避免在 onClick 中执行耗时操作</strong>：虽然单次点击不会触发 ANR，但如果用户连续点击，仍会触发 ANR</p></li><li><p><strong>理解异步执行的边界</strong>：onClick 是异步的，但 onTouch、onLongPress 等回调可能不是</p></li><li><p><strong>监控输入事件处理时间</strong>：即使不触发 ANR，长时间阻塞也会影响用户体验</p></li><li><p><strong>ANR 弹窗的显示机制</strong>：ANR 弹窗由 system_server 显示，即使应用主线程完全阻塞，弹窗也能正常显示</p></li></ol><hr><h2 id=附录>附录</h2><h3 id=相关源码文件列表>相关源码文件列表</h3><table><thead><tr><th>文件路径</th><th>说明</th></tr></thead><tbody><tr><td><a href=https://android.googlesource.com/platform/frameworks/native/+/refs/heads/master/services/inputflinger/dispatcher/InputDispatcher.cpp target=_blank rel=noopener>InputDispatcher.cpp</a></td><td>事件分发与 ANR 检测</td></tr><tr><td><a href=https://android.googlesource.com/platform/frameworks/native/+/refs/heads/master/services/inputflinger/dispatcher/AnrTracker.h target=_blank rel=noopener>AnrTracker.h</a></td><td>ANR 超时追踪</td></tr><tr><td><a href=https://android.googlesource.com/platform/frameworks/base/+/refs/heads/master/core/java/android/view/View.java target=_blank rel=noopener>View.java</a></td><td>onClick 异步执行</td></tr><tr><td><a href=https://android.googlesource.com/platform/frameworks/base/+/refs/heads/master/core/java/android/view/ViewRootImpl.java target=_blank rel=noopener>ViewRootImpl.java</a></td><td>事件分发与确认</td></tr><tr><td><a href=https://android.googlesource.com/platform/frameworks/base/+/refs/heads/master/services/core/java/com/android/server/am/AppErrors.java target=_blank rel=noopener>AppErrors.java</a></td><td>ANR 处理</td></tr><tr><td><a href=https://android.googlesource.com/platform/frameworks/base/+/refs/heads/master/services/core/java/com/android/server/am/AppNotRespondingDialog.java target=_blank rel=noopener>AppNotRespondingDialog.java</a></td><td>ANR 弹窗</td></tr></tbody></table></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Mar 14, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/20251228/ title="使用PyTorch实现线性回归 (入门)">使用PyTorch实现线性回归 (入门)</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
