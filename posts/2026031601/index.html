@@ -1,0 +1,264 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Firebase Android SDK 冷启动耗时统计原理深度解析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.157.0"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Mar 14, 2026
+- 4 minute read</p><h1 class=entry-title>Firebase Android SDK 冷启动耗时统计原理深度解析</h1></header><div class=entry-content><h1 id=一概述>一、概述</h1><p>冷启动时间是衡量 Android 应用性能的核心指标之一。Firebase Performance SDK 提供了自动化的冷启动监控能力，无需开发者手动埋点即可采集完整的启动链路耗时。</p><p>本文基于 Firebase Android SDK 源码，深入分析其技术实现原理。</p><h1 id=二整体架构>二、整体架构</h1><h2 id=核心类职责>核心类职责</h2><table><thead><tr><th>类名</th><th>职责</th></tr></thead><tbody><tr><td><code>AppStartTrace</code></td><td>启动时间采集核心类</td></tr><tr><td><code>AppStateMonitor</code></td><td>应用状态监控，冷启动检测</td></tr><tr><td><code>FirebasePerfEarly</code></td><td>早期初始化入口</td></tr><tr><td><code>StartupTime</code></td><td>Firebase 初始化时间记录</td></tr><tr><td><code>Timer</code></td><td>时间戳工具类</td></tr><tr><td><code>TransportManager</code></td><td>数据上报管理</td></tr></tbody></table><h2 id=初始化流程>初始化流程</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>FirebaseApp.initialize()
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ├─&gt; StartupTime.now()                    // 记录 Firebase 类加载时间
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    └─&gt; FirebasePerfRegistrar.getComponents()
+</span></span><span class=line><span class=cl>           │
+</span></span><span class=line><span class=cl>           ├─&gt; FirebasePerfEarly             // Eager 初始化
+</span></span><span class=line><span class=cl>           │      ├─&gt; AppStateMonitor.registerActivityLifecycleCallbacks()
+</span></span><span class=line><span class=cl>           │      ├─&gt; AppStartTrace.registerActivityLifecycleCallbacks()
+</span></span><span class=line><span class=cl>           │      └─&gt; post(StartFromBackgroundRunnable)  // 后台启动检测
+</span></span><span class=line><span class=cl>           │
+</span></span><span class=line><span class=cl>           └─&gt; FirebasePerformance           // Lazy 初始化
+</span></span></code></pre></td></tr></table></div></div><h2 id=数据流向>数据流向</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Activity 生命周期回调
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>AppStartTrace (时间采集)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>TraceMetric (数据封装)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>TransportManager → RateLimiter (采样限流)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>FlgTransport → Firebase Backend
+</span></span></code></pre></td></tr></table></div></div><h1 id=三时间采集机制>三、时间采集机制</h1><h2 id=31-时间基准点获取>3.1 时间基准点获取</h2><p>SDK 采用多时间基准策略，优先使用系统 API，回退使用 Firebase 初始化时间：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=c1>// 首选：Android 系统 API (API 24+)</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=c1>// 返回进程 BIND_APPLICATION 的时间点</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=k>this</span><span class=p>.</span><span class=na>processStartTime</span><span class=w> </span><span class=o>=</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>Build</span><span class=p>.</span><span class=na>VERSION</span><span class=p>.</span><span class=na>SDK_INT</span><span class=w> </span><span class=o>&gt;=</span><span class=w> </span><span class=n>Build</span><span class=p>.</span><span class=na>VERSION_CODES</span><span class=p>.</span><span class=na>N</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=o>?</span><span class=w> </span><span class=n>Timer</span><span class=p>.</span><span class=na>ofElapsedRealtime</span><span class=p>(</span><span class=n>Process</span><span class=p>.</span><span class=na>getStartElapsedRealtime</span><span class=p>())</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=p>:</span><span class=w> </span><span class=kc>null</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>
+</span></span></span><span class=line><span class=cl><span class=c1>// 备选：Firebase 类加载时间</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=n>StartupTime</span><span class=w> </span><span class=n>firebaseStart</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=n>FirebaseApp</span><span class=p>.</span><span class=na>getInstance</span><span class=p>().</span><span class=na>get</span><span class=p>(</span><span class=n>StartupTime</span><span class=p>.</span><span class=na>class</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=k>this</span><span class=p>.</span><span class=na>firebaseClassLoadTime</span><span class=w> </span><span class=o>=</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>firebaseStart</span><span class=w> </span><span class=o>!=</span><span class=w> </span><span class=kc>null</span><span class=w> </span><span class=o>?</span><span class=w> </span><span class=n>Timer</span><span class=p>.</span><span class=na>ofElapsedRealtime</span><span class=p>(</span><span class=n>firebaseStart</span><span class=p>.</span><span class=na>getElapsedRealtime</span><span class=p>())</span><span class=w> </span><span class=p>:</span><span class=w> </span><span class=kc>null</span><span class=p>;</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><p><strong>为什么需要两个基准点？</strong></p><ul><li><code>Process.getStartElapsedRealtime()</code> 能捕获从进程 fork 开始的完整启动时间，但仅 API 24+ 可用</li><li><code>StartupTime</code> 作为低版本系统的备选方案，从 Firebase SDK 初始化开始计时</li></ul><h2 id=32-activity-生命周期时间采集>3.2 Activity 生命周期时间采集</h2><p>SDK 在 Activity 生命周期回调中记录关键时间点：</p><table><thead><tr><th>回调方法</th><th>时间变量</th><th>含义</th></tr></thead><tbody><tr><td><code>onActivityCreated()</code></td><td><code>onCreateTime</code></td><td>UI 初始化开始</td></tr><tr><td><code>onActivityStarted()</code></td><td><code>onStartTime</code></td><td>可见性开始</td></tr><tr><td><code>onActivityResumed()</code></td><td><code>onResumeTime</code></td><td>可交互状态</td></tr></tbody></table><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=nd>@Override</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=kd>public</span><span class=w> </span><span class=kd>synchronized</span><span class=w> </span><span class=kt>void</span><span class=w> </span><span class=nf>onActivityCreated</span><span class=p>(</span><span class=n>Activity</span><span class=w> </span><span class=n>activity</span><span class=p>,</span><span class=w> </span><span class=n>Bundle</span><span class=w> </span><span class=n>savedInstanceState</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=n>resolveIsStartedFromBackground</span><span class=p>();</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=k>if</span><span class=w> </span><span class=p>(</span><span class=n>isStartedFromBackground</span><span class=w> </span><span class=o>||</span><span class=w> </span><span class=n>onCreateTime</span><span class=w> </span><span class=o>!=</span><span class=w> </span><span class=kc>null</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=k>return</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=n>launchActivity</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=k>new</span><span class=w> </span><span class=n>WeakReference</span><span class=o>&lt;&gt;</span><span class=p>(</span><span class=n>activity</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=n>onCreateTime</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=n>clock</span><span class=p>.</span><span class=na>getTime</span><span class=p>();</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=c1>// 超时保护：启动超过1分钟放弃采集</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=k>if</span><span class=w> </span><span class=p>(</span><span class=n>getStartTimerCompat</span><span class=p>().</span><span class=na>getDurationMicros</span><span class=p>(</span><span class=n>onCreateTime</span><span class=p>)</span><span class=w> </span><span class=o>&gt;</span><span class=w> </span><span class=n>MAX_LATENCY_BEFORE_UI_INIT</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>isTooLateToInitUI</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=kc>true</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><h2 id=33-首帧绘制时间采集实验性>3.3 首帧绘制时间采集（实验性）</h2><p>通过 ViewTreeObserver 监听首帧绘制，获取更精确的 TTID (Time To Initial Display)：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=n>View</span><span class=w> </span><span class=n>rootView</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=n>activity</span><span class=p>.</span><span class=na>findViewById</span><span class=p>(</span><span class=n>android</span><span class=p>.</span><span class=na>R</span><span class=p>.</span><span class=na>id</span><span class=p>.</span><span class=na>content</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=n>FirstDrawDoneListener</span><span class=p>.</span><span class=na>registerForNextDraw</span><span class=p>(</span><span class=n>rootView</span><span class=p>,</span><span class=w> </span><span class=k>this</span><span class=p>::</span><span class=n>recordOnDrawFrontOfQueue</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=n>PreDrawListener</span><span class=p>.</span><span class=na>registerForNextDraw</span><span class=p>(</span><span class=n>rootView</span><span class=p>,</span><span class=w> </span><span class=k>this</span><span class=p>::</span><span class=n>recordPreDraw</span><span class=p>,</span><span class=w> </span><span class=k>this</span><span class=p>::</span><span class=n>recordPreDrawFrontOfQueue</span><span class=p>);</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><h1 id=四启动类型判定>四、启动类型判定</h1><h2 id=41-冷启动判定>4.1 冷启动判定</h2><p><code>AppStateMonitor</code> 维护 <code>isColdStart</code> 标记：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=kd>private</span><span class=w> </span><span class=kt>boolean</span><span class=w> </span><span class=n>isColdStart</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=kc>true</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>
+</span></span></span><span class=line><span class=cl><span class=c1>// 首次 onActivityResumed 时触发</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=k>if</span><span class=w> </span><span class=p>(</span><span class=n>isColdStart</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=n>updateAppState</span><span class=p>(</span><span class=n>ApplicationProcessState</span><span class=p>.</span><span class=na>FOREGROUND</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=n>sendAppColdStartUpdate</span><span class=p>();</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=n>isColdStart</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=kc>false</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><h2 id=42-后台启动检测原理>4.2 后台启动检测原理</h2><p>SDK 使用 <code>StartFromBackgroundRunnable</code> 检测后台启动：</p><p><strong>机制</strong>：在主线程 post 一个 Runnable，通过其执行时机判断启动类型。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>前台冷启动：
+</span></span><span class=line><span class=cl>  Activity.onCreate() 先执行 → onCreateTime != null → Runnable 执行时不记录
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>后台启动：
+</span></span><span class=line><span class=cl>  Runnable 先执行 → mainThreadRunnableTime 被记录 → onActivityCreated 检测到差异
+</span></span></code></pre></td></tr></table></div></div><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=kd>public</span><span class=w> </span><span class=kd>static</span><span class=w> </span><span class=kd>class</span> <span class=nc>StartFromBackgroundRunnable</span><span class=w> </span><span class=kd>implements</span><span class=w> </span><span class=n>Runnable</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=nd>@Override</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=kd>public</span><span class=w> </span><span class=kt>void</span><span class=w> </span><span class=nf>run</span><span class=p>()</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c1>// 只有 onCreate 未被调用时才记录</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=k>if</span><span class=w> </span><span class=p>(</span><span class=n>trace</span><span class=p>.</span><span class=na>onCreateTime</span><span class=w> </span><span class=o>==</span><span class=w> </span><span class=kc>null</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>      </span><span class=n>trace</span><span class=p>.</span><span class=na>mainThreadRunnableTime</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=k>new</span><span class=w> </span><span class=n>Timer</span><span class=p>();</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><h2 id=43-api-34-50ms-容错窗口>4.3 API 34+ 50ms 容错窗口</h2><p><strong>问题</strong>：Android 14 主线程调度变化，导致前台冷启动时 Runnable 可能先于 <code>onActivityCreated</code> 执行，造成误判。</p><p><strong>解决方案</strong>：引入 50ms 容错窗口</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=kd>private</span><span class=w> </span><span class=kd>static</span><span class=w> </span><span class=kd>final</span><span class=w> </span><span class=kt>long</span><span class=w> </span><span class=n>MAX_BACKGROUND_RUNNABLE_DELAY</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=n>TimeUnit</span><span class=p>.</span><span class=na>MILLISECONDS</span><span class=p>.</span><span class=na>toMicros</span><span class=p>(</span><span class=n>50</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>
+</span></span></span><span class=line><span class=cl><span class=kd>private</span><span class=w> </span><span class=kt>void</span><span class=w> </span><span class=nf>resolveIsStartedFromBackground</span><span class=p>()</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=k>if</span><span class=w> </span><span class=p>(</span><span class=n>mainThreadRunnableTime</span><span class=w> </span><span class=o>==</span><span class=w> </span><span class=kc>null</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=k>return</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=c1>// API &lt; 34: Runnable 执行即后台启动</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=c1>// API 34+: 时间差 &gt; 50ms 才判定为后台启动</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=k>if</span><span class=w> </span><span class=p>((</span><span class=n>Build</span><span class=p>.</span><span class=na>VERSION</span><span class=p>.</span><span class=na>SDK_INT</span><span class=w> </span><span class=o>&lt;</span><span class=w> </span><span class=n>34</span><span class=p>)</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>      </span><span class=o>||</span><span class=w> </span><span class=p>(</span><span class=n>mainThreadRunnableTime</span><span class=p>.</span><span class=na>getDurationMicros</span><span class=p>()</span><span class=w> </span><span class=o>&gt;</span><span class=w> </span><span class=n>MAX_BACKGROUND_RUNNABLE_DELAY</span><span class=p>))</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>isStartedFromBackground</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=kc>true</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=n>mainThreadRunnableTime</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=kc>null</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><p><strong>原理</strong>：</p><table><thead><tr><th>场景</th><th>Runnable 与 onCreate 时间差</th><th>判定</th></tr></thead><tbody><tr><td>真后台启动</td><td>几百毫秒~几秒</td><td>> 50ms → 后台启动</td></tr><tr><td>调度异常的前台启动</td><td>&lt; 50ms</td><td>&lt; 50ms → 前台启动</td></tr></tbody></table><h1 id=五时间精度设计>五、时间精度设计</h1><h2 id=timer-类实现>Timer 类实现</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=kd>public</span><span class=w> </span><span class=kd>class</span> <span class=nc>Timer</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=c1>// 墙钟时间（不用于时长计算）</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=kd>private</span><span class=w> </span><span class=kt>long</span><span class=w> </span><span class=n>wallClockMicros</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=c1>// 单调时钟（用于时长计算）</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=kd>private</span><span class=w> </span><span class=kt>long</span><span class=w> </span><span class=n>elapsedRealtimeMicros</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=kd>public</span><span class=w> </span><span class=kt>long</span><span class=w> </span><span class=nf>getDurationMicros</span><span class=p>(</span><span class=n>Timer</span><span class=w> </span><span class=n>end</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=k>return</span><span class=w> </span><span class=n>end</span><span class=p>.</span><span class=na>elapsedRealtimeMicros</span><span class=w> </span><span class=o>-</span><span class=w> </span><span class=k>this</span><span class=p>.</span><span class=na>elapsedRealtimeMicros</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><p><strong>设计要点</strong>：</p><ul><li>使用 <code>SystemClock.elapsedRealtime()</code> 单调时钟，不受系统时间修改影响</li><li>微秒级存储，满足精度要求</li><li>墙钟时间仅用于日志记录，不参与计算</li></ul><h1 id=六数据上报流程>六、数据上报流程</h1><h2 id=tracemetric-结构>TraceMetric 结构</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>_as (App Start)           → 总启动时间
+</span></span><span class=line><span class=cl>  ├── _astui (onCreate)   → UI 初始化阶段
+</span></span><span class=line><span class=cl>  ├── _astfd (onStart)    → 首帧绘制阶段
+</span></span><span class=line><span class=cl>  └── _asti (onResume)    → 可交互阶段
+</span></span></code></pre></td></tr></table></div></div><h2 id=日志构建>日志构建</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=kd>private</span><span class=w> </span><span class=kt>void</span><span class=w> </span><span class=nf>logAppStartTrace</span><span class=p>()</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=n>TraceMetric</span><span class=p>.</span><span class=na>Builder</span><span class=w> </span><span class=n>metric</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=n>TraceMetric</span><span class=p>.</span><span class=na>newBuilder</span><span class=p>()</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>      </span><span class=p>.</span><span class=na>setName</span><span class=p>(</span><span class=s>&#34;_as&#34;</span><span class=p>)</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>      </span><span class=p>.</span><span class=na>setClientStartTimeUs</span><span class=p>(</span><span class=n>getClassLoadTimeCompat</span><span class=p>().</span><span class=na>getMicros</span><span class=p>())</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>      </span><span class=p>.</span><span class=na>setDurationUs</span><span class=p>(</span><span class=n>getClassLoadTimeCompat</span><span class=p>().</span><span class=na>getDurationMicros</span><span class=p>(</span><span class=n>onResumeTime</span><span class=p>));</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=c1>// 添加子阶段</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=n>metric</span><span class=p>.</span><span class=na>addAllSubtraces</span><span class=p>(</span><span class=n>Arrays</span><span class=p>.</span><span class=na>asList</span><span class=p>(</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>      </span><span class=n>buildSubtrace</span><span class=p>(</span><span class=s>&#34;_astui&#34;</span><span class=p>,</span><span class=w> </span><span class=n>start</span><span class=p>,</span><span class=w> </span><span class=n>onCreate</span><span class=p>),</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>      </span><span class=n>buildSubtrace</span><span class=p>(</span><span class=s>&#34;_astfd&#34;</span><span class=p>,</span><span class=w> </span><span class=n>onCreate</span><span class=p>,</span><span class=w> </span><span class=n>onStart</span><span class=p>),</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>      </span><span class=n>buildSubtrace</span><span class=p>(</span><span class=s>&#34;_asti&#34;</span><span class=p>,</span><span class=w> </span><span class=n>onStart</span><span class=p>,</span><span class=w> </span><span class=n>onResume</span><span class=p>)</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=p>));</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=n>transportManager</span><span class=p>.</span><span class=na>log</span><span class=p>(</span><span class=n>metric</span><span class=p>.</span><span class=na>build</span><span class=p>(),</span><span class=w> </span><span class=n>ApplicationProcessState</span><span class=p>.</span><span class=na>FOREGROUND_BACKGROUND</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><h2 id=采样与限流>采样与限流</h2><p><strong>Token Bucket 算法</strong>控制上报频率：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=kd>synchronized</span><span class=w> </span><span class=kt>boolean</span><span class=w> </span><span class=nf>check</span><span class=p>(</span><span class=n>PerfMetric</span><span class=w> </span><span class=n>metric</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=kt>double</span><span class=w> </span><span class=n>newTokens</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=p>(</span><span class=n>elapsed</span><span class=w> </span><span class=o>*</span><span class=w> </span><span class=n>rate</span><span class=p>.</span><span class=na>getTokensPerSeconds</span><span class=p>())</span><span class=w> </span><span class=o>/</span><span class=w> </span><span class=n>MICROS_IN_A_SECOND</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=n>tokenCount</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=n>Math</span><span class=p>.</span><span class=na>min</span><span class=p>(</span><span class=n>tokenCount</span><span class=w> </span><span class=o>+</span><span class=w> </span><span class=n>newTokens</span><span class=p>,</span><span class=w> </span><span class=n>capacity</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=k>if</span><span class=w> </span><span class=p>(</span><span class=n>tokenCount</span><span class=w> </span><span class=o>&gt;=</span><span class=w> </span><span class=n>1</span><span class=p>.</span><span class=na>0</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>tokenCount</span><span class=w> </span><span class=o>-=</span><span class=w> </span><span class=n>1</span><span class=p>.</span><span class=na>0</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=k>return</span><span class=w> </span><span class=kc>true</span><span class=p>;</span><span class=w>  </span><span class=c1>// 允许上报</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>  </span><span class=k>return</span><span class=w> </span><span class=kc>false</span><span class=p>;</span><span class=w>   </span><span class=c1>// 被限流</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><h1 id=七关键源码位置>七、关键源码位置</h1><table><thead><tr><th>文件</th><th>路径</th></tr></thead><tbody><tr><td>AppStartTrace</td><td><code>firebase-perf/src/main/java/com/google/firebase/perf/metrics/AppStartTrace.java</code></td></tr><tr><td>AppStateMonitor</td><td><code>firebase-perf/src/main/java/com/google/firebase/perf/application/AppStateMonitor.java</code></td></tr><tr><td>FirebasePerfEarly</td><td><code>firebase-perf/src/main/java/com/google/firebase/perf/FirebasePerfEarly.java</code></td></tr><tr><td>StartupTime</td><td><code>firebase-common/src/main/java/com/google/firebase/StartupTime.java</code></td></tr><tr><td>Timer</td><td><code>firebase-perf/src/main/java/com/google/firebase/perf/util/Timer.java</code></td></tr><tr><td>TransportManager</td><td><code>firebase-perf/src/main/java/com/google/firebase/perf/transport/TransportManager.java</code></td></tr></tbody></table><h1 id=八总结>八、总结</h1><p>Firebase Performance SDK 冷启动统计的技术要点：</p><ol><li><strong>多基准点策略</strong>：优先使用 <code>Process.getStartElapsedRealtime()</code>，低版本回退 Firebase 初始化时间</li><li><strong>生命周期采集</strong>：在 onCreate/onStart/onResume 回调中记录时间戳</li><li><strong>后台启动检测</strong>：通过 Runnable 执行时机区分前台/后台启动</li><li><strong>API 34 兼容</strong>：50ms 容错窗口解决调度变化导致的误判</li><li><strong>单调时钟</strong>：使用 <code>elapsedRealtime</code> 确保时长计算准确</li><li><strong>采样限流</strong>：Token Bucket 算法控制上报频率</li></ol></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Mar 14, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/20251228/ title="使用PyTorch实现线性回归 (入门)">使用PyTorch实现线性回归 (入门)</a>
+<a class="basic-alignment right" href=/posts/2026031401/ title="Android Input ANR 机制深度解析：从三个典型案例理解超时检测原理">Android Input ANR 机制深度解析：从三个典型案例理解超时检测原理</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
