@@ -1,0 +1,203 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Android 14 进程冷启动调度机制优化解析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.158.0"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Mar 21, 2026
+- 5 minute read</p><h1 class=entry-title>Android 14 进程冷启动调度机制优化解析</h1></header><div class=entry-content><h1 id=一背景>一、背景</h1><p>在 Android 14 之前，应用进程冷启动时，Broadcast 和 Service 的 ANR 超时计时会在系统发送 <code>bindApplication</code> 后立即开始。这意味着进程初始化的固定开销（如 Zygote fork、类加载、ContentProvider 初始化等）被计入 ANR 超时时间，导致在 CPU 竞争激烈时容易触发误判性 ANR。</p><p>Android 14 引入了<strong>两阶段 Attach 机制</strong>，将 <code>attachApplication</code> 拆分为两个阶段，从根本上解决了这一问题。</p><hr><h1 id=二核心变更>二、核心变更</h1><h2 id=21-关键-commit>2.1 关键 Commit</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>commit 331ef23f78d36d224ca402742cae0fa0237b660a
+</span></span><span class=line><span class=cl>Author: Zim &lt;zezeozue@google.com&gt;
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>Split attachApplication to more accurately identify app startup
+</span></span><span class=line><span class=cl>Bug: 253908737
+</span></span></code></pre></td></tr></table></div></div><h2 id=22-配置开关>2.2 配置开关</h2><p><strong>文件</strong>: <code>frameworks/base/services/core/java/com/android/server/am/ActivityManagerConstants.java</code></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=kd>public</span><span class=w> </span><span class=kd>volatile</span><span class=w> </span><span class=kt>boolean</span><span class=w> </span><span class=n>mEnableWaitForFinishAttachApplication</span><span class=w> </span><span class=o>=</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>DEFAULT_ENABLE_WAIT_FOR_FINISH_ATTACH_APPLICATION</span><span class=p>;</span><span class=w> </span><span class=c1>// 默认 true</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><hr><h1 id=三变更前后对比>三、变更前后对比</h1><h2 id=31-android-13-及之前>3.1 Android 13 及之前</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    系统端 (AMS)                                  │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│  attachApplicationLocked() {                                    │
+</span></span><span class=line><span class=cl>│      thread.bindApplication();        // 发送 Binder 调用        │
+</span></span><span class=line><span class=cl>│      finishAttachApplicationInner();  // ← 立即调用              │
+</span></span><span class=line><span class=cl>│          └→ scheduleTransaction(LAUNCH_ACTIVITY)                │
+</span></span><span class=line><span class=cl>│          └→ scheduleBroadcast()                                 │
+</span></span><span class=line><span class=cl>│          └→ scheduleService()                                   │
+</span></span><span class=line><span class=cl>│  }                                                              │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│  Broadcast/Service ANR 超时 ← 从这里开始计时                     │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                              ↓ Binder
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    客户端消息队列                                │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│  ① BIND_APPLICATION                                             │
+</span></span><span class=line><span class=cl>│  ② EXECUTE_TRANSACTION (LAUNCH_ACTIVITY)                        │
+</span></span><span class=line><span class=cl>│  ③ Runnable (ContentProvider.onCreate 中 post)                  │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><p><strong>问题</strong>: ANR 超时包含了进程初始化的固定开销，应用无法控制。</p><h2 id=32-android-14>3.2 Android 14+</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    系统端 (AMS)                                  │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│  attachApplicationLocked() {                                    │
+</span></span><span class=line><span class=cl>│      thread.bindApplication();        // 发送 Binder 调用        │
+</span></span><span class=line><span class=cl>│      // 不调用 finishAttachApplicationInner                      │
+</span></span><span class=line><span class=cl>│      // 等待客户端通知                                           │
+</span></span><span class=line><span class=cl>│      BIND_APPLICATION_TIMEOUT (15s) 开始计时  ← 新增             │
+</span></span><span class=line><span class=cl>│  }                                                              │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                              ↓ Binder
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    客户端消息队列                                │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│  ① BIND_APPLICATION                                             │
+</span></span><span class=line><span class=cl>│  ② Runnable (ContentProvider.onCreate 中 post)                  │
+</span></span><span class=line><span class=cl>│  ③ EXECUTE_TRANSACTION (LAUNCH_ACTIVITY) ← finishAttach 后入队  │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                              ↓ finishAttachApplication()
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    系统端 (AMS)                                  │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│  finishAttachApplicationInner() {                               │
+</span></span><span class=line><span class=cl>│      scheduleTransaction(LAUNCH_ACTIVITY)                       │
+</span></span><span class=line><span class=cl>│      scheduleBroadcast()                                        │
+</span></span><span class=line><span class=cl>│      scheduleService()                                          │
+</span></span><span class=line><span class=cl>│  }                                                              │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│  Broadcast/Service ANR 超时 ← 从这里开始计时                     │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><p><strong>改进</strong>: ANR 超时只计算应用实际处理 Broadcast/Service 的时间。</p><hr><h1 id=四源码分析>四、源码分析</h1><h2 id=41-系统端调度决策>4.1 系统端调度决策</h2><p><strong>文件</strong>: <code>frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java</code></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=kd>private</span><span class=w> </span><span class=kt>void</span><span class=w> </span><span class=nf>attachApplicationLocked</span><span class=p>(</span><span class=n>IApplicationThread</span><span class=w> </span><span class=n>thread</span><span class=p>,</span><span class=w> </span><span class=p>...)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c1>// 发送 bindApplication</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>thread</span><span class=p>.</span><span class=na>bindApplication</span><span class=p>(...);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c1>// 关键判断</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=k>if</span><span class=w> </span><span class=p>(</span><span class=o>!</span><span class=n>mConstants</span><span class=p>.</span><span class=na>mEnableWaitForFinishAttachApplication</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=c1>// Android 13-: 立即调度</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=n>finishAttachApplicationInner</span><span class=p>(</span><span class=n>startSeq</span><span class=p>,</span><span class=w> </span><span class=n>callingUid</span><span class=p>,</span><span class=w> </span><span class=n>pid</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c1>// Android 14+: 等待客户端通知</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c1>// 启动 BIND_APPLICATION_TIMEOUT 计时</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>Message</span><span class=w> </span><span class=n>msg</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=n>mHandler</span><span class=p>.</span><span class=na>obtainMessage</span><span class=p>(</span><span class=n>BIND_APPLICATION_TIMEOUT_SOFT_MSG</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>msg</span><span class=p>.</span><span class=na>arg1</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=n>BIND_APPLICATION_TIMEOUT</span><span class=p>;</span><span class=w>  </span><span class=c1>// 15s</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>mHandler</span><span class=p>.</span><span class=na>sendMessageDelayed</span><span class=p>(</span><span class=n>msg</span><span class=p>,</span><span class=w> </span><span class=n>msg</span><span class=p>.</span><span class=na>arg1</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><h2 id=42-客户端处理流程>4.2 客户端处理流程</h2><p><strong>文件</strong>: <code>frameworks/base/core/java/android/app/ActivityThread.java</code></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=kd>private</span><span class=w> </span><span class=kt>void</span><span class=w> </span><span class=nf>handleBindApplication</span><span class=p>(</span><span class=n>AppBindData</span><span class=w> </span><span class=n>data</span><span class=p>)</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c1>// 1. 创建 Application</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>app</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=n>data</span><span class=p>.</span><span class=na>info</span><span class=p>.</span><span class=na>makeApplicationInner</span><span class=p>(...);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c1>// 2. 安装 ContentProvider</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=k>if</span><span class=w> </span><span class=p>(</span><span class=o>!</span><span class=n>ArrayUtils</span><span class=p>.</span><span class=na>isEmpty</span><span class=p>(</span><span class=n>data</span><span class=p>.</span><span class=na>providers</span><span class=p>))</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=n>installContentProviders</span><span class=p>(</span><span class=n>app</span><span class=p>,</span><span class=w> </span><span class=n>data</span><span class=p>.</span><span class=na>providers</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=c1>// ← ContentProvider.onCreate() 在此执行</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=c1>// ← post 的 Runnable 此时入队</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c1>// 3. Application.onCreate()</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>mInstrumentation</span><span class=p>.</span><span class=na>callApplicationOnCreate</span><span class=p>(</span><span class=n>app</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c1>// 4. 通知系统初始化完成</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=n>mgr</span><span class=p>.</span><span class=na>finishAttachApplication</span><span class=p>(</span><span class=n>mStartSeq</span><span class=p>,</span><span class=w> </span><span class=n>timestampApplicationOnCreateNs</span><span class=p>);</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><h2 id=43-新增超时类型>4.3 新增超时类型</h2><p><strong>文件</strong>: <code>frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java</code></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=c1>// 新增: 进程初始化超时 (15s)</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=kd>static</span><span class=w> </span><span class=kd>final</span><span class=w> </span><span class=kt>int</span><span class=w> </span><span class=n>BIND_APPLICATION_TIMEOUT</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=n>15</span><span class=w> </span><span class=o>*</span><span class=w> </span><span class=n>1000</span><span class=w> </span><span class=o>*</span><span class=w> </span><span class=n>Build</span><span class=p>.</span><span class=na>HW_TIMEOUT_MULTIPLIER</span><span class=p>;</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><hr><h1 id=五超时机制对比>五、超时机制对比</h1><table><thead><tr><th>超时类型</th><th>时间</th><th>触发条件</th><th>含义</th></tr></thead><tbody><tr><td><code>PROC_START_TIMEOUT</code></td><td>30s</td><td>无法调用 bindApplication</td><td>系统问题</td></tr><tr><td><code>BIND_APPLICATION_TIMEOUT</code></td><td><strong>15s</strong></td><td>进程初始化超时 (新增)</td><td>应用启动代码慢</td></tr><tr><td>Broadcast ANR</td><td>10s</td><td>Broadcast 处理超时</td><td>应用处理逻辑慢</td></tr><tr><td>Service ANR</td><td>20s</td><td>Service 启动超时</td><td>应用处理逻辑慢</td></tr></tbody></table><hr><h1 id=六实际效果示例>六、实际效果示例</h1><p><strong>场景</strong>: 进程初始化耗时 8s，Broadcast 处理耗时 5s</p><h2 id=android-13>Android 13</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>│←────── ANR 计时 13s ──────────→│
+</span></span><span class=line><span class=cl>│ 初始化 8s │ Broadcast 处理 5s │
+</span></span><span class=line><span class=cl>│                              ↑ ANR 触发 (超过 10s)
+</span></span></code></pre></td></tr></table></div></div><h2 id=android-14>Android 14+</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>│ 初始化 8s │ Broadcast 处理 5s │
+</span></span><span class=line><span class=cl>│ (不计数) │←── ANR 计时 5s ──→│
+</span></span><span class=line><span class=cl>│                             ↑ 正常完成 (&lt; 10s)
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=七副作用>七、副作用</h1><p>此变更导致消息队列顺序发生变化：</p><table><thead><tr><th>版本</th><th>消息队列顺序</th></tr></thead><tbody><tr><td>Android 13-</td><td>BIND_APP → EXEC_TRANS → Runnable</td></tr><tr><td>Android 14+</td><td>BIND_APP → Runnable → EXEC_TRANS</td></tr></tbody></table><p>这影响了依赖消息队列顺序的后台启动检测逻辑（如 Firebase），需要引入时间阈值来区分前台/后台启动。</p><hr><h1 id=八总结>八、总结</h1><p>Android 14 的两阶段 Attach 机制实现了以下目标：</p><ol><li><strong>减少误判性 ANR</strong>: 进程初始化开销不再计入 Broadcast/Service ANR</li><li><strong>更准确的超时分类</strong>: 新增 <code>BIND_APPLICATION_TIMEOUT</code> 单独监控进程初始化</li><li><strong>公平性</strong>: 应用只对自己的代码负责，不被系统开销拖累</li></ol><p>这一改动体现了 Android 持续优化用户体验和开发者体验的设计理念。</p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Mar 21, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026031601/ title="Firebase Android SDK 冷启动耗时统计原理深度解析">Firebase Android SDK 冷启动耗时统计原理深度解析</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
