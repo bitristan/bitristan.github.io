@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Posts on 学而时习之</title><link>/posts/</link><description>Recent content in Posts on 学而时习之</description><generator>Hugo</generator><language>zh-cn</language><lastBuildDate>Sat, 04 Apr 2026 17:33:05 +0800</lastBuildDate><atom:link href="/posts/index.xml" rel="self" type="application/rss+xml"/><item><title>Android VSYNC 机制深度解析</title><link>/posts/2026040401/</link><pubDate>Sat, 04 Apr 2026 17:33:05 +0800</pubDate><guid>/posts/2026040401/</guid><description>&lt;h1 id="概述"&gt;概述&lt;/h1&gt;
 &lt;p&gt;VSYNC（垂直同步信号）是 Android 图形系统的核心机制，用于协调显示刷新与渲染时机。本文从源码层面深入分析 VSYNC 的产生、传递和处理全过程。&lt;/p&gt;
-&lt;h1 id="一整体架构"&gt;一、整体架构&lt;/h1&gt;
+&lt;h2 id="整体架构"&gt;整体架构&lt;/h2&gt;
 &lt;div class="highlight"&gt;&lt;div class="chroma"&gt;
 &lt;table class="lntable"&gt;&lt;tr&gt;&lt;td class="lntd"&gt;
 &lt;pre tabindex="0" class="chroma"&gt;&lt;code&gt;&lt;span class="lnt"&gt; 1
@@ -39,8 +39,8 @@
 &lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;└─────────────────────────────────────────────────────────────────────────────┘
 &lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
 &lt;/div&gt;
-&lt;/div&gt;&lt;h1 id="二硬件-vsync-触发机制"&gt;二、硬件 VSYNC 触发机制&lt;/h1&gt;
-&lt;h2 id="21-硬件-vsync-来源"&gt;2.1 硬件 VSYNC 来源&lt;/h2&gt;
+&lt;/div&gt;&lt;h2 id="硬件-vsync-触发机制"&gt;硬件 VSYNC 触发机制&lt;/h2&gt;
+&lt;h3 id="硬件-vsync-来源"&gt;硬件 VSYNC 来源&lt;/h3&gt;
 &lt;p&gt;硬件 VSYNC 由显示屏产生，通过 Hardware Composer (HWC) 传递给系统。&lt;/p&gt;</description></item><item><title>Android Binder IPC 机制详解</title><link>/posts/2026032301/</link><pubDate>Mon, 23 Mar 2026 17:09:20 +0800</pubDate><guid>/posts/2026032301/</guid><description>&lt;h1 id="一binder-概述"&gt;一、Binder 概述&lt;/h1&gt;
 &lt;p&gt;Binder 是 Android 系统中最重要的 IPC（进程间通信）机制，几乎所有的系统服务通信都基于 Binder 实现。相比传统的 IPC 机制（管道、Socket、共享内存等），Binder 具有以下优势：&lt;/p&gt;</description></item><item><title>Android 14 进程冷启动调度机制优化解析</title><link>/posts/2026032101/</link><pubDate>Sat, 21 Mar 2026 16:54:25 +0800</pubDate><guid>/posts/2026032101/</guid><description>&lt;h1 id="一背景"&gt;一、背景&lt;/h1&gt;
 &lt;p&gt;在 Android 14 之前，应用进程冷启动时，Broadcast 和 Service 的 ANR 超时计时会在系统发送 &lt;code&gt;bindApplication&lt;/code&gt; 后立即开始。这意味着进程初始化的固定开销（如 Zygote fork、类加载、ContentProvider 初始化等）被计入 ANR 超时时间，导致在 CPU 竞争激烈时容易触发误判性 ANR。&lt;/p&gt;</description></item><item><title>Firebase Android SDK 冷启动耗时统计原理深度解析</title><link>/posts/2026031601/</link><pubDate>Mon, 16 Mar 2026 14:25:20 +0800</pubDate><guid>/posts/2026031601/</guid><description>&lt;h1 id="一概述"&gt;一、概述&lt;/h1&gt;

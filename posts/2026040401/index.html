@@ -1,5 +1,5 @@
 <!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Android VSYNC 机制深度解析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.159.2"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Apr 4, 2026
-- 12 minute read</p><h1 class=entry-title>Android VSYNC 机制深度解析</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>VSYNC（垂直同步信号）是 Android 图形系统的核心机制，用于协调显示刷新与渲染时机。本文从源码层面深入分析 VSYNC 的产生、传递和处理全过程。</p><h1 id=一整体架构>一、整体架构</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+- 17 minute read</p><h1 class=entry-title>Android VSYNC 机制深度解析</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>VSYNC（垂直同步信号）是 Android 图形系统的核心机制，用于协调显示刷新与渲染时机。本文从源码层面深入分析 VSYNC 的产生、传递和处理全过程。</p><h2 id=整体架构>整体架构</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -31,7 +31,7 @@
 </span></span><span class=line><span class=cl>│   └─────────┘               │VSyncDispatch │              └───────────┘    │
 </span></span><span class=line><span class=cl>│                             └─────────────┘                               │
 </span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table></div></div><h1 id=二硬件-vsync-触发机制>二、硬件 VSYNC 触发机制</h1><h2 id=21-硬件-vsync-来源>2.1 硬件 VSYNC 来源</h2><p>硬件 VSYNC 由显示屏产生，通过 Hardware Composer (HWC) 传递给系统。</p><p><strong>源码位置</strong>: <code>frameworks/native/services/surfaceflinger/DisplayHardware/</code></p><h2 id=22-hwc-回调注册>2.2 HWC 回调注册</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></span></code></pre></td></tr></table></div></div><h2 id=硬件-vsync-触发机制>硬件 VSYNC 触发机制</h2><h3 id=硬件-vsync-来源>硬件 VSYNC 来源</h3><p>硬件 VSYNC 由显示屏产生，通过 Hardware Composer (HWC) 传递给系统。</p><p><strong>源码位置</strong>: <code>frameworks/native/services/surfaceflinger/DisplayHardware/</code></p><h3 id=hwc-回调注册>HWC 回调注册</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
@@ -49,7 +49,7 @@
 </span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=o>::</span><span class=n>ndk</span><span class=o>::</span><span class=n>ScopedAStatus</span><span class=o>::</span><span class=n>ok</span><span class=p>();</span>
 </span></span><span class=line><span class=cl>    <span class=p>}</span>
 </span></span><span class=line><span class=cl><span class=p>};</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=23-hwcomposer-处理-vsync>2.3 HWComposer 处理 VSYNC</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=hwcomposer-处理-vsync>HWComposer 处理 VSYNC</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -99,7 +99,7 @@
 </span></span><span class=line><span class=cl>    
 </span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>displayIdOpt</span><span class=p>;</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=24-vsync-使能控制>2.4 VSYNC 使能控制</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></span></code></pre></td></tr></table></div></div><h3 id=vsync-使能控制>VSYNC 使能控制</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
@@ -111,7 +111,7 @@
 </span></span><span class=line><span class=cl>    <span class=c1>// 控制 HWC 是否发送 VSYNC 信号
 </span></span></span><span class=line><span class=cl>    <span class=c1>// enabled: ENABLE / DISABLE
 </span></span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=25-硬件-vsync-流程图>2.5 硬件 VSYNC 流程图</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=硬件-vsync-流程图>硬件 VSYNC 流程图</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -155,7 +155,7 @@
 </span></span><span class=line><span class=cl>│   VsyncSchedule::addResyncSample()                              │
 </span></span><span class=line><span class=cl>│                                                                 │
 </span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table></div></div><h1 id=三软件-vsync-生成机制>三、软件 VSYNC 生成机制</h1><h2 id=31-为什么需要软件-vsync>3.1 为什么需要软件 VSYNC？</h2><p>硬件 VSYNC 有以下局限：</p><ol><li><strong>功耗问题</strong>：持续开启硬件 VSYNC 会增加功耗</li><li><strong>灵活性不足</strong>：无法灵活调整唤醒时机</li><li><strong>精度问题</strong>：需要预测下一帧时间</li></ol><p>软件 VSYNC 通过<strong>预测模型</strong>生成，减少对硬件 VSYNC 的依赖。</p><h2 id=32-vsyncpredictor---vsync-预测器>3.2 VSyncPredictor - VSYNC 预测器</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h2 id=软件-vsync-生成机制>软件 VSYNC 生成机制</h2><h3 id=为什么需要软件-vsync>为什么需要软件 VSYNC？</h3><p>硬件 VSYNC 有以下局限：</p><ol><li><strong>功耗问题</strong>：持续开启硬件 VSYNC 会增加功耗</li><li><strong>灵活性不足</strong>：无法灵活调整唤醒时机</li><li><strong>精度问题</strong>：需要预测下一帧时间</li></ol><p>软件 VSYNC 通过<strong>预测模型</strong>生成，减少对硬件 VSYNC 的依赖。</p><h3 id=vsyncpredictor---vsync-预测器>VSyncPredictor - VSYNC 预测器</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -179,7 +179,7 @@
 </span></span><span class=line><span class=cl>    <span class=n>std</span><span class=o>::</span><span class=n>deque</span><span class=o>&lt;</span><span class=n>nsecs_t</span><span class=o>&gt;</span> <span class=n>mTimestamps</span><span class=p>;</span>  <span class=c1>// 历史 VSYNC 时间戳
 </span></span></span><span class=line><span class=cl>    <span class=n>nsecs_t</span> <span class=n>mPeriod</span><span class=p>;</span>                   <span class=c1>// VSYNC 周期
 </span></span></span><span class=line><span class=cl><span class=p>};</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=33-vsyncreactor---vsync-反应器>3.3 VSyncReactor - VSYNC 反应器</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=vsyncreactor---vsync-反应器>VSyncReactor - VSYNC 反应器</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -213,7 +213,7 @@
 </span></span><span class=line><span class=cl>    <span class=c1>// 返回是否需要继续硬件 VSYNC
 </span></span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>mTracker</span><span class=p>.</span><span class=n>needsMoreSamples</span><span class=p>();</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=34-vsyncschedule---vsync-调度中心>3.4 VsyncSchedule - VSYNC 调度中心</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=vsyncschedule---vsync-调度中心>VsyncSchedule - VSYNC 调度中心</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -245,7 +245,249 @@
 </span></span><span class=line><span class=cl>    
 </span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>needsHwVsync</span><span class=p>;</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=35-软件-vsync-生成流程>3.5 软件 VSYNC 生成流程</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=硬件-vsync-到软件-vsync-的切换>硬件 VSYNC 到软件 VSYNC 的切换</h3><h4 id=切换流程>切换流程</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    硬件 VSYNC → 软件 VSYNC 切换流程              │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│  阶段 1: 开启硬件 VSYNC                                         │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ resyncToHardwareVsync()                                  │   │
+</span></span><span class=line><span class=cl>│  │   └─ enableHardwareVsyncLocked()                        │   │
+</span></span><span class=line><span class=cl>│  │        └─ mRequestHardwareVsync(id, true)  ← 请求开启   │   │
+</span></span><span class=line><span class=cl>│  │        └─ mHwVsyncState = Enabled                        │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│  阶段 2: 收集样本，确认周期                                      │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ 硬件 VSYNC 回调 (第 1 次)                                │   │
+</span></span><span class=line><span class=cl>│  │   └─ addHwVsyncTimestamp()                              │   │
+</span></span><span class=line><span class=cl>│  │        └─ periodConfirmed() = false (样本不足)          │   │
+</span></span><span class=line><span class=cl>│  │        └─ mMoreSamplesNeeded = true                     │   │
+</span></span><span class=line><span class=cl>│  │        └─ mLastHwVsync = timestamp                      │   │
+</span></span><span class=line><span class=cl>│  │                                                         │   │
+</span></span><span class=line><span class=cl>│  │ 硬件 VSYNC 回调 (第 2 次)                                │   │
+</span></span><span class=line><span class=cl>│  │   └─ addHwVsyncTimestamp()                              │   │
+</span></span><span class=line><span class=cl>│  │        └─ periodConfirmed() = true (周期确认！)         │   │
+</span></span><span class=line><span class=cl>│  │        └─ mTracker.addVsyncTimestamp() (记录样本)       │   │
+</span></span><span class=line><span class=cl>│  │        └─ mMoreSamplesNeeded = mTracker.needsMoreSamples()│  │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│  阶段 3: 关闭硬件 VSYNC，切换到软件                              │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ addResyncSample() 返回后：                               │   │
+</span></span><span class=line><span class=cl>│  │                                                         │   │
+</span></span><span class=line><span class=cl>│  │ if (needsHwVsync) {                                     │   │
+</span></span><span class=line><span class=cl>│  │     enableHardwareVsync();  // 继续收集                 │   │
+</span></span><span class=line><span class=cl>│  │ } else {                                                │   │
+</span></span><span class=line><span class=cl>│  │     disableHardwareVsync();  ← 关闭硬件 VSYNC           │   │
+</span></span><span class=line><span class=cl>│  │     // 之后使用 VSyncPredictor 预测                     │   │
+</span></span><span class=line><span class=cl>│  │ }                                                       │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│  阶段 4: 软件 VSYNC 运行                                         │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ VSyncPredictor 基于历史样本预测下一帧时间                │   │
+</span></span><span class=line><span class=cl>│  │ VSyncDispatchTimerQueue 使用 timerfd 定时触发           │   │
+</span></span><span class=line><span class=cl>│  │ 不再依赖硬件 VSYNC 回调                                  │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h4 id=周期确认条件>周期确认条件</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// VSyncReactor.cpp:154-189
+</span></span></span><span class=line><span class=cl><span class=kt>bool</span> <span class=n>VSyncReactor</span><span class=o>::</span><span class=n>periodConfirmed</span><span class=p>(</span><span class=n>nsecs_t</span> <span class=n>vsync_timestamp</span><span class=p>,</span> 
+</span></span><span class=line><span class=cl>                                    <span class=n>std</span><span class=o>::</span><span class=n>optional</span><span class=o>&lt;</span><span class=n>nsecs_t</span><span class=o>&gt;</span> <span class=n>HwcVsyncPeriod</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 必须有上次记录或 HWC 提供的周期
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>mLastHwVsync</span> <span class=o>&amp;&amp;</span> <span class=o>!</span><span class=n>HwcVsyncPeriod</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=nb>false</span><span class=p>;</span>  <span class=c1>// 样本不足
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 检查周期是否在允许误差范围内（10%）
+</span></span></span><span class=line><span class=cl>    <span class=k>auto</span> <span class=k>const</span> <span class=n>allowance</span> <span class=o>=</span> <span class=n>period</span> <span class=o>*</span> <span class=mf>0.1</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>HwcVsyncPeriod</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=n>std</span><span class=o>::</span><span class=n>abs</span><span class=p>(</span><span class=o>*</span><span class=n>HwcVsyncPeriod</span> <span class=o>-</span> <span class=n>period</span><span class=p>)</span> <span class=o>&lt;</span> <span class=n>allowance</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 或者通过两次时间戳差值计算
+</span></span></span><span class=line><span class=cl>    <span class=k>auto</span> <span class=k>const</span> <span class=n>distance</span> <span class=o>=</span> <span class=n>vsync_timestamp</span> <span class=o>-</span> <span class=o>*</span><span class=n>mLastHwVsync</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>std</span><span class=o>::</span><span class=n>abs</span><span class=p>(</span><span class=n>distance</span> <span class=o>-</span> <span class=n>period</span><span class=p>)</span> <span class=o>&lt;</span> <span class=n>allowance</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h3 id=硬件-vsync-重新校准机制>硬件 VSYNC 重新校准机制</h3><p>切换到软件 VSYNC 后，<strong>不会永远关闭硬件 VSYNC</strong>。以下场景会重新开启硬件 VSYNC 进行校准：</p><h4 id=触发重新校准的场景>触发重新校准的场景</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│              触发硬件 VSYNC 重新校准的场景                        │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│  ┌───────────────────────────────────────────────────────────┐ │
+</span></span><span class=line><span class=cl>│  │ 1. 显示模式变化                                 │ │
+</span></span><span class=line><span class=cl>│  │    - 刷新率变化 (60Hz ↔ 90Hz ↔ 120Hz)                      │ │
+</span></span><span class=line><span class=cl>│  │    - 分辨率变化                                            │ │
+</span></span><span class=line><span class=cl>│  │    → onDisplayModeChanged() → enableHardwareVsyncLocked() │ │
+</span></span><span class=line><span class=cl>│  └───────────────────────────────────────────────────────────┘ │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│  ┌───────────────────────────────────────────────────────────┐ │
+</span></span><span class=line><span class=cl>│  │ 2. 电源状态变化                                            │ │
+</span></span><span class=line><span class=cl>│  │    - OFF → ON         (屏幕开启)                           │ │
+</span></span><span class=line><span class=cl>│  │    - DOZE_SUSPEND → DOZE/ON (从深度休眠唤醒)               │ │
+</span></span><span class=line><span class=cl>│  │    → resyncToHardwareVsync()                               │ │
+</span></span><span class=line><span class=cl>│  └───────────────────────────────────────────────────────────┘ │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│  ┌───────────────────────────────────────────────────────────┐ │
+</span></span><span class=line><span class=cl>│  │ 3. NotifyExpectedPresent Hint                              │ │
+</span></span><span class=line><span class=cl>│  │    - 客户端通知即将渲染                                    │ │
+</span></span><span class=line><span class=cl>│  │    → resyncToHardwareVsync()                               │ │
+</span></span><span class=line><span class=cl>│  └───────────────────────────────────────────────────────────┘ │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│  ┌───────────────────────────────────────────────────────────┐ │
+</span></span><span class=line><span class=cl>│  │ 4. 显示热插拔                                              │ │
+</span></span><span class=line><span class=cl>│  │    - HDMI 热插拔                                           │ │
+</span></span><span class=line><span class=cl>│  │    - 投屏连接/断开                                         │ │
+</span></span><span class=line><span class=cl>│  └───────────────────────────────────────────────────────────┘ │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h4 id=关键源码>关键源码</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// VsyncSchedule.cpp:151-156
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>VsyncSchedule</span><span class=o>::</span><span class=n>onDisplayModeChanged</span><span class=p>(</span><span class=n>ftl</span><span class=o>::</span><span class=n>NonNull</span><span class=o>&lt;</span><span class=n>DisplayModePtr</span><span class=o>&gt;</span> <span class=n>modePtr</span><span class=p>,</span> <span class=kt>bool</span> <span class=n>force</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>mController</span><span class=o>-&gt;</span><span class=n>onDisplayModeChanged</span><span class=p>(</span><span class=n>modePtr</span><span class=p>,</span> <span class=n>force</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>enableHardwareVsyncLocked</span><span class=p>();</span>  <span class=c1>// 重新开启硬件 VSYNC！
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// SurfaceFlinger.cpp:5520-5523 (屏幕开启时)
+</span></span></span><span class=line><span class=cl><span class=k>if</span> <span class=p>(</span><span class=n>displayId</span> <span class=o>==</span> <span class=n>mActiveDisplayId</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>mScheduler</span><span class=o>-&gt;</span><span class=n>enableSyntheticVsync</span><span class=p>(</span><span class=nb>false</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=n>mScheduler</span><span class=o>-&gt;</span><span class=n>resyncToHardwareVsync</span><span class=p>(</span><span class=n>displayId</span><span class=p>,</span> <span class=n>kAllowToEnable</span><span class=p>,</span> <span class=n>activeMode</span><span class=p>.</span><span class=n>get</span><span class=p>());</span>
+</span></span></code></pre></td></tr></table></div></div><h4 id=误差分析>误差分析</h4><p>在软件 VSYNC 模式下，没有自动检测误差并重新校准的机制，但实际中误差问题不严重：</p><table><thead><tr><th>因素</th><th>说明</th></tr></thead><tbody><tr><td><strong>硬件稳定性</strong></td><td>现代显示屏刷新率非常稳定（晶振精度高）</td></tr><tr><td><strong>定期校准</strong></td><td>用户操作会触发重新校准（屏幕开关、刷新率切换等）</td></tr><tr><td><strong>线性回归</strong></td><td>VSyncPredictor 使用线性回归计算周期，有一定容错</td></tr></tbody></table><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>典型场景：
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ 用户亮屏 → 校准 → 正常使用 → 息屏                            │
+</span></span><span class=line><span class=cl>│    ↑                              ↓                         │
+</span></span><span class=line><span class=cl>│    └──────── 重新校准 ←───────────┘                         │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>误差累积情况：
+</span></span><span class=line><span class=cl>- 晶振精度: ~±100ppm (百万分之一)
+</span></span><span class=line><span class=cl>- 60Hz 显示: 每帧误差 ~±1.67μs
+</span></span><span class=line><span class=cl>- 1小时累积: ~±360ms (理论最坏情况)
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>实际情况：
+</span></span><span class=line><span class=cl>- 用户不会连续使用屏幕数小时不锁屏
+</span></span><span class=line><span class=cl>- 刷新率切换、屏幕开关都会重新校准
+</span></span><span class=line><span class=cl>- VRR 设备更频繁地触发校准
+</span></span></code></pre></td></tr></table></div></div><p><strong>设计哲学</strong>：Android 假设显示刷新率足够稳定，软件 VSYNC 短期内误差可忽略，通过"事件驱动校准"而非"周期性校准"来平衡性能和精度。</p><h3 id=软件-vsync-生成流程>软件 VSYNC 生成流程</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -307,7 +549,7 @@
 </span></span><span class=line><span class=cl>│                    分发给注册的回调                              │
 </span></span><span class=line><span class=cl>│                                                                 │
 </span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table></div></div><h1 id=四vsync-分发机制>四、VSYNC 分发机制</h1><h2 id=41-vsyncdispatch---分发接口>4.1 VSyncDispatch - 分发接口</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h2 id=vsync-分发机制>VSYNC 分发机制</h2><h3 id=vsyncdispatch---分发接口>VSyncDispatch - 分发接口</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -331,7 +573,7 @@
 </span></span><span class=line><span class=cl>    <span class=c1>// 取消调度
 </span></span></span><span class=line><span class=cl>    <span class=n>CancelResult</span> <span class=nf>cancel</span><span class=p>(</span><span class=n>CallbackToken</span> <span class=n>token</span><span class=p>);</span>
 </span></span><span class=line><span class=cl><span class=p>};</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=42-vsyncdispatchtimerqueue---定时器队列实现>4.2 VSyncDispatchTimerQueue - 定时器队列实现</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=vsyncdispatchtimerqueue---定时器队列实现>VSyncDispatchTimerQueue - 定时器队列实现</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -373,7 +615,7 @@
 </span></span><span class=line><span class=cl>    <span class=c1>// 重新设置下一个定时器
 </span></span></span><span class=line><span class=cl>    <span class=n>rearmTimer</span><span class=p>(</span><span class=n>mTimeKeeper</span><span class=o>-&gt;</span><span class=n>now</span><span class=p>());</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=43-eventthread---事件分发线程>4.3 EventThread - 事件分发线程</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=eventthread---事件分发线程>EventThread - 事件分发线程</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -435,7 +677,7 @@
 </span></span><span class=line><span class=cl>    <span class=c1>// 通知线程处理
 </span></span></span><span class=line><span class=cl>    <span class=n>mCondition</span><span class=p>.</span><span class=n>notify_all</span><span class=p>();</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=44-eventthread-连接管理>4.4 EventThread 连接管理</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=eventthread-连接管理>EventThread 连接管理</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -477,7 +719,7 @@
 </span></span><span class=line><span class=cl>        <span class=p>}</span>
 </span></span><span class=line><span class=cl>    <span class=p>}</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=45-分发架构图>4.5 分发架构图</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=分发架构图>分发架构图</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -521,7 +763,7 @@
 </span></span><span class=line><span class=cl>│   └───────────┘   └───────────┘   └───────────┘               │
 </span></span><span class=line><span class=cl>│                                                                 │
 </span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table></div></div><h1 id=五app-端-vsync-处理>五、App 端 VSYNC 处理</h1><h2 id=51-choreographer-初始化>5.1 Choreographer 初始化</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h2 id=app-端-vsync-处理>App 端 VSYNC 处理</h2><h3 id=choreographer-初始化>Choreographer 初始化</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -555,7 +797,7 @@
 </span></span><span class=line><span class=cl>    <span class=p>}</span>
 </span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>gChoreographer</span><span class=p>;</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=52-displayeventdispatcher-连接-eventthread>5.2 DisplayEventDispatcher 连接 EventThread</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=displayeventdispatcher-连接-eventthread>DisplayEventDispatcher 连接 EventThread</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -577,7 +819,7 @@
 </span></span><span class=line><span class=cl>    <span class=c1>// 将 fd 加入 Looper 监听
 </span></span></span><span class=line><span class=cl>    <span class=n>mLooper</span><span class=o>-&gt;</span><span class=n>addFd</span><span class=p>(</span><span class=n>mReceiver</span><span class=o>-&gt;</span><span class=n>getFd</span><span class=p>(),</span> <span class=mi>0</span><span class=p>,</span> <span class=n>Looper</span><span class=o>::</span><span class=n>EVENT_INPUT</span><span class=p>,</span> <span class=k>this</span><span class=p>,</span> <span class=k>nullptr</span><span class=p>);</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=53-vsync-事件接收>5.3 VSYNC 事件接收</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=vsync-事件接收>VSYNC 事件接收</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -613,7 +855,7 @@
 </span></span><span class=line><span class=cl>    <span class=c1>// 分发给回调
 </span></span></span><span class=line><span class=cl>    <span class=c1>// 在 Choreographer 中调用 Java 层回调
 </span></span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=54-帧回调注册与触发>5.4 帧回调注册与触发</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=帧回调注册与触发>帧回调注册与触发</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -663,7 +905,7 @@
 </span></span></span><span class=line><span class=cl>        <span class=n>ALOGW</span><span class=p>(</span><span class=s>&#34;Failed to request VSYNC&#34;</span><span class=p>);</span>
 </span></span><span class=line><span class=cl>    <span class=p>}</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=55-java-层-choreographer>5.5 Java 层 Choreographer</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=java-层-choreographer>Java 层 Choreographer</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -713,7 +955,7 @@
 </span></span></span><span class=line><span class=cl><span class=w>        </span><span class=n>doCallbacks</span><span class=p>(</span><span class=n>Choreographer</span><span class=p>.</span><span class=na>CALLBACK_COMMIT</span><span class=p>,</span><span class=w> </span><span class=n>frameTimeNanos</span><span class=p>);</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=w>    </span><span class=p>}</span><span class=w>
 </span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
-</span></span></span></code></pre></td></tr></table></div></div><h2 id=56-app-端处理流程图>5.6 App 端处理流程图</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></span></code></pre></td></tr></table></div></div><h3 id=app-端处理流程图>App 端处理流程图</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -783,7 +1025,7 @@
 </span></span><span class=line><span class=cl>│       └─ CALLBACK_COMMIT (提交)                                 │
 </span></span><span class=line><span class=cl>│                                                                 │
 </span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table></div></div><h1 id=六surfaceflinger-的-vsync-处理>六、SurfaceFlinger 的 VSYNC 处理</h1><h2 id=61-messagequeue-注册-vsync>6.1 MessageQueue 注册 VSYNC</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h2 id=surfaceflinger-的-vsync-处理>SurfaceFlinger 的 VSYNC 处理</h2><h3 id=messagequeue-注册-vsync>MessageQueue 注册 VSYNC</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -809,7 +1051,7 @@
 </span></span><span class=line><span class=cl>    <span class=c1>// 分发帧事件
 </span></span></span><span class=line><span class=cl>    <span class=n>mHandler</span><span class=o>-&gt;</span><span class=n>dispatchFrame</span><span class=p>(</span><span class=n>vsyncId</span><span class=p>,</span> <span class=n>expectedVsyncTime</span><span class=p>);</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=62-sf-vsync-注册>6.2 SF VSYNC 注册</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=sf-vsync-注册>SF VSYNC 注册</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -831,7 +1073,7 @@
 </span></span><span class=line><span class=cl>        <span class=s>&#34;sf&#34;</span>
 </span></span><span class=line><span class=cl>    <span class=p>);</span>
 </span></span><span class=line><span class=cl><span class=p>}</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=63-sf-合成流程>6.3 SF 合成流程</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=sf-合成流程>SF 合成流程</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -883,7 +1125,7 @@
 </span></span><span class=line><span class=cl>│       └─ 5. 请求下一个 VSYNC                                    │
 </span></span><span class=line><span class=cl>│                                                                 │
 </span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table></div></div><h1 id=七vsync-相位偏移>七、VSYNC 相位偏移</h1><h2 id=71-相位偏移概念>7.1 相位偏移概念</h2><p>为避免 App 和 SF 同时抢占 CPU，系统设置不同的唤醒时机：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></span></code></pre></td></tr></table></div></div><h2 id=vsync-相位偏移>VSYNC 相位偏移</h2><h3 id=相位偏移概念>相位偏移概念</h3><p>为避免 App 和 SF 同时抢占 CPU，系统设置不同的唤醒时机：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
@@ -893,7 +1135,7 @@
 </span></span><span class=line><span class=cl>    <span class=n>nsecs_t</span> <span class=n>sfOffset</span><span class=p>;</span>   <span class=c1>// SF 提前唤醒的时间偏移
 </span></span></span><span class=line><span class=cl>    <span class=n>nsecs_t</span> <span class=n>appOffset</span><span class=p>;</span>  <span class=c1>// App 提前唤醒的时间偏移
 </span></span></span><span class=line><span class=cl><span class=p>};</span>
-</span></span></code></pre></td></tr></table></div></div><h2 id=72-时序图>7.2 时序图</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h3 id=时序图>时序图</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -939,7 +1181,7 @@
 </span></span><span class=line><span class=cl>                    ▼
 </span></span><span class=line><span class=cl>              硬件 VSYNC
 </span></span><span class=line><span class=cl>              (显示帧)
-</span></span></code></pre></td></tr></table></div></div><h2 id=73-典型配置值>7.3 典型配置值</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></span></code></pre></td></tr></table></div></div><h3 id=典型配置值>典型配置值</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
@@ -953,7 +1195,7 @@
 </span></span><span class=line><span class=cl>
 </span></span><span class=line><span class=cl>appOffset = 16.6ms - (20ms + 4ms) % 16.6ms ≈ 9.2ms
 </span></span><span class=line><span class=cl>sfOffset  = 16.6ms - 4ms = 12.6ms
-</span></span></code></pre></td></tr></table></div></div><h1 id=八关键组件总结>八、关键组件总结</h1><table><thead><tr><th>组件</th><th>位置</th><th>作用</th></tr></thead><tbody><tr><td>HWComposer</td><td>SurfaceFlinger</td><td>接收硬件 VSYNC</td></tr><tr><td>VSyncPredictor</td><td>Scheduler</td><td>预测 VSYNC 时间</td></tr><tr><td>VSyncReactor</td><td>Scheduler</td><td>管理硬件/软件 VSYNC 切换</td></tr><tr><td>VSyncDispatch</td><td>Scheduler</td><td>分发 VSYNC 回调</td></tr><tr><td>EventThread</td><td>SurfaceFlinger</td><td>分发 VSYNC 给 App</td></tr><tr><td>MessageQueue</td><td>SurfaceFlinger</td><td>SF 的 VSYNC 接收</td></tr><tr><td>Choreographer</td><td>App 进程</td><td>App 的 VSYNC 处理</td></tr></tbody></table><h1 id=九完整流程图>九、完整流程图</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span></span></code></pre></td></tr></table></div></div><h2 id=关键组件总结>关键组件总结</h2><table><thead><tr><th>组件</th><th>位置</th><th>作用</th></tr></thead><tbody><tr><td>HWComposer</td><td>SurfaceFlinger</td><td>接收硬件 VSYNC</td></tr><tr><td>VSyncPredictor</td><td>Scheduler</td><td>预测 VSYNC 时间</td></tr><tr><td>VSyncReactor</td><td>Scheduler</td><td>管理硬件/软件 VSYNC 切换</td></tr><tr><td>VSyncDispatch</td><td>Scheduler</td><td>分发 VSYNC 回调</td></tr><tr><td>EventThread</td><td>SurfaceFlinger</td><td>分发 VSYNC 给 App</td></tr><tr><td>MessageQueue</td><td>SurfaceFlinger</td><td>SF 的 VSYNC 接收</td></tr><tr><td>Choreographer</td><td>App 进程</td><td>App 的 VSYNC 处理</td></tr></tbody></table><h2 id=完整流程图>完整流程图</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -1057,7 +1299,7 @@
 </span></span><span class=line><span class=cl>│  └─────────┘                       └─────────┘                            │
 </span></span><span class=line><span class=cl>│                                                                             │
 </span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table></div></div><h1 id=十源码文件索引>十、源码文件索引</h1><table><thead><tr><th>文件</th><th>路径</th></tr></thead><tbody><tr><td>HWComposer</td><td><code>frameworks/native/services/surfaceflinger/DisplayHardware/HWComposer.cpp</code></td></tr><tr><td>VSyncPredictor</td><td><code>frameworks/native/services/surfaceflinger/Scheduler/VSyncPredictor.cpp</code></td></tr><tr><td>VSyncReactor</td><td><code>frameworks/native/services/surfaceflinger/Scheduler/VSyncReactor.cpp</code></td></tr><tr><td>VSyncDispatch</td><td><code>frameworks/native/services/surfaceflinger/Scheduler/VSyncDispatchTimerQueue.cpp</code></td></tr><tr><td>EventThread</td><td><code>frameworks/native/services/surfaceflinger/Scheduler/EventThread.cpp</code></td></tr><tr><td>MessageQueue</td><td><code>frameworks/native/services/surfaceflinger/Scheduler/MessageQueue.cpp</code></td></tr><tr><td>Choreographer (Native)</td><td><code>frameworks/native/libs/gui/Choreographer.cpp</code></td></tr><tr><td>Choreographer (Java)</td><td><code>frameworks/base/core/java/android/view/Choreographer.java</code></td></tr><tr><td>DisplayEventDispatcher</td><td><code>frameworks/native/libs/gui/DisplayEventDispatcher.cpp</code></td></tr></tbody></table><h1 id=十一总结>十一、总结</h1><p>Android VSYNC 机制是一个多层次、高效率的同步系统：</p><ol><li><strong>硬件层</strong>：Display 通过 HWC 产生 VSYNC 信号</li><li><strong>预测层</strong>：VSyncPredictor 基于历史数据预测 VSYNC 时间，减少硬件依赖</li><li><strong>分发层</strong>：VSyncDispatch 通过定时器精确分发回调</li><li><strong>应用层</strong>：Choreographer 协调 App 的绘制时机</li></ol><p>这种设计实现了：</p><ul><li><strong>低功耗</strong>：仅在必要时开启硬件 VSYNC</li><li><strong>高精度</strong>：通过预测模型实现精确的帧同步</li><li><strong>灵活性</strong>：相位偏移允许 App 和 SF 错峰执行</li><li><strong>可扩展</strong>：支持多种刷新率动态切换</li></ul></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Apr 4, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026032301/ title="Android Binder IPC 机制详解">Android Binder IPC 机制详解</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+</span></span></code></pre></td></tr></table></div></div><h2 id=源码文件索引>源码文件索引</h2><table><thead><tr><th>文件</th><th>路径</th></tr></thead><tbody><tr><td>HWComposer</td><td><code>frameworks/native/services/surfaceflinger/DisplayHardware/HWComposer.cpp</code></td></tr><tr><td>VSyncPredictor</td><td><code>frameworks/native/services/surfaceflinger/Scheduler/VSyncPredictor.cpp</code></td></tr><tr><td>VSyncReactor</td><td><code>frameworks/native/services/surfaceflinger/Scheduler/VSyncReactor.cpp</code></td></tr><tr><td>VSyncDispatch</td><td><code>frameworks/native/services/surfaceflinger/Scheduler/VSyncDispatchTimerQueue.cpp</code></td></tr><tr><td>EventThread</td><td><code>frameworks/native/services/surfaceflinger/Scheduler/EventThread.cpp</code></td></tr><tr><td>MessageQueue</td><td><code>frameworks/native/services/surfaceflinger/Scheduler/MessageQueue.cpp</code></td></tr><tr><td>Choreographer (Native)</td><td><code>frameworks/native/libs/gui/Choreographer.cpp</code></td></tr><tr><td>Choreographer (Java)</td><td><code>frameworks/base/core/java/android/view/Choreographer.java</code></td></tr><tr><td>DisplayEventDispatcher</td><td><code>frameworks/native/libs/gui/DisplayEventDispatcher.cpp</code></td></tr></tbody></table><h2 id=总结>总结</h2><p>Android VSYNC 机制是一个多层次、高效率的同步系统：</p><ol><li><strong>硬件层</strong>：Display 通过 HWC 产生 VSYNC 信号</li><li><strong>预测层</strong>：VSyncPredictor 基于历史数据预测 VSYNC 时间，减少硬件依赖</li><li><strong>分发层</strong>：VSyncDispatch 通过定时器精确分发回调</li><li><strong>应用层</strong>：Choreographer 协调 App 的绘制时机</li></ol><p>这种设计实现了：</p><ul><li><strong>低功耗</strong>：仅在必要时开启硬件 VSYNC</li><li><strong>高精度</strong>：通过预测模型实现精确的帧同步</li><li><strong>灵活性</strong>：相位偏移允许 App 和 SF 错峰执行</li><li><strong>可扩展</strong>：支持多种刷新率动态切换</li><li><strong>自校准</strong>：通过事件驱动的校准机制应对刷新率变化</li></ul></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Apr 4, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026032301/ title="Android Binder IPC 机制详解">Android Binder IPC 机制详解</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
 <a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
 <a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
 <span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
