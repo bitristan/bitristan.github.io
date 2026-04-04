@@ -1,5 +1,5 @@
 <!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Android VSYNC 机制深度解析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.159.2"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Apr 4, 2026
-- 17 minute read</p><h1 class=entry-title>Android VSYNC 机制深度解析</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>VSYNC（垂直同步信号）是 Android 图形系统的核心机制，用于协调显示刷新与渲染时机。本文从源码层面深入分析 VSYNC 的产生、传递和处理全过程。</p><h2 id=整体架构>整体架构</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+- 24 minute read</p><h1 class=entry-title>Android VSYNC 机制深度解析</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>VSYNC（垂直同步信号）是 Android 图形系统的核心机制，用于协调显示刷新与渲染时机。本文从源码层面深入分析 VSYNC 的产生、传递和处理全过程。</p><h2 id=整体架构>整体架构</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -31,7 +31,315 @@
 </span></span><span class=line><span class=cl>│   └─────────┘               │VSyncDispatch │              └───────────┘    │
 </span></span><span class=line><span class=cl>│                             └─────────────┘                               │
 </span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table></div></div><h2 id=硬件-vsync-触发机制>硬件 VSYNC 触发机制</h2><h3 id=硬件-vsync-来源>硬件 VSYNC 来源</h3><p>硬件 VSYNC 由显示屏产生，通过 Hardware Composer (HWC) 传递给系统。</p><p><strong>源码位置</strong>: <code>frameworks/native/services/surfaceflinger/DisplayHardware/</code></p><h3 id=hwc-回调注册>HWC 回调注册</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></span></code></pre></td></tr></table></div></div><h2 id=显示器与-vsync-基本原理>显示器与 VSYNC 基本原理</h2><h3 id=显示器扫描原理>显示器扫描原理</h3><h4 id=crt-显示器vsync-的起源>CRT 显示器（VSYNC 的起源）</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    CRT 显示器扫描原理                            │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   电子枪从左上角开始，从左到右扫描一行                           │
+</span></span><span class=line><span class=cl>│   扫描完一行后，快速回到左边，开始扫描下一行                     │
+</span></span><span class=line><span class=cl>│   扫描完整个屏幕后，回到左上角，开始下一帧                       │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   ┌────────────────────────────────────────┐                   │
+</span></span><span class=line><span class=cl>│   │ ────────────────────────────→          │ ← 水平扫描         │
+</span></span><span class=line><span class=cl>│   │←── 水平回扫（消隐）                     │                   │
+</span></span><span class=line><span class=cl>│   │ ────────────────────────────→          │                   │
+</span></span><span class=line><span class=cl>│   │                                        │                   │
+</span></span><span class=line><span class=cl>│   │ ────────────────────────────→          │                   │
+</span></span><span class=line><span class=cl>│   │                                        │                   │
+</span></span><span class=line><span class=cl>│   │ ...                                    │                   │
+</span></span><span class=line><span class=cl>│   └────────────────────────────────────────┘                   │
+</span></span><span class=line><span class=cl>│        │                                        │               │
+</span></span><span class=line><span class=cl>│        └──────── 垂直回扫（VSYNC）──────────────┘               │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   垂直回扫期间，电子枪从右下角回到左上角                         │
+</span></span><span class=line><span class=cl>│   这个过程就是 VSYNC（垂直同步）                                 │
+</span></span><span class=line><span class=cl>│   在此期间不能写入新数据，否则画面会撕裂                         │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h4 id=现代-lcdoled-显示器>现代 LCD/OLED 显示器</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    LCD/OLED 显示原理                             │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   虽然没有电子枪，但保持了同样的时序结构：                       │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   ┌─────────────────────────────────────────────────────────┐  │
+</span></span><span class=line><span class=cl>│   │                                                         │  │
+</span></span><span class=line><span class=cl>│   │   逐行刷新像素数据                                       │  │
+</span></span><span class=line><span class=cl>│   │   ┌─────────────────────────────────────────────────┐   │  │
+</span></span><span class=line><span class=cl>│   │   │ Row 0:  Pixel 0 → Pixel 1 → ... → Pixel 1919   │   │  │
+</span></span><span class=line><span class=cl>│   │   └─────────────────────────────────────────────────┘   │  │
+</span></span><span class=line><span class=cl>│   │   ┌─────────────────────────────────────────────────┐   │  │
+</span></span><span class=line><span class=cl>│   │   │ Row 1:  Pixel 0 → Pixel 1 → ... → Pixel 1919   │   │  │
+</span></span><span class=line><span class=cl>│   │   └─────────────────────────────────────────────────┘   │  │
+</span></span><span class=line><span class=cl>│   │   ...                                                   │  │
+</span></span><span class=line><span class=cl>│   │   ┌─────────────────────────────────────────────────┐   │  │
+</span></span><span class=line><span class=cl>│   │   │ Row 1079: Pixel 0 → Pixel 1 → ... → Pixel 1919 │   │  │
+</span></span><span class=line><span class=cl>│   │   └─────────────────────────────────────────────────┘   │  │
+</span></span><span class=line><span class=cl>│   │                                                         │  │
+</span></span><span class=line><span class=cl>│   └─────────────────────────────────────────────────────────┘  │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   VSYNC = 完成一帧扫描，准备开始下一帧的信号                    │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h3 id=vsync-时序>VSYNC 时序</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    VSYNC 时序图 (60Hz)                           │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   一帧时间 = 16.67ms                                            │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   时间 →   0ms        4ms       8ms       12ms      16.67ms    │
+</span></span><span class=line><span class=cl>│            │          │         │          │           │        │
+</span></span><span class=line><span class=cl>│            │←───────── 一帧时间 (16.67ms) ──────────→│        │
+</span></span><span class=line><span class=cl>│            │                                              │    │
+</span></span><span class=line><span class=cl>│   VSYNC    ─┐                                          ┌─┐    │
+</span></span><span class=line><span class=cl>│             │                                          │ │    │
+</span></span><span class=line><span class=cl>│             └──────────────────────────────────────────┘ │    │
+</span></span><span class=line><span class=cl>│                                                        │      │
+</span></span><span class=line><span class=cl>│   显示器    ┌──────────────────────────────────────────┐      │
+</span></span><span class=line><span class=cl>│   扫描      │   扫描并显示 Framebuffer 中的内容         │      │
+</span></span><span class=line><span class=cl>│            │   (从第一行到最后一行)                    │      │
+</span></span><span class=line><span class=cl>│            └──────────────────────────────────────────┘      │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│            │←─ 扫描时间 ─→│←─ VSYNC 空白期 ─→│              │
+</span></span><span class=line><span class=cl>│             (约15ms)         (约1.67ms)                      │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   VSYNC 空白期：显示器完成一帧扫描，准备下一帧                  │
+</span></span><span class=line><span class=cl>│   这是写入新帧数据的安全时间窗口                                │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h3 id=buffer-与帧显示流程>Buffer 与帧显示流程</h3><h4 id=双缓冲机制>双缓冲机制</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    双缓冲模型                                    │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   ┌───────────────┐         ┌───────────────┐                  │
+</span></span><span class=line><span class=cl>│   │  Front Buffer │         │  Back Buffer  │                  │
+</span></span><span class=line><span class=cl>│   │  (显示中)     │         │  (写入中)     │                  │
+</span></span><span class=line><span class=cl>│   └───────┬───────┘         └───────┬───────┘                  │
+</span></span><span class=line><span class=cl>│           │                         │                          │
+</span></span><span class=line><span class=cl>│           ↓                         ↓                          │
+</span></span><span class=line><span class=cl>│       显示器读取                 SF/App 写入                    │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   VSYNC 时执行 Buffer 交换                                       │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h4 id=android-bufferqueue-机制>Android BufferQueue 机制</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    Android BufferQueue (三缓冲)                  │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   BufferQueue 中通常有 3 个 buffer：                            │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   ┌─────────┐   ┌─────────┐   ┌─────────┐                      │
+</span></span><span class=line><span class=cl>│   │ Buffer 0│   │ Buffer 1│   │ Buffer 2│                      │
+</span></span><span class=line><span class=cl>│   └────┬────┘   └────┬────┘   └────┬────┘                      │
+</span></span><span class=line><span class=cl>│        │             │             │                            │
+</span></span><span class=line><span class=cl>│        ↓             ↓             ↓                            │
+</span></span><span class=line><span class=cl>│   ┌─────────┐   ┌─────────┐   ┌─────────┐                      │
+</span></span><span class=line><span class=cl>│   │ DEQUEUED│   │ QUEUED  │   │ ACQUIRED│                      │
+</span></span><span class=line><span class=cl>│   │(App写入)│   │(等待合成)│   │(HWC显示)│                      │
+</span></span><span class=line><span class=cl>│   └─────────┘   └─────────┘   └─────────┘                      │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   状态流转：                                                    │
+</span></span><span class=line><span class=cl>│   FREE → DEQUEUED → QUEUED → ACQUIRED → FREE                   │
+</span></span><span class=line><span class=cl>│           (App)     (App)    (SF/HWC)  (显示完成)              │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h4 id=sf-合成到显示的完整流程>SF 合成到显示的完整流程</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    SF 合成到显示流程 (无相位偏差)                 │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│   VSYNC N              VSYNC N+1            VSYNC N+2          │
+</span></span><span class=line><span class=cl>│      │                    │                    │                │
+</span></span><span class=line><span class=cl>│      ↓                    │                    │                │
+</span></span><span class=line><span class=cl>│  ┌────────────────────────────────────────────────────────────┐│
+</span></span><span class=line><span class=cl>│  │  VSYNC N 时刻 (0ms):                                       ││
+</span></span><span class=line><span class=cl>│  │  ┌──────────────────┐                                      ││
+</span></span><span class=line><span class=cl>│  │  │ 显示器：扫描显示帧 N-1 (ACQUIRED Buffer)                ││
+</span></span><span class=line><span class=cl>│  │  └──────────────────┘                                      ││
+</span></span><span class=line><span class=cl>│  │  ┌──────────────────┐                                      ││
+</span></span><span class=line><span class=cl>│  │  │ SF：开始合成帧 N                                         ││
+</span></span><span class=line><span class=cl>│  │  └────────┬─────────┘                                      ││
+</span></span><span class=line><span class=cl>│  │           │                                                ││
+</span></span><span class=line><span class=cl>│  │           ├─ 合成 (~2ms) ─→ 提交给 HWC                     ││
+</span></span><span class=line><span class=cl>│  │           │                                                ││
+</span></span><span class=line><span class=cl>│  │           ↓                                                ││
+</span></span><span class=line><span class=cl>│  │  ┌──────────────────┐                                      ││
+</span></span><span class=line><span class=cl>│  │  │ 帧 N 在 QUEUED Buffer 中等待                            ││
+</span></span><span class=line><span class=cl>│  │  └──────────────────┘                                      ││
+</span></span><span class=line><span class=cl>│  └────────────────────────────────────────────────────────────┘│
+</span></span><span class=line><span class=cl>│                           │                                    │
+</span></span><span class=line><span class=cl>│                           ↓                                    │
+</span></span><span class=line><span class=cl>│  ┌────────────────────────────────────────────────────────────┐│
+</span></span><span class=line><span class=cl>│  │  VSYNC N+1 时刻 (16.67ms):                                 ││
+</span></span><span class=line><span class=cl>│  │  ┌──────────────────┐                                      ││
+</span></span><span class=line><span class=cl>│  │  │ 显示器：完成帧 N-1 扫描                                  ││
+</span></span><span class=line><span class=cl>│  │  │ 释放 ACQUIRED → FREE                                    ││
+</span></span><span class=line><span class=cl>│  │  └────────┬─────────┘                                      ││
+</span></span><span class=line><span class=cl>│  │           │                                                ││
+</span></span><span class=line><span class=cl>│  │           ↓                                                ││
+</span></span><span class=line><span class=cl>│  │  ┌──────────────────┐                                      ││
+</span></span><span class=line><span class=cl>│  │  │ HWC：获取帧 N Buffer                                    ││
+</span></span><span class=line><span class=cl>│  │  │ QUEUED → ACQUIRED                                       ││
+</span></span><span class=line><span class=cl>│  │  └────────┬─────────┘                                      ││
+</span></span><span class=line><span class=cl>│  │           │                                                ││
+</span></span><span class=line><span class=cl>│  │           ↓                                                ││
+</span></span><span class=line><span class=cl>│  │  ┌──────────────────┐                                      ││
+</span></span><span class=line><span class=cl>│  │  │ 显示器：开始扫描帧 N                                     ││
+</span></span><span class=line><span class=cl>│  │  └──────────────────┘                                      ││
+</span></span><span class=line><span class=cl>│  │  ┌──────────────────┐                                      ││
+</span></span><span class=line><span class=cl>│  │  │ SF：开始合成帧 N+1                                       ││
+</span></span><span class=line><span class=cl>│  │  └──────────────────┘                                      ││
+</span></span><span class=line><span class=cl>│  └────────────────────────────────────────────────────────────┘│
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h4 id=帧显示时序总结>帧显示时序总结</h4><table><thead><tr><th>VSYNC 时刻</th><th>屏幕显示</th><th>SF 正在合成</th><th>Buffer 状态</th></tr></thead><tbody><tr><td>N</td><td>帧 N-1</td><td>帧 N</td><td>N-1: ACQUIRED, N: QUEUED</td></tr><tr><td>N+1</td><td>帧 N</td><td>帧 N+1</td><td>N: ACQUIRED, N+1: QUEUED</td></tr><tr><td>N+2</td><td>帧 N+1</td><td>帧 N+2</td><td>N+1: ACQUIRED, N+2: QUEUED</td></tr></tbody></table><p><strong>核心结论</strong>：SF 在 VSYNC N 合成帧 N，该帧在 VSYNC N+1 时显示到屏幕上。显示延迟至少 1 帧。</p><h2 id=硬件-vsync-触发机制>硬件 VSYNC 触发机制</h2><h3 id=硬件-vsync-来源>硬件 VSYNC 来源</h3><p>硬件 VSYNC 由显示屏产生，通过 Hardware Composer (HWC) 传递给系统。</p><p><strong>源码位置</strong>: <code>frameworks/native/services/surfaceflinger/DisplayHardware/</code></p><h3 id=hwc-回调注册>HWC 回调注册</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
