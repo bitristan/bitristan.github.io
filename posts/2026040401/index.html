@@ -1,5 +1,5 @@
 <!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Android VSYNC 机制深度解析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.159.2"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Apr 4, 2026
-- 24 minute read</p><h1 class=entry-title>Android VSYNC 机制深度解析</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>VSYNC（垂直同步信号）是 Android 图形系统的核心机制，用于协调显示刷新与渲染时机。本文从源码层面深入分析 VSYNC 的产生、传递和处理全过程。</p><h2 id=整体架构>整体架构</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+- 30 minute read</p><h1 class=entry-title>Android VSYNC 机制深度解析</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>VSYNC（垂直同步信号）是 Android 图形系统的核心机制，用于协调显示刷新与渲染时机。本文从源码层面深入分析 VSYNC 的产生、传递和处理全过程。</p><h2 id=整体架构>整体架构</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
 </span><span class=lnt> 2
 </span><span class=lnt> 3
 </span><span class=lnt> 4
@@ -339,7 +339,253 @@
 </span></span><span class=line><span class=cl>│  └────────────────────────────────────────────────────────────┘│
 </span></span><span class=line><span class=cl>│                                                                 │
 </span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
-</span></span></code></pre></td></tr></table></div></div><h4 id=帧显示时序总结>帧显示时序总结</h4><table><thead><tr><th>VSYNC 时刻</th><th>屏幕显示</th><th>SF 正在合成</th><th>Buffer 状态</th></tr></thead><tbody><tr><td>N</td><td>帧 N-1</td><td>帧 N</td><td>N-1: ACQUIRED, N: QUEUED</td></tr><tr><td>N+1</td><td>帧 N</td><td>帧 N+1</td><td>N: ACQUIRED, N+1: QUEUED</td></tr><tr><td>N+2</td><td>帧 N+1</td><td>帧 N+2</td><td>N+1: ACQUIRED, N+2: QUEUED</td></tr></tbody></table><p><strong>核心结论</strong>：SF 在 VSYNC N 合成帧 N，该帧在 VSYNC N+1 时显示到屏幕上。显示延迟至少 1 帧。</p><h2 id=硬件-vsync-触发机制>硬件 VSYNC 触发机制</h2><h3 id=硬件-vsync-来源>硬件 VSYNC 来源</h3><p>硬件 VSYNC 由显示屏产生，通过 Hardware Composer (HWC) 传递给系统。</p><p><strong>源码位置</strong>: <code>frameworks/native/services/surfaceflinger/DisplayHardware/</code></p><h3 id=hwc-回调注册>HWC 回调注册</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></span></code></pre></td></tr></table></div></div><h4 id=帧显示时序总结>帧显示时序总结</h4><table><thead><tr><th>VSYNC 时刻</th><th>屏幕显示</th><th>SF 正在合成</th><th>Buffer 状态</th></tr></thead><tbody><tr><td>N</td><td>帧 N-1</td><td>帧 N</td><td>N-1: ACQUIRED, N: QUEUED</td></tr><tr><td>N+1</td><td>帧 N</td><td>帧 N+1</td><td>N: ACQUIRED, N+1: QUEUED</td></tr><tr><td>N+2</td><td>帧 N+1</td><td>帧 N+2</td><td>N+1: ACQUIRED, N+2: QUEUED</td></tr></tbody></table><p><strong>核心结论</strong>：SF 在 VSYNC N 合成帧 N，该帧在 VSYNC N+1 时显示到屏幕上。显示延迟至少 1 帧。</p><h3 id=buffer-零拷贝传递机制>Buffer 零拷贝传递机制</h3><p>Android 图形系统从 SF 合成完成到屏幕显示采用<strong>零拷贝</strong>设计，整个流程不会发生内存数据拷贝。</p><h4 id=dma-buf-共享内存原理>DMA-BUF 共享内存原理</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    DMA-BUF 零拷贝机制                                │
+</span></span><span class=line><span class=cl>│                                                                     │
+</span></span><span class=line><span class=cl>│   ┌─────────────────────────────────────────────────────────────┐  │
+</span></span><span class=line><span class=cl>│   │              物理内存 (Physical Memory)                      │  │
+</span></span><span class=line><span class=cl>│   │                     Buffer X                                  │  │
+</span></span><span class=line><span class=cl>│   │   ┌───────────────────────────────────────────────────────┐  │  │
+</span></span><span class=line><span class=cl>│   │   │  像素数据: [R,G,B,A,R,G,B,A,R,G,B,A,...]             │  │  │
+</span></span><span class=line><span class=cl>│   │   │  地址: 0x12345000                                     │  │  │
+</span></span><span class=line><span class=cl>│   │   │  大小: 1920x1080x4 = 8MB                             │  │  │
+</span></span><span class=line><span class=cl>│   │   └───────────────────────────────────────────────────────┘  │  │
+</span></span><span class=line><span class=cl>│   └─────────────────────────────────────────────────────────────┘  │
+</span></span><span class=line><span class=cl>│           ▲              ▲              ▲              ▲           │
+</span></span><span class=line><span class=cl>│           │              │              │              │           │
+</span></span><span class=line><span class=cl>│     ┌─────┴─────┐  ┌─────┴─────┐  ┌─────┴─────┐  ┌─────┴─────┐   │
+</span></span><span class=line><span class=cl>│     │    CPU    │  │    GPU    │  │ 显示控制器 │  │    DPU    │   │
+</span></span><span class=line><span class=cl>│     │  (写入)   │  │  (合成)   │  │  (读取)   │  │  (处理)   │   │
+</span></span><span class=line><span class=cl>│     └───────────┘  └───────────┘  └───────────┘  └───────────┘   │
+</span></span><span class=line><span class=cl>│           │              │              │                         │
+</span></span><span class=line><span class=cl>│           │     通过同一个 fd 访问同一块物理内存                   │
+</span></span><span class=line><span class=cl>│           │              │              │                         │
+</span></span><span class=line><span class=cl>│     ┌─────┴──────────────┴──────────────┴───────┐                │
+</span></span><span class=line><span class=cl>│     │              DMA-BUF fd = 42               │                │
+</span></span><span class=line><span class=cl>│     │         (文件描述符，不是数据拷贝)          │                │
+</span></span><span class=line><span class=cl>│     └────────────────────────────────────────────┘                │
+</span></span><span class=line><span class=cl>│                                                                     │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h4 id=buffer_handle_t-的本质>buffer_handle_t 的本质</h4><p><code>buffer_handle_t</code> 实际上是一个 <code>native_handle</code> 结构体，包含的是文件描述符，不是数据本身：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=k>struct</span> <span class=nc>native_handle</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>version</span><span class=p>;</span>        <span class=c1>// 版本号
+</span></span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>numFds</span><span class=p>;</span>         <span class=c1>// fd 数量
+</span></span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>numInts</span><span class=p>;</span>        <span class=c1>// int 数据数量
+</span></span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>data</span><span class=p>[</span><span class=mi>0</span><span class=p>];</span>        <span class=c1>// 柔性数组
+</span></span></span><span class=line><span class=cl>    <span class=c1>// data[0..numFds-1] = 文件描述符 (DMA-BUF fd)
+</span></span></span><span class=line><span class=cl>    <span class=c1>// data[numFds..]    = width, height, format, stride 等元数据
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 典型的 buffer_handle 包含：
+</span></span></span><span class=line><span class=cl><span class=c1>// - fd[0]: 主平面 DMA-BUF fd
+</span></span></span><span class=line><span class=cl><span class=c1>// - fd[1]: UV 平面 DMA-BUF fd (YUV 格式)
+</span></span></span><span class=line><span class=cl><span class=c1>// - fd[2]: 第二 UV 平面 fd
+</span></span></span><span class=line><span class=cl><span class=c1>// - width, height, format, stride 等元数据
+</span></span></span></code></pre></td></tr></table></div></div><h4 id=零拷贝传递流程>零拷贝传递流程</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span><span class=lnt>55
+</span><span class=lnt>56
+</span><span class=lnt>57
+</span><span class=lnt>58
+</span><span class=lnt>59
+</span><span class=lnt>60
+</span><span class=lnt>61
+</span><span class=lnt>62
+</span><span class=lnt>63
+</span><span class=lnt>64
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    零拷贝传递流程                                    │
+</span></span><span class=line><span class=cl>│                                                                     │
+</span></span><span class=line><span class=cl>│  1. App 分配 Buffer                                                 │
+</span></span><span class=line><span class=cl>│     ┌───────────────────────────────────────────────────────────┐  │
+</span></span><span class=line><span class=cl>│     │ BufferQueue::dequeueBuffer()                              │  │
+</span></span><span class=line><span class=cl>│     │   └─&gt; GrallocAllocator::allocate()                        │  │
+</span></span><span class=line><span class=cl>│     │       └─&gt; ION/DMA-BUF 分配物理内存                         │  │
+</span></span><span class=line><span class=cl>│     │           返回: buffer_handle_t { fd=42, width, ... }     │  │
+</span></span><span class=line><span class=cl>│     └───────────────────────────────────────────────────────────┘  │
+</span></span><span class=line><span class=cl>│                              │                                      │
+</span></span><span class=line><span class=cl>│                              │ 传递 fd (不是数据)                   │
+</span></span><span class=line><span class=cl>│                              ▼                                      │
+</span></span><span class=line><span class=cl>│  2. App 写入数据                                                    │
+</span></span><span class=line><span class=cl>│     ┌───────────────────────────────────────────────────────────┐  │
+</span></span><span class=line><span class=cl>│     │ GraphicBufferMapper::lock(buffer_handle, &amp;vaddr)          │  │
+</span></span><span class=line><span class=cl>│     │   └─&gt; mmap(fd=42) → 获得虚拟地址 vaddr                    │  │
+</span></span><span class=line><span class=cl>│     │       └─&gt; App 通过 vaddr 写入像素数据                      │  │
+</span></span><span class=line><span class=cl>│     │           (CPU 直接写入物理内存 0x12345000)                │  │
+</span></span><span class=line><span class=cl>│     └───────────────────────────────────────────────────────────┘  │
+</span></span><span class=line><span class=cl>│                              │                                      │
+</span></span><span class=line><span class=cl>│                              │ queueBuffer(fd=42)                  │
+</span></span><span class=line><span class=cl>│                              ▼                                      │
+</span></span><span class=line><span class=cl>│  3. SF 读取并合成                                                    │
+</span></span><span class=line><span class=cl>│     ┌───────────────────────────────────────────────────────────┐  │
+</span></span><span class=line><span class=cl>│     │ BufferQueue::acquireBuffer() → 获得 buffer_handle         │  │
+</span></span><span class=line><span class=cl>│     │   └─&gt; GPU 合成:                                           │  │
+</span></span><span class=line><span class=cl>│     │       └─&gt; glEGLImageTargetTexture2DOES(fd=42)             │  │
+</span></span><span class=line><span class=cl>│     │           GPU 直接读取 fd=42 的物理内存                    │  │
+</span></span><span class=line><span class=cl>│     │       └─&gt; GPU 写入输出 buffer (fd=43)                     │  │
+</span></span><span class=line><span class=cl>│     └───────────────────────────────────────────────────────────┘  │
+</span></span><span class=line><span class=cl>│                              │                                      │
+</span></span><span class=line><span class=cl>│                              │ present(fd=43)                       │
+</span></span><span class=line><span class=cl>│                              ▼                                      │
+</span></span><span class=line><span class=cl>│  4. HWC 提交给 DRM                                                   │
+</span></span><span class=line><span class=cl>│     ┌───────────────────────────────────────────────────────────┐  │
+</span></span><span class=line><span class=cl>│     │ setLayerBuffer(buffer_handle)                             │  │
+</span></span><span class=line><span class=cl>│     │   └─&gt; 获取 fd = gmeta.fd  (比如 fd=43)                    │  │
+</span></span><span class=line><span class=cl>│     │       └─&gt; drmPrimeFDToHandle(fd=43, &amp;gem_handle)          │  │
+</span></span><span class=line><span class=cl>│     │           将 DMA-BUF fd 转换为 DRM GEM handle              │  │
+</span></span><span class=line><span class=cl>│     │           (只是转换引用，没有拷贝数据)                      │  │
+</span></span><span class=line><span class=cl>│     └───────────────────────────────────────────────────────────┘  │
+</span></span><span class=line><span class=cl>│                              │                                      │
+</span></span><span class=line><span class=cl>│                              │ atomic commit                        │
+</span></span><span class=line><span class=cl>│                              ▼                                      │
+</span></span><span class=line><span class=cl>│  5. DRM 内核驱动                                                     │
+</span></span><span class=line><span class=cl>│     ┌───────────────────────────────────────────────────────────┐  │
+</span></span><span class=line><span class=cl>│     │ drmModeAtomicCommit(gem_handle)                           │  │
+</span></span><span class=line><span class=cl>│     │   └─&gt; 显示控制器配置:                                      │  │
+</span></span><span class=line><span class=cl>│     │       └─&gt; 设置 DMA 引擎地址 = 物理地址 0x12345000         │  │
+</span></span><span class=line><span class=cl>│     │           (显示控制器直接读取这块内存)                      │  │
+</span></span><span class=line><span class=cl>│     └───────────────────────────────────────────────────────────┘  │
+</span></span><span class=line><span class=cl>│                              │                                      │
+</span></span><span class=line><span class=cl>│                              ▼                                      │
+</span></span><span class=line><span class=cl>│  6. 硬件显示                                                         │
+</span></span><span class=line><span class=cl>│     ┌───────────────────────────────────────────────────────────┐  │
+</span></span><span class=line><span class=cl>│     │ 显示控制器 DMA 引擎                                        │  │
+</span></span><span class=line><span class=cl>│     │   └─&gt; 每个 VSYNC 周期:                                     │  │
+</span></span><span class=line><span class=cl>│     │       └─&gt; 从物理地址 0x12345000 读取像素                   │  │
+</span></span><span class=line><span class=cl>│     │           └─&gt; 发送到 MIPI/DP 接口 → 屏幕                   │  │
+</span></span><span class=line><span class=cl>│     │               (硬件 DMA 直接读取，无 CPU 拷贝)             │  │
+</span></span><span class=line><span class=cl>│     └───────────────────────────────────────────────────────────┘  │
+</span></span><span class=line><span class=cl>│                                                                     │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h4 id=hwc-中的-fd-处理>HWC 中的 fd 处理</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// ExynosLayer.cpp - 从 buffer_handle 获取 DMA-BUF fd
+</span></span></span><span class=line><span class=cl><span class=kt>int32_t</span> <span class=n>ExynosLayer</span><span class=o>::</span><span class=n>setLayerBuffer</span><span class=p>(</span><span class=n>buffer_handle_t</span> <span class=n>buffer</span><span class=p>,</span> <span class=kt>int32_t</span> <span class=n>acquireFence</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>VendorGraphicBufferMeta</span> <span class=nf>gmeta</span><span class=p>(</span><span class=n>buffer</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>bufFds</span><span class=p>[</span><span class=n>MAX_HW2D_PLANES</span><span class=p>];</span>
+</span></span><span class=line><span class=cl>    <span class=n>bufFds</span><span class=p>[</span><span class=mi>0</span><span class=p>]</span> <span class=o>=</span> <span class=n>gmeta</span><span class=p>.</span><span class=n>fd</span><span class=p>;</span>    <span class=c1>// DMA-BUF fd
+</span></span></span><span class=line><span class=cl>    <span class=n>bufFds</span><span class=p>[</span><span class=mi>1</span><span class=p>]</span> <span class=o>=</span> <span class=n>gmeta</span><span class=p>.</span><span class=n>fd1</span><span class=p>;</span>   <span class=c1>// UV 平面 fd
+</span></span></span><span class=line><span class=cl>    <span class=n>bufFds</span><span class=p>[</span><span class=mi>2</span><span class=p>]</span> <span class=o>=</span> <span class=n>gmeta</span><span class=p>.</span><span class=n>fd2</span><span class=p>;</span>   <span class=c1>// 第二 UV 平面 fd
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 传递 fd 给硬件，不拷贝数据
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// ExynosDisplayDrmInterface.cpp - 将 fd 转换为 DRM GEM handle
+</span></span></span><span class=line><span class=cl><span class=kt>uint32_t</span> <span class=n>FramebufferManager</span><span class=o>::</span><span class=n>getBufHandleFromFd</span><span class=p>(</span><span class=kt>int</span> <span class=n>fd</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>uint32_t</span> <span class=n>gem_handle</span> <span class=o>=</span> <span class=mi>0</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 将 DMA-BUF fd 转换为 DRM GEM handle
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 这只是建立引用关系，没有数据拷贝
+</span></span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>ret</span> <span class=o>=</span> <span class=n>drmPrimeFDToHandle</span><span class=p>(</span><span class=n>mDrmFd</span><span class=p>,</span> <span class=n>fd</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>gem_handle</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>gem_handle</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h4 id=需要拷贝的特殊情况>需要拷贝的特殊情况</h4><table><thead><tr><th>场景</th><th>说明</th><th>是否 CPU 拷贝</th></tr></thead><tbody><tr><td>GPU 合成</td><td>GPU 读取多个源 buffer，合成后写入目标 buffer</td><td>❌ GPU DMA 操作</td></tr><tr><td>格式转换</td><td>硬件转换器 (MPP) 进行格式转换</td><td>❌ 硬件 DMA</td></tr><tr><td>Virtual Display</td><td>无线显示需要编码</td><td>✅ 需要拷贝/转换</td></tr><tr><td>Readback 截屏</td><td>从显示 buffer 读取到用户空间</td><td>✅ 真正的内存拷贝</td></tr></tbody></table><h4 id=零拷贝流程总结>零拷贝流程总结</h4><table><thead><tr><th>阶段</th><th>传递内容</th><th>是否拷贝</th></tr></thead><tbody><tr><td>App → SF</td><td><code>buffer_handle_t</code> (fd)</td><td>❌ 只传递 fd</td></tr><tr><td>SF 合成</td><td>GPU 读取 fd 对应内存</td><td>❌ GPU DMA 访问</td></tr><tr><td>SF → HWC</td><td><code>buffer_handle_t</code> (fd)</td><td>❌ 只传递 fd</td></tr><tr><td>HWC → DRM</td><td>fd → GEM handle</td><td>❌ 只是引用转换</td></tr><tr><td>DRM → 显示</td><td>GEM handle → DMA 地址</td><td>❌ 配置硬件</td></tr><tr><td>显示输出</td><td>DMA 读取内存</td><td>❌ 硬件 DMA</td></tr></tbody></table><p><strong>核心设计</strong>：整个流程传递的是"引用"（文件描述符），所有设备（CPU、GPU、显示控制器）都通过 DMA 访问同一块物理内存，实现真正的零拷贝。这种设计避免了大量像素数据的内存拷贝，显著降低了延迟和功耗。</p><h2 id=硬件-vsync-触发机制>硬件 VSYNC 触发机制</h2><h3 id=硬件-vsync-来源>硬件 VSYNC 来源</h3><p>硬件 VSYNC 由显示屏产生，通过 Hardware Composer (HWC) 传递给系统。</p><p><strong>源码位置</strong>: <code>frameworks/native/services/surfaceflinger/DisplayHardware/</code></p><h3 id=hwc-回调注册>HWC 回调注册</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
 </span><span class=lnt>2
 </span><span class=lnt>3
 </span><span class=lnt>4
