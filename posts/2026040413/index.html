@@ -1,0 +1,941 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Android 应用编译优化全景：从 Baseline Profile 到云端协同</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.160.1"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Apr 13, 2026
+- 29 minute read</p><h1 class=entry-title>Android 应用编译优化全景：从 Baseline Profile 到云端协同</h1></header><div class=entry-content><h1 id=一引言一个冷启动的性能困境>一、引言：一个冷启动的性能困境</h1><p>当用户点击应用图标的那一刻，Android 系统需要在极短的时间内完成一系列复杂的操作：加载 DEX 文件、解析类和方法、初始化应用组件。对于大型应用来说，这个过程可能耗时数秒，直接影响用户的第一印象。</p><p>这个问题的核心在于：<strong>应用的代码以 DEX 字节码的形式存储，而 CPU 只能执行机器码</strong>。如何高效地将字节码转换为机器码，是 Android 性能优化的关键命题。</p><p>本文将从编译优化的视角，系统梳理 Android 应用的 Profile 优化机制，涵盖开发者在打包阶段可控的 Baseline Profile、Google Play 云端分发的 Cloud Profile，以及运行时本地收集的热点代码 Profile。这三者相互配合，共同构建了 Android 应用的性能优化闭环。</p><hr><h1 id=二编译优化的演进从解释执行到-profile-驱动>二、编译优化的演进：从解释执行到 Profile 驱动</h1><h2 id=21-三种执行方式的权衡>2.1 三种执行方式的权衡</h2><p>Android 应用的代码执行经历了三个阶段的演进：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                              代码执行方式的演进                                   │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  第一阶段：解释执行 (Dalvik 时代)                                                │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │  DEX 字节码 ──► 解释器 ──► 逐条翻译执行                                  │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  优点：安装快、存储空间小                                                │   │
+</span></span><span class=line><span class=cl>│  │  缺点：执行慢、每次都需要翻译                                            │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  第二阶段：全量 AOT 编译 (Android 5.0-6.0)                                       │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │  安装时：DEX ──► dex2oat ──► 全部编译为 OAT 机器码                       │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  优点：执行快                                                            │   │
+</span></span><span class=line><span class=cl>│  │  缺点：安装慢、占用大量存储空间、编译了大量不常用代码                      │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  第三阶段：混合编译 (Android 7.0+，ART)                                          │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │  关键代码：提前编译 (AOT) ──► OAT 文件                                   │   │
+</span></span><span class=line><span class=cl>│  │  普通代码：运行时 JIT 编译 ──► JIT Code Cache                            │   │
+</span></span><span class=line><span class=cl>│  │  冷门代码：解释执行                                                      │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  核心问题：如何判断哪些是&#34;关键代码&#34;？                                    │   │
+</span></span><span class=line><span class=cl>│  │  答案：Profile ── 记录应用实际使用的方法                                 │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=22-为什么需要-profile>2.2 为什么需要 Profile</h2><p>想象一个包含 10,000 个方法的应用，用户每次启动可能只调用其中 500 个。如果全量编译，95% 的编译工作都是浪费。Profile 的作用就是记录这 500 个真正需要优化的方法，指导编译器"把钱花在刀刃上"。</p><p><strong>Profile 记录的核心信息：</strong></p><ul><li>哪些类被加载了</li><li>哪些方法被调用了</li><li>调用频率如何</li><li>方法的调用关系（用于内联优化）</li></ul><p>有了这些信息，<code>dex2oat</code> 编译器可以只编译热点代码，在安装速度、存储空间和执行效率之间取得最佳平衡。</p><hr><h1 id=三baseline-profile开发者的性能起跑线>三、Baseline Profile：开发者的性能起跑线</h1><h2 id=31-什么是-baseline-profile>3.1 什么是 Baseline Profile</h2><p>Baseline Profile 是开发者在应用发布时预先定义的一份"热点代码清单"。它告诉系统：<strong>当用户首次安装应用时，请优先编译这些方法</strong>。</p><p>这就好比餐厅在开业前就准备好招牌菜的食材——即使没有顾客反馈，厨师也知道哪些菜品最受欢迎。</p><h2 id=32-baseline-profile-的生成方式>3.2 Baseline Profile 的生成方式</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                         Baseline Profile 生成流程                                │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  开发阶段                                                                       │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  方式一：Gradle 插件自动生成                                             │   │
+</span></span><span class=line><span class=cl>│  │  ┌───────────────────────────────────────────────────────────────────┐  │   │
+</span></span><span class=line><span class=cl>│  │  │  1. 配置 Baseline Profile Gradle 插件                              │  │   │
+</span></span><span class=line><span class=cl>│  │  │  2. 运行 :generateBaselineProfile 任务                             │  │   │
+</span></span><span class=line><span class=cl>│  │  │  3. 插件自动运行性能测试 (Jetpack Macrobenchmark)                   │  │   │
+</span></span><span class=line><span class=cl>│  │  │  4. 收集测试运行时的热点方法                                        │  │   │
+</span></span><span class=line><span class=cl>│  │  │  5. 生成 baseline.prof 文件                                        │  │   │
+</span></span><span class=line><span class=cl>│  │  └───────────────────────────────────────────────────────────────────┘  │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  方式二：开发者手动编写                                                  │   │
+</span></span><span class=line><span class=cl>│  │  ┌───────────────────────────────────────────────────────────────────┐  │   │
+</span></span><span class=line><span class=cl>│  │  │  针对特定场景手动标注需要优化的类和方法                              │  │   │
+</span></span><span class=line><span class=cl>│  │  │  适用于对性能有极致要求的场景                                        │  │   │
+</span></span><span class=line><span class=cl>│  │  └───────────────────────────────────────────────────────────────────┘  │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                                  │
+</span></span><span class=line><span class=cl>│                              ▼                                                  │
+</span></span><span class=line><span class=cl>│  打包阶段                                                                       │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  APK 结构：                                                              │   │
+</span></span><span class=line><span class=cl>│  │  ┌───────────────────────────────────────────────────────────────────┐  │   │
+</span></span><span class=line><span class=cl>│  │  │  your-app.apk                                                      │  │   │
+</span></span><span class=line><span class=cl>│  │  │  ├── classes.dex                                                   │  │   │
+</span></span><span class=line><span class=cl>│  │  │  ├── resources.arsc                                                │  │   │
+</span></span><span class=line><span class=cl>│  │  │  ├── AndroidManifest.xml                                           │  │   │
+</span></span><span class=line><span class=cl>│  │  │  └── assets/                                                       │  │   │
+</span></span><span class=line><span class=cl>│  │  │      └── art-profile/                                              │  │   │
+</span></span><span class=line><span class=cl>│  │  │          └── baseline.prof    ← 嵌入到 APK 中                      │  │   │
+</span></span><span class=line><span class=cl>│  │  └───────────────────────────────────────────────────────────────────┘  │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=33-baseline-profile-的价值>3.3 Baseline Profile 的价值</h2><p><strong>首次启动即优化</strong>：用户下载应用后第一次打开，系统就能读取 Profile 进行针对性编译，无需等待运行时收集数据。</p><p><strong>覆盖核心场景</strong>：开发者可以通过性能测试覆盖应用的关键路径，如启动流程、首页渲染、核心功能等。</p><p><strong>作为性能基线</strong>：即使后续没有 Cloud Profile，Baseline Profile 也能提供基础保障。</p><hr><h1 id=四cloud-profile云端协同的性能进化>四、Cloud Profile：云端协同的性能进化</h1><h2 id=41-从单机优化到群体智慧>4.1 从单机优化到群体智慧</h2><p>Baseline Profile 解决了"首次启动"的问题，但它有局限性：<strong>开发者设计的测试场景，未必覆盖所有真实用户的使用模式</strong>。</p><p>比如，一个社交应用的开发者可能重点测试了首页信息流，但实际用户可能更频繁使用私信功能。这时候就需要 Cloud Profile 来补充。</p><h2 id=42-cloud-profile-的运作机制>4.2 Cloud Profile 的运作机制</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                         Cloud Profile 数据流转                                    │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │  阶段一：数据收集                                                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  用户 A 的设备                                                           │   │
+</span></span><span class=line><span class=cl>│  │      │                                                                   │   │
+</span></span><span class=line><span class=cl>│  │      ├── 应用运行时，profcollectd 服务记录热点方法                        │   │
+</span></span><span class=line><span class=cl>│  │      │   (特定场景触发：应用启动、dex2oat、相机打开、OTA 升级)            │   │
+</span></span><span class=line><span class=cl>│  │      │                                                                   │   │
+</span></span><span class=line><span class=cl>│  │      ├── 定时生成报告 (每 4 小时)                                         │   │
+</span></span><span class=line><span class=cl>│  │      │                                                                   │   │
+</span></span><span class=line><span class=cl>│  │      └── 上传到 Google Play 云端                                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  用户 B、C、D... 同样上传数据                                            │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                                  │
+</span></span><span class=line><span class=cl>│                              ▼                                                  │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │  阶段二：云端聚合                                                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  Google Play 云端                                                        │   │
+</span></span><span class=line><span class=cl>│  │      │                                                                   │   │
+</span></span><span class=line><span class=cl>│  │      ├── 收集大量用户的 Profile 数据                                      │   │
+</span></span><span class=line><span class=cl>│  │      │                                                                   │   │
+</span></span><span class=line><span class=cl>│  │      ├── 按应用版本分组                                                  │   │
+</span></span><span class=line><span class=cl>│  │      │                                                                   │   │
+</span></span><span class=line><span class=cl>│  │      ├── 聚合分析：哪些方法被高频调用？                                   │   │
+</span></span><span class=line><span class=cl>│  │      │   (过滤异常数据、合并重复项、计算热度)                             │   │
+</span></span><span class=line><span class=cl>│  │      │                                                                   │   │
+</span></span><span class=line><span class=cl>│  │      └── 生成 Cloud Profile                                              │   │
+</span></span><span class=line><span class=cl>│  │          (代表真实用户群体的使用模式)                                     │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                                  │
+</span></span><span class=line><span class=cl>│                              ▼                                                  │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │  阶段三：分发优化                                                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  新用户 E 从 Google Play 下载应用                                        │   │
+</span></span><span class=line><span class=cl>│  │      │                                                                   │   │
+</span></span><span class=line><span class=cl>│  │      ├── Google Play 检查该应用是否有 Cloud Profile                      │   │
+</span></span><span class=line><span class=cl>│  │      │                                                                   │   │
+</span></span><span class=line><span class=cl>│  │      ├── 有 → 将 Cloud Profile 注入到下载的 APK 中                       │   │
+</span></span><span class=line><span class=cl>│  │      │   (覆盖原有的 Baseline Profile)                                   │   │
+</span></span><span class=line><span class=cl>│  │      │                                                                   │   │
+</span></span><span class=line><span class=cl>│  │      └── 无 → 使用 APK 中原有的 Baseline Profile                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=43-cloud-profile-的独特价值>4.3 Cloud Profile 的独特价值</h2><p><strong>真实用户数据</strong>：基于海量用户的实际使用行为，而非开发者的测试假设。</p><p><strong>持续优化</strong>：随着用户使用模式的变化，Cloud Profile 会不断更新。</p><p><strong>版本同步</strong>：每个应用版本独立收集和分发，确保 Profile 与代码版本匹配。</p><h2 id=44-一个关键问题已安装用户怎么办>4.4 一个关键问题：已安装用户怎么办？</h2><p>Cloud Profile 只会分发给<strong>新下载的用户</strong>。对于已经安装应用的用户，Google Play 不会主动推送 Profile 更新。</p><p>但已安装用户并非完全错过优化——他们有另一套机制：<strong>本地 Profile 收集 + 后台 dexopt</strong>。</p><hr><h1 id=五本地-profile运行时的自适应优化>五、本地 Profile：运行时的自适应优化</h1><h2 id=51-当设备上没有-profile-时会发生什么>5.1 当设备上没有 Profile 时会发生什么</h2><p>假设一个用户在你的应用刚发布时就下载了（此时没有 Cloud Profile），而且你也没有配置 Baseline Profile。应用会经历这样的优化过程：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                      运行时优化演进过程                                           │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  首次启动 (冷启动)                                                               │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  1. 加载 DEX 文件                                                        │   │
+</span></span><span class=line><span class=cl>│  │  2. 无 Profile → 只编译关键启动类 (speed 编译)                           │   │
+</span></span><span class=line><span class=cl>│  │  3. 其他方法：解释执行                                                   │   │
+</span></span><span class=line><span class=cl>│  │  4. 启动较慢，但用户可以使用                                              │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  运行过程中 (JIT 编译)                                                           │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  1. 方法首次调用 → 解释执行                                              │   │
+</span></span><span class=line><span class=cl>│  │  2. 方法多次调用 (超过阈值) → JIT 编译为机器码                            │   │
+</span></span><span class=line><span class=cl>│  │  3. JIT 代码存入 JIT Code Cache (内存中)                                 │   │
+</span></span><span class=line><span class=cl>│  │  4. 后续调用直接执行 JIT 代码                                            │   │
+</span></span><span class=line><span class=cl>│  │  5. ProfileSaver 记录热点方法到 cur profile 文件                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  后台 dexopt (设备空闲 + 充电时)                                                 │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  1. 合并 cur profile → ref profile                                      │   │
+</span></span><span class=line><span class=cl>│  │  2. dex2oat 使用 ref profile 重新编译                                   │   │
+</span></span><span class=line><span class=cl>│  │  3. 生成 OAT 文件 (持久化的机器码)                                       │   │
+</span></span><span class=line><span class=cl>│  │  4. 后续冷启动直接使用 OAT 文件                                          │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  第二次及后续启动                                                                 │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  冷启动时：                                                               │   │
+</span></span><span class=line><span class=cl>│  │  ├── 读取 OAT 文件 (包含上次收集的热点方法编译结果)                       │   │
+</span></span><span class=line><span class=cl>│  │  ├── 启动速度明显提升                                                    │   │
+</span></span><span class=line><span class=cl>│  │  └── 不需要重新 JIT 编译                                                 │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=52-两种-profile-文件的分工>5.2 两种 Profile 文件的分工</h2><p>在设备本地，Profile 数据存储在两个位置：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                         本地 Profile 文件分工                                     │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  cur profile (current profile)                                                  │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  路径: /data/misc/profiles/cur/&lt;userId&gt;/&lt;packageName&gt;/primary.prof      │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  职责: 运行时收集的热点方法                                               │   │
+</span></span><span class=line><span class=cl>│  │  ├── ProfileSaver 定期写入                                               │   │
+</span></span><span class=line><span class=cl>│  │  ├── 记录方法调用、类加载                                                │   │
+</span></span><span class=line><span class=cl>│  │  ├── 可能有多个用户，每个用户一份                                         │   │
+</span></span><span class=line><span class=cl>│  │  └── 数据持续累积                                                        │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  特点: 实时更新，代表当前运行状态                                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                                  │
+</span></span><span class=line><span class=cl>│                              │ 合并 (mergeProfiles)                              │
+</span></span><span class=line><span class=cl>│                              ▼                                                  │
+</span></span><span class=line><span class=cl>│  ref profile (reference profile)                                                │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  路径: /data/misc/profiles/ref/&lt;packageName&gt;/primary.prof               │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  职责: 合并后的参考 Profile，用于 dexopt                                 │   │
+</span></span><span class=line><span class=cl>│  │  ├── 后台 dexopt 时生成                                                  │   │
+</span></span><span class=line><span class=cl>│  │  ├── 合并所有用户的 cur profile                                          │   │
+</span></span><span class=line><span class=cl>│  │  ├── dex2oat 读取此文件进行编译                                          │   │
+</span></span><span class=line><span class=cl>│  │  └── 生成优化后的 OAT 文件                                               │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  特点: 稳定版本，用于指导 AOT 编译                                        │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=53-jit-code-cache-vs-profile-文件>5.3 JIT Code Cache vs Profile 文件</h2><p>一个常见的困惑是：JIT 编译的代码存在哪里？Profile 文件存的又是什么？</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                      JIT 产物 vs Profile 数据                                     │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  JIT Code Cache (机器码)                                                         │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  存储位置: 内存 (MemMap)                                                 │   │
+</span></span><span class=line><span class=cl>│  │  内容: 编译后的机器指令                                                   │   │
+</span></span><span class=line><span class=cl>│  │  生命周期: 随进程结束而释放                                               │   │
+</span></span><span class=line><span class=cl>│  │  特点:                                                                   │   │
+</span></span><span class=line><span class=cl>│  │  ├── 访问速度极快                                                        │   │
+</span></span><span class=line><span class=cl>│  │  ├── 进程间不共享                                                        │   │
+</span></span><span class=line><span class=cl>│  │  ├── App 杀死后需要重新编译                                              │   │
+</span></span><span class=line><span class=cl>│  │  └── 大小受限 (通常几 MB)                                                │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  Profile 文件 (热点信息)                                                         │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  存储位置: 文件系统                                                       │   │
+</span></span><span class=line><span class=cl>│  │  内容: 方法索引、类索引、调用频率                                         │   │
+</span></span><span class=line><span class=cl>│  │  生命周期: 持久化存储                                                     │   │
+</span></span><span class=line><span class=cl>│  │  特点:                                                                   │   │
+</span></span><span class=line><span class=cl>│  │  ├── 跨进程共享                                                          │   │
+</span></span><span class=line><span class=cl>│  │  ├── App 重启后仍存在                                                    │   │
+</span></span><span class=line><span class=cl>│  │  ├── 用于指导 dex2oat 编译                                               │   │
+</span></span><span class=line><span class=cl>│  │  └── 文件较小 (通常 KB 级别)                                              │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  OAT 文件 (AOT 编译产物)                                                         │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  存储位置: /data/app/&lt;package&gt;/oat/&lt;isa&gt;/base.odex                      │   │
+</span></span><span class=line><span class=cl>│  │  内容: 根据 Profile 编译的机器码                                         │   │
+</span></span><span class=line><span class=cl>│  │  生命周期: 持久化存储，直到下次 dexopt                                    │   │
+</span></span><span class=line><span class=cl>│  │  特点:                                                                   │   │
+</span></span><span class=line><span class=cl>│  │  ├── 冷启动直接加载执行                                                  │   │
+</span></span><span class=line><span class=cl>│  │  ├── 不需要运行时编译                                                    │   │
+</span></span><span class=line><span class=cl>│  │  └── 结合 Profile 只编译热点方法                                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><p><strong>简单理解</strong>：Profile 文件是"菜谱"，记录哪些菜受欢迎；JIT Code Cache 是"临时厨房"，现做现吃；OAT 文件是"预制菜"，提前做好随时可用。</p><hr><h1 id=六三类-profile-的协同关系>六、三类 Profile 的协同关系</h1><h2 id=61-优先级规则>6.1 优先级规则</h2><p>当多种 Profile 同时存在时，系统遵循明确的优先级规则：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                         Profile 优先级决策                                        │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  Google Play 分发时:                                                             │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  检查顺序:                                                               │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  1. 有 Cloud Profile?                                                   │   │
+</span></span><span class=line><span class=cl>│  │     ├── 是 → 使用 Cloud Profile (优先)                                  │   │
+</span></span><span class=line><span class=cl>│  │     │   └── 原因: 基于真实用户数据，覆盖面更广                            │   │
+</span></span><span class=line><span class=cl>│  │     │                                                                   │   │
+</span></span><span class=line><span class=cl>│  │     └── 否 → 继续检查                                                   │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  2. 有 Baseline Profile?                                                │   │
+</span></span><span class=line><span class=cl>│  │     ├── 是 → 使用 Baseline Profile (兜底)                               │   │
+</span></span><span class=line><span class=cl>│  │     │   └── 原因: 开发者提供的基准优化                                   │   │
+</span></span><span class=line><span class=cl>│  │     │                                                                   │   │
+</span></span><span class=line><span class=cl>│  │     └── 否 → 无 Profile 分发                                            │   │
+</span></span><span class=line><span class=cl>│  │         └── 首次启动使用默认编译策略                                     │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  设备本地运行时:                                                                  │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  Profile 来源:                                                           │   │
+</span></span><span class=line><span class=cl>│  │  ├── 分发得到的 Profile (Cloud 或 Baseline)                             │   │
+</span></span><span class=line><span class=cl>│  │  │   └── 作为初始优化依据                                                │   │
+</span></span><span class=line><span class=cl>│  │  │                                                                      │   │
+</span></span><span class=line><span class=cl>│  │  └── 本地收集的 cur profile                                             │   │
+</span></span><span class=line><span class=cl>│  │      └── 作为后续 dexopt 的依据                                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  后台 dexopt 时:                                                         │   │
+</span></span><span class=line><span class=cl>│  │  ├── 优先使用本地收集的 ref profile                                      │   │
+</span></span><span class=line><span class=cl>│  │  └── 代表本设备用户的使用习惯                                            │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=62-时间线视角的协同演进>6.2 时间线视角的协同演进</h2><p>以一个应用从发布到成熟的过程为例：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span><span class=lnt>55
+</span><span class=lnt>56
+</span><span class=lnt>57
+</span><span class=lnt>58
+</span><span class=lnt>59
+</span><span class=lnt>60
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                      应用 Profile 优化演进时间线                                   │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  Day 0: 应用发布                                                                 │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  开发者打包:                                                              │   │
+</span></span><span class=line><span class=cl>│  │  ├── Gradle 插件运行性能测试                                             │   │
+</span></span><span class=line><span class=cl>│  │  ├── 生成 baseline.prof                                                  │   │
+</span></span><span class=line><span class=cl>│  │  └── 嵌入 APK: assets/art-profile/baseline.prof                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  用户 A 下载:                                                             │   │
+</span></span><span class=line><span class=cl>│  │  ├── 无 Cloud Profile (刚发布，无数据)                                   │   │
+</span></span><span class=line><span class=cl>│  │  ├── 使用 Baseline Profile                                              │   │
+</span></span><span class=line><span class=cl>│  │  ├── 首次启动: speed-profile 编译                                        │   │
+</span></span><span class=line><span class=cl>│  │  └── 启动性能: 中等偏快 (有基准优化)                                      │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  Day 1-7: 数据收集期                                                             │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  用户 A, B, C... 使用应用                                                │   │
+</span></span><span class=line><span class=cl>│  │  ├── 运行时收集热点方法到 cur profile                                    │   │
+</span></span><span class=line><span class=cl>│  │  ├── 后台 dexopt 生成 OAT 文件                                           │   │
+</span></span><span class=line><span class=cl>│  │  ├── 冷启动性能逐渐提升                                                  │   │
+</span></span><span class=line><span class=cl>│  │  └── 数据上传到 Google Play 云端                                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  Day 8+: Cloud Profile 生效                                                     │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  云端聚合完成，生成 Cloud Profile                                        │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  新用户 D 下载:                                                           │   │
+</span></span><span class=line><span class=cl>│  │  ├── Google Play 注入 Cloud Profile                                     │   │
+</span></span><span class=line><span class=cl>│  │  ├── 首次启动: 使用 Cloud Profile 编译                                   │   │
+</span></span><span class=line><span class=cl>│  │  └── 启动性能: 更快 (基于真实用户数据)                                    │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  老用户 A, B, C...                                                       │   │
+</span></span><span class=line><span class=cl>│  │  ├── 不接收 Cloud Profile 更新                                          │   │
+</span></span><span class=line><span class=cl>│  │  └── 继续使用本地收集的 Profile                                          │   │
+</span></span><span class=line><span class=cl>│  │      └── 后台 dexopt 持续优化                                            │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  后续版本迭代                                                                    │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  发布 v1.1.0:                                                            │   │
+</span></span><span class=line><span class=cl>│  │  ├── 开发者更新 Baseline Profile                                        │   │
+</span></span><span class=line><span class=cl>│  │  ├── 旧版 Cloud Profile 失效 (checksum 不匹配)                           │   │
+</span></span><span class=line><span class=cl>│  │  ├── 重新收集用户数据                                                    │   │
+</span></span><span class=line><span class=cl>│  │  └── 新版本生成新的 Cloud Profile                                       │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=63-baseline-profile-与-cloud-profile-的关系>6.3 Baseline Profile 与 Cloud Profile 的关系</h2><p>两者并非竞争关系，而是互补：</p><table><thead><tr><th>维度</th><th>Baseline Profile</th><th>Cloud Profile</th></tr></thead><tbody><tr><td>来源</td><td>开发者生成</td><td>云端聚合</td></tr><tr><td>数据基础</td><td>性能测试场景</td><td>真实用户行为</td></tr><tr><td>生效时机</td><td>发布即生效</td><td>需收集数据后</td></tr><tr><td>覆盖范围</td><td>开发者定义的场景</td><td>用户实际使用的场景</td></tr><tr><td>更新方式</td><td>版本更新时</td><td>云端自动更新</td></tr><tr><td>优先级</td><td>较低 (兜底)</td><td>较高 (优先)</td></tr></tbody></table><p><strong>最佳实践</strong>：两者都配置。Baseline Profile 确保"首发即优化"，Cloud Profile 确保"持续更优化"。</p><hr><h1 id=七dm-文件profile-分发的另一种形式>七、DM 文件：Profile 分发的另一种形式</h1><h2 id=71-什么是-dm-文件>7.1 什么是 DM 文件</h2><p>DM (Dex Metadata) 文件是 Profile 分发的补充机制，允许开发者在不更新 APK 的情况下分发 Profile 更新。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                            DM 文件结构                                            │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  APK + DM 文件组合:                                                              │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  your-app.apk                                                           │   │
+</span></span><span class=line><span class=cl>│  │  └── 应用的代码和资源                                                    │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  your-app.dm                                                            │   │
+</span></span><span class=line><span class=cl>│  │  └── ZIP 格式，包含:                                                     │   │
+</span></span><span class=line><span class=cl>│  │      ├── profile         ← Profile 数据                                 │   │
+</span></span><span class=line><span class=cl>│  │      └── secondary.dex   ← 可选，补充 DEX 信息                           │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  上传方式:                                                               │   │
+</span></span><span class=line><span class=cl>│  │  └── Google Play Console 同时上传 APK + DM 文件                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=72-embedded-profile-vs-dm-profile>7.2 Embedded Profile vs DM Profile</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                     两种 Profile 分发方式对比                                      │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  Embedded Profile (嵌入 APK)                                                     │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  位置: assets/art-profile/baseline.prof                                 │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  特点:                                                                   │   │
+</span></span><span class=line><span class=cl>│  │  ├── 与 APK 一体，下载时自动获取                                        │   │
+</span></span><span class=line><span class=cl>│  │  ├── 更新 Profile 需要更新 APK                                          │   │
+</span></span><span class=line><span class=cl>│  │  └── 适用于版本发布场景                                                 │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  DM Profile (独立 DM 文件)                                                        │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  位置: your-app.dm 中的 profile 条目                                    │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  特点:                                                                   │   │
+</span></span><span class=line><span class=cl>│  │  ├── 独立于 APK，可单独更新                                              │   │
+</span></span><span class=line><span class=cl>│  │  ├── 无需发版即可优化 Profile                                           │   │
+</span></span><span class=line><span class=cl>│  │  └── 适用于快速迭代优化场景                                              │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  实际使用:                                                                       │
+</span></span><span class=line><span class=cl>│  ├── Google Play 主要使用 Embedded Profile 方式分发 Cloud Profile              │
+</span></span><span class=line><span class=cl>│  └── DM 文件机制保留作为补充方案                                                 │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=八最佳实践总结>八、最佳实践总结</h1><h2 id=81-开发者应该做什么>8.1 开发者应该做什么</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                           Profile 优化最佳实践                                    │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  ✅ 必做: 配置 Baseline Profile                                                 │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  1. 在项目中集成 Baseline Profile Gradle 插件                           │   │
+</span></span><span class=line><span class=cl>│  │  2. 编写覆盖核心场景的性能测试                                           │   │
+</span></span><span class=line><span class=cl>│  │     ├── 应用启动                                                         │   │
+</span></span><span class=line><span class=cl>│  │     ├── 首页渲染                                                         │   │
+</span></span><span class=line><span class=cl>│  │     ├── 核心功能流程                                                     │   │
+</span></span><span class=line><span class=cl>│  │  3. 发布前运行 :generateBaselineProfile                                 │   │
+</span></span><span class=line><span class=cl>│  │  4. 确保 baseline.prof 打包到 APK 中                                    │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  ✅ 推做: 优化关键路径代码                                                       │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  1. 识别应用的启动关键路径                                               │   │
+</span></span><span class=line><span class=cl>│  │  2. 避免在关键路径上进行 IO 操作                                         │   │
+</span></span><span class=line><span class=cl>│  │  3. 延迟初始化非关键组件                                                 │   │
+</span></span><span class=line><span class=cl>│  │  4. 使用 Jetpack App Startup 库优化初始化                               │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  ✅ 可做: 监控性能指标                                                           │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  │  1. 使用 Jetpack Macrobenchmark 测量启动时间                            │   │
+</span></span><span class=line><span class=cl>│  │  2. 对比有无 Profile 的性能差异                                          │   │
+</span></span><span class=line><span class=cl>│  │  3. 持续优化 Baseline Profile 覆盖范围                                  │   │
+</span></span><span class=line><span class=cl>│  │                                                                         │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=82-理解系统行为>8.2 理解系统行为</h2><table><thead><tr><th>场景</th><th>Profile 来源</th><th>预期效果</th></tr></thead><tbody><tr><td>新应用发布，无用户数据</td><td>Baseline Profile</td><td>首次启动中等性能</td></tr><tr><td>新应用发布，有 Cloud Profile</td><td>Cloud Profile</td><td>首次启动较好性能</td></tr><tr><td>用户已安装，运行一段时间</td><td>本地 Profile + 后台 dexopt</td><td>冷启动性能持续提升</td></tr><tr><td>用户强制停止后重启</td><td>OAT 文件 (已编译)</td><td>冷启动性能良好</td></tr><tr><td>应用更新到新版本</td><td>重新开始收集</td><td>短期性能下降，逐步恢复</td></tr></tbody></table><h2 id=83-常见误区>8.3 常见误区</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                            常见误区澄清                                           │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  ❌ 误区 1: &#34;配置了 Baseline Profile 就不需要 Cloud Profile&#34;                     │
+</span></span><span class=line><span class=cl>│  ✅ 正确: 两者互补，Baseline 是保底，Cloud 是优化                                │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  ❌ 误区 2: &#34;Cloud Profile 会自动推送给已安装用户&#34;                               │
+</span></span><span class=line><span class=cl>│  ✅ 正确: Cloud Profile 只分发给新下载用户，已安装用户靠本地收集                 │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  ❌ 误区 3: &#34;Profile 文件就是编译后的机器码&#34;                                     │
+</span></span><span class=line><span class=cl>│  ✅ 正确: Profile 是热点方法索引，机器码存在 OAT 文件或 JIT Code Cache           │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  ❌ 误区 4: &#34;JIT 编译的代码会保存到文件，重启后还能用&#34;                           │
+</span></span><span class=line><span class=cl>│  ✅ 正确: JIT 代码在内存中，进程结束即释放；持久化的是 Profile 数据              │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>│  ❌ 误区 5: &#34;旧版本的 Profile 可以用于新版本&#34;                                    │
+</span></span><span class=line><span class=cl>│  ✅ 正确: Profile 包含 DEX checksum，版本更新后失效                              │
+</span></span><span class=line><span class=cl>│                                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=九结语>九、结语</h1><p>Android 的 Profile 优化机制体现了"分层次、渐进式"的工程哲学：</p><ul><li><strong>开发时</strong>：开发者通过 Baseline Profile 定义性能基线，确保"首发即优化"</li><li><strong>分发时</strong>：Google Play 通过 Cloud Profile 聚合群体智慧，实现"持续更优化"</li><li><strong>运行时</strong>：系统通过本地 Profile 收集真实行为，达成"自适应优化"</li></ul><p>这三层机制环环相扣，共同为用户带来流畅的应用体验。理解它们的工作原理，能帮助开发者更好地优化应用性能，也能帮助工程师深入理解 Android 系统的设计思路。</p><p>性能优化是一场永无止境的旅程，而 Profile 驱动的编译优化，正是这场旅程中最可靠的指南针。</p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Apr 13, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026040401/ title="Android VSYNC 机制深度解析">Android VSYNC 机制深度解析</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
