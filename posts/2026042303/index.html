@@ -1,0 +1,1438 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Android Runtime (ART) 垃圾回收深度解析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.160.1"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Apr 23, 2026
+- 23 minute read</p><h1 class=entry-title>Android Runtime (ART) 垃圾回收深度解析</h1></header><div class=entry-content><h1 id=目录>目录</h1><ol><li><a href=#1-%e6%a6%82%e8%bf%b0>概述</a></li><li><a href=#2-%e5%86%85%e5%ad%98%e7%a9%ba%e9%97%b4%e7%ae%a1%e7%90%86>内存空间管理</a></li><li><a href=#3-gc-%e7%b1%bb%e5%9e%8b%e4%b8%8e%e8%a7%a6%e5%8f%91%e6%9c%ba%e5%88%b6>GC 类型与触发机制</a></li><li><a href=#4-%e6%94%b6%e9%9b%86%e5%99%a8%e7%b1%bb%e5%9e%8b%e4%b8%8e%e7%ae%97%e6%b3%95>收集器类型与算法</a></li><li><a href=#5-gc-root-%e8%bf%bd%e8%b8%aa%e6%9c%ba%e5%88%b6>GC Root 追踪机制</a></li><li><a href=#6-gc-%e6%89%a7%e8%a1%8c%e6%b5%81%e7%a8%8b%e8%af%a6%e8%a7%a3>GC 执行流程详解</a></li><li><a href=#7-%e5%bc%95%e7%94%a8%e5%a4%84%e7%90%86%e6%9c%ba%e5%88%b6>引用处理机制</a></li><li><a href=#8-%e6%80%a7%e8%83%bd%e4%bc%98%e5%8c%96%e7%ad%96%e7%95%a5>性能优化策略</a></li><li><a href=#9-%e6%80%bb%e7%bb%93>总结</a></li></ol><hr><h1 id=1-概述>1. 概述</h1><h2 id=11-art-gc-的设计理念>1.1 ART GC 的设计理念</h2><p>Android Runtime (ART) 的垃圾回收器设计遵循以下核心原则：</p><ul><li><strong>低延迟优先</strong>：移动设备对交互响应敏感，GC 暂停时间直接影响用户体验</li><li><strong>内存效率</strong>：移动设备内存有限，需要高效利用每一字节</li><li><strong>并发执行</strong>：尽可能让 GC 与应用线程并行执行，减少暂停时间</li><li><strong>分代收集</strong>：利用"弱分代假说"——大多数对象朝生夕死，优化收集效率</li></ul><h2 id=12-整体架构>1.2 整体架构</h2><p>ART GC 采用模块化设计，核心组件包括：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                          Heap (heap.h/cc)                       │
+</span></span><span class=line><span class=cl>│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
+</span></span><span class=line><span class=cl>│  │   Spaces    │  │ Collectors  │  │   Reference Processor   │ │
+</span></span><span class=line><span class=cl>│  │  (空间管理)  │  │  (收集器)   │  │     (引用处理器)         │ │
+</span></span><span class=line><span class=cl>│  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
+</span></span><span class=line><span class=cl>│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
+</span></span><span class=line><span class=cl>│  │  Allocator  │  │ Card Table  │  │    Mod Union Table      │ │
+</span></span><span class=line><span class=cl>│  │  (分配器)    │  │ (卡表)      │  │    (联合修改表)          │ │
+</span></span><span class=line><span class=cl>│  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=2-内存空间管理>2. 内存空间管理</h1><h2 id=21-空间类型层次结构>2.1 空间类型层次结构</h2><p>ART 将堆内存划分为多个逻辑空间(Space)，每个空间有不同的用途和回收策略：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// space.h 中定义的空间类型
+</span></span></span><span class=line><span class=cl><span class=k>enum</span> <span class=nc>SpaceType</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>kSpaceTypeImageSpace</span><span class=p>,</span>        <span class=c1>// 启动镜像空间
+</span></span></span><span class=line><span class=cl>  <span class=n>kSpaceTypeMallocSpace</span><span class=p>,</span>       <span class=c1>// malloc 分配空间 (RosAlloc/DlMalloc)
+</span></span></span><span class=line><span class=cl>  <span class=n>kSpaceTypeZygoteSpace</span><span class=p>,</span>       <span class=c1>// Zygote 进程共享空间
+</span></span></span><span class=line><span class=cl>  <span class=n>kSpaceTypeBumpPointerSpace</span><span class=p>,</span>  <span class=c1>// 指针碰撞分配空间
+</span></span></span><span class=line><span class=cl>  <span class=n>kSpaceTypeLargeObjectSpace</span><span class=p>,</span>  <span class=c1>// 大对象空间
+</span></span></span><span class=line><span class=cl>  <span class=n>kSpaceTypeRegionSpace</span><span class=p>,</span>       <span class=c1>// 区域空间 (CC 收集器使用)
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 回收策略
+</span></span></span><span class=line><span class=cl><span class=k>enum</span> <span class=nc>GcRetentionPolicy</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>kGcRetentionPolicyNeverCollect</span><span class=p>,</span>   <span class=c1>// 永不回收 (Image Space)
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcRetentionPolicyAlwaysCollect</span><span class=p>,</span>  <span class=c1>// 每次 GC 都回收
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcRetentionPolicyFullCollect</span><span class=p>,</span>    <span class=c1>// 仅 Full GC 时回收 (Zygote Space)
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=22-各空间详解>2.2 各空间详解</h2><h3 id=221-image-space-镜像空间>2.2.1 Image Space (镜像空间)</h3><ul><li><strong>用途</strong>：存储预加载的类和对象，来自 boot.art 镜像文件</li><li><strong>特点</strong>：内存映射文件，只读，永不回收</li><li><strong>生命周期</strong>：从 Zygote 进程启动到系统关闭</li></ul><h3 id=222-zygote-space-zygote-空间>2.2.2 Zygote Space (Zygote 空间)</h3><ul><li><strong>用途</strong>：Zygote fork 后共享的只读空间</li><li><strong>特点</strong>：在 Zygote fork 前创建，fork 后变为只读</li><li><strong>回收策略</strong>：仅 Full GC 时考虑回收</li></ul><h3 id=223-malloc-space-rosallocdlmalloc-空间>2.2.3 Malloc Space (RosAlloc/DlMalloc 空间)</h3><ul><li><strong>用途</strong>：普通对象分配</li><li><strong>分配器</strong>：<ul><li><strong>RosAlloc</strong> (Runs-of-Slots Allocator)：线程本地分配，减少锁竞争</li><li><strong>DlMalloc</strong>：Doug Lea&rsquo;s malloc，传统分配器</li></ul></li><li><strong>特点</strong>：支持非移动收集器 (MS/CMS)</li></ul><h3 id=224-bump-pointer-space-指针碰撞空间>2.2.4 Bump Pointer Space (指针碰撞空间)</h3><ul><li><strong>用途</strong>：Semi-Space 和 Mark-Compact 收集器使用</li><li><strong>特点</strong>：分配极快（只需移动指针），但需要整块连续内存</li><li><strong>适用场景</strong>：年轻代对象、移动式 GC</li></ul><h3 id=225-region-space-区域空间>2.2.5 Region Space (区域空间)</h3><ul><li><strong>用途</strong>：Concurrent Copying (CC) 收集器使用</li><li><strong>特点</strong>：将堆划分为多个固定大小的 Region，支持对象移动和压缩</li><li><strong>优势</strong>：减少内存碎片，支持并发整理</li></ul><h3 id=226-large-object-space-大对象空间>2.2.6 Large Object Space (大对象空间)</h3><ul><li><strong>用途</strong>：存储大对象（默认 > 12KB）</li><li><strong>特点</strong>：直接使用 mmap 分配，避免拷贝开销</li><li><strong>实现</strong>：LargeObjectMapSpace（离散空间）或 FreeListSpace</li></ul><h2 id=23-分配器类型>2.3 分配器类型</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=k>enum</span> <span class=nc>AllocatorType</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeBumpPointer</span><span class=p>,</span>     <span class=c1>// 指针碰撞（无 TLAB）
+</span></span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeTLAB</span><span class=p>,</span>            <span class=c1>// 线程本地分配缓冲区
+</span></span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeRosAlloc</span><span class=p>,</span>        <span class=c1>// RosAlloc 分配器
+</span></span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeDlMalloc</span><span class=p>,</span>        <span class=c1>// DlMalloc 分配器
+</span></span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeRegion</span><span class=p>,</span>          <span class=c1>// Region 分配（无 TLAB）
+</span></span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeRegionTLAB</span><span class=p>,</span>      <span class=c1>// Region + TLAB
+</span></span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeLOS</span><span class=p>,</span>             <span class=c1>// 大对象空间
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>分配器与收集器的对应关系</strong>：</p><table><thead><tr><th>收集器类型</th><th>分配器类型</th><th>空间类型</th></tr></thead><tbody><tr><td>MS/CMS</td><td>RosAlloc/DlMalloc</td><td>MallocSpace</td></tr><tr><td>SS</td><td>BumpPointer/TLAB</td><td>BumpPointerSpace</td></tr><tr><td>CC</td><td>Region/RegionTLAB</td><td>RegionSpace</td></tr><tr><td>CMC</td><td>BumpPointer/TLAB</td><td>BumpPointerSpace</td></tr></tbody></table><hr><h1 id=3-gc-类型与触发机制>3. GC 类型与触发机制</h1><h2 id=31-gc-类型-gctype>3.1 GC 类型 (GcType)</h2><p>ART 定义了三种 GC 类型，对应不同的收集范围：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// gc/collector/gc_type.h
+</span></span></span><span class=line><span class=cl><span class=k>enum</span> <span class=nc>GcType</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>kGcTypeNone</span> <span class=o>=</span> <span class=mi>0</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>  <span class=n>kGcTypeSticky</span><span class=p>,</span>   <span class=c1>// 年轻代 GC：仅收集上次 GC 后分配的对象
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcTypePartial</span><span class=p>,</span>  <span class=c1>// 部分 GC：收集应用堆，不包括 Zygote 堆
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcTypeFull</span><span class=p>,</span>     <span class=c1>// 完整 GC：收集整个堆，包括 Zygote
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>收集范围示意</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                        Full GC                              │
+</span></span><span class=line><span class=cl>│  ┌───────────────────────────────────────────────────────┐  │
+</span></span><span class=line><span class=cl>│  │                    Partial GC                          │  │
+</span></span><span class=line><span class=cl>│  │  ┌─────────────────────────────────────────────────┐  │  │
+</span></span><span class=line><span class=cl>│  │  │              Sticky GC (Young Gen)               │  │  │
+</span></span><span class=line><span class=cl>│  │  │    上次 GC 后分配的对象                           │  │  │
+</span></span><span class=line><span class=cl>│  │  └─────────────────────────────────────────────────┘  │  │
+</span></span><span class=line><span class=cl>│  │              应用堆 (App Heap)                         │  │
+</span></span><span class=line><span class=cl>│  └───────────────────────────────────────────────────────┘  │
+</span></span><span class=line><span class=cl>│                    Zygote 堆                                │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=32-gc-触发原因-gccause>3.2 GC 触发原因 (GcCause)</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// gc/gc_cause.h
+</span></span></span><span class=line><span class=cl><span class=k>enum</span> <span class=nc>GcCause</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 分配失败触发
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCauseForAlloc</span><span class=p>,</span>              <span class=c1>// 分配时内存不足
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCauseForNativeAlloc</span><span class=p>,</span>        <span class=c1>// Native 分配触发
+</span></span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 后台主动触发
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCauseBackground</span><span class=p>,</span>            <span class=c1>// 后台 GC，主动释放内存
+</span></span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 显式触发
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCauseExplicit</span><span class=p>,</span>              <span class=c1>// System.gc() 调用
+</span></span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 收集器切换
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCauseCollectorTransition</span><span class=p>,</span>   <span class=c1>// 前后台切换时收集器转换
+</span></span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 空间压缩
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCauseHomogeneousSpaceCompact</span><span class=p>,</span>  <span class=c1>// 同构空间压缩
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCauseInstrumentation</span><span class=p>,</span>          <span class=c1>// 性能分析触发
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCauseLowMemory</span><span class=p>,</span>                <span class=c1>// 低内存警告触发
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCauseMemoryPressure</span><span class=p>,</span>           <span class=c1>// 内存压力触发
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCauseWaitForGcToComplete</span><span class=p>,</span>      <span class=c1>// 等待 GC 完成
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCausePreZygoteFork</span><span class=p>,</span>            <span class=c1>// Zygote fork 前
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCauseDisableMovingGc</span><span class=p>,</span>          <span class=c1>// 禁用移动 GC
+</span></span></span><span class=line><span class=cl>  <span class=n>kGcCauseRunEmptyCheckpoint</span><span class=p>,</span>       <span class=c1>// 空检查点运行
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=33-触发机制详解>3.3 触发机制详解</h2><h3 id=331-分配触发-kgccauseforalloc>3.3.1 分配触发 (kGcCauseForAlloc)</h3><p>当对象分配失败时触发：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// heap-inl.h: AllocObjectWithAllocator
+</span></span></span><span class=line><span class=cl><span class=k>template</span> <span class=o>&lt;</span><span class=p>...</span><span class=o>&gt;</span>
+</span></span><span class=line><span class=cl><span class=kr>inline</span> <span class=n>mirror</span><span class=o>::</span><span class=n>Object</span><span class=o>*</span> <span class=n>Heap</span><span class=o>::</span><span class=n>AllocObjectWithAllocator</span><span class=p>(...)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 尝试分配
+</span></span></span><span class=line><span class=cl>  <span class=n>obj</span> <span class=o>=</span> <span class=n>TryToAllocate</span><span class=p>(...);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>obj</span> <span class=o>==</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 分配失败，触发 GC
+</span></span></span><span class=line><span class=cl>    <span class=n>obj</span> <span class=o>=</span> <span class=n>AllocateInternalWithGc</span><span class=p>(...);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 检查是否需要后台 GC
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>UNLIKELY</span><span class=p>(</span><span class=n>need_gc</span> <span class=o>==</span> <span class=n>kNeedGc</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>RequestConcurrentGCAndSaveObject</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=nb>false</span><span class=p>,</span> <span class=n>starting_gc_num</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>obj</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h3 id=332-后台触发-kgccausebackground>3.3.2 后台触发 (kGcCauseBackground)</h3><p>当堆使用量达到阈值时，异步触发后台 GC：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// heap.cc
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>Heap</span><span class=o>::</span><span class=n>SetDefaultConcurrentStartBytesLocked</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>IsGcConcurrent</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>size_t</span> <span class=n>target_footprint</span> <span class=o>=</span> <span class=n>target_footprint_</span><span class=p>.</span><span class=n>load</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=n>size_t</span> <span class=n>reserve_bytes</span> <span class=o>=</span> <span class=n>target_footprint</span> <span class=o>/</span> <span class=mi>4</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 当分配超过此阈值时触发并发 GC
+</span></span></span><span class=line><span class=cl>    <span class=n>concurrent_start_bytes_</span> <span class=o>=</span> <span class=n>target_footprint</span> <span class=o>-</span> <span class=n>reserve_bytes</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h3 id=333-native-内存触发-kgccausefornativealloc>3.3.3 Native 内存触发 (kGcCauseForNativeAlloc)</h3><p>当 Native 内存使用超过阈值时触发：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// heap.cc
+</span></span></span><span class=line><span class=cl><span class=k>if</span> <span class=p>(</span><span class=n>native_bytes_allocated</span> <span class=o>&gt;</span> <span class=n>native_allocation_watermark_</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>RequestConcurrentGC</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>kGcCauseForNativeAlloc</span><span class=p>,</span> <span class=nb>true</span><span class=p>,</span> <span class=n>starting_gc_num</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=34-gc-类型选择策略>3.4 GC 类型选择策略</h2><p><code>GrowForUtilization()</code> 函数决定下一次 GC 的类型：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// heap.cc: GrowForUtilization
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>Heap</span><span class=o>::</span><span class=n>GrowForUtilization</span><span class=p>(</span><span class=n>collector</span><span class=o>::</span><span class=n>GarbageCollector</span><span class=o>*</span> <span class=n>collector_ran</span><span class=p>,</span> <span class=p>...)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>gc_type</span> <span class=o>!=</span> <span class=n>collector</span><span class=o>::</span><span class=n>kGcTypeSticky</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 非 Sticky GC 后，下次做 Sticky GC
+</span></span></span><span class=line><span class=cl>    <span class=n>next_gc_type_</span> <span class=o>=</span> <span class=n>collector</span><span class=o>::</span><span class=n>kGcTypeSticky</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// Sticky GC 后，根据吞吐量决定下次 GC 类型
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>current_gc_iteration_</span><span class=p>.</span><span class=n>GetEstimatedThroughput</span><span class=p>()</span> <span class=o>*</span> <span class=n>adjustment</span> <span class=o>&gt;=</span>
+</span></span><span class=line><span class=cl>        <span class=n>non_sticky_collector</span><span class=o>-&gt;</span><span class=n>GetEstimatedMeanThroughput</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=c1>// Sticky GC 效率足够高，继续 Sticky
+</span></span></span><span class=line><span class=cl>      <span class=n>next_gc_type_</span> <span class=o>=</span> <span class=n>collector</span><span class=o>::</span><span class=n>kGcTypeSticky</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=c1>// 否则升级到 Partial 或 Full
+</span></span></span><span class=line><span class=cl>      <span class=n>next_gc_type_</span> <span class=o>=</span> <span class=n>non_sticky_gc_type</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=4-收集器类型与算法>4. 收集器类型与算法</h1><h2 id=41-收集器类型概览>4.1 收集器类型概览</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// gc/collector_type.h
+</span></span></span><span class=line><span class=cl><span class=k>enum</span> <span class=nc>CollectorType</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>kCollectorTypeMS</span><span class=p>,</span>              <span class=c1>// Mark-Sweep (非并发)
+</span></span></span><span class=line><span class=cl>  <span class=n>kCollectorTypeCMS</span><span class=p>,</span>             <span class=c1>// Concurrent Mark-Sweep
+</span></span></span><span class=line><span class=cl>  <span class=n>kCollectorTypeSS</span><span class=p>,</span>              <span class=c1>// Semi-Space
+</span></span></span><span class=line><span class=cl>  <span class=n>kCollectorTypeCC</span><span class=p>,</span>              <span class=c1>// Concurrent Copying (Android 8+ 默认)
+</span></span></span><span class=line><span class=cl>  <span class=n>kCollectorTypeCMC</span><span class=p>,</span>             <span class=c1>// Concurrent Mark-Compact
+</span></span></span><span class=line><span class=cl>  <span class=n>kCollectorTypeCCBackground</span><span class=p>,</span>    <span class=c1>// CC 后台模式
+</span></span></span><span class=line><span class=cl>  <span class=n>kCollectorTypeCMCBackground</span><span class=p>,</span>   <span class=c1>// CMC 后台模式
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=42-mark-sweep-mscms>4.2 Mark-Sweep (MS/CMS)</h2><h3 id=421-算法原理>4.2.1 算法原理</h3><p>Mark-Sweep 分为两个阶段：</p><ol><li><strong>标记阶段 (Mark)</strong>：从 GC Root 出发，遍历对象图，标记所有可达对象</li><li><strong>清除阶段 (Sweep)</strong>：遍历堆，回收未被标记的对象</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                     Mark-Sweep 算法                          │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│  标记前:  [A][B][C][D][E][F][G][H][I][J]                    │
+</span></span><span class=line><span class=cl>│                          ↓                                   │
+</span></span><span class=line><span class=cl>│  标记后:  [A*][B][C*][D][E*][F][G*][H][I][J]  (* = 已标记)   │
+</span></span><span class=line><span class=cl>│                          ↓                                   │
+</span></span><span class=line><span class=cl>│  清除后:  [A][空][C][空][E][空][G][空][空][空]               │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h3 id=422-cms-concurrent-mark-sweep-流程>4.2.2 CMS (Concurrent Mark-Sweep) 流程</h3><p>CMS 将标记阶段拆分为多个子阶段，实现并发收集：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌──────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                        CMS GC 流程                                │
+</span></span><span class=line><span class=cl>├──────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│  1. Initial Mark (暂停)                                          │
+</span></span><span class=line><span class=cl>│     └── 标记 GC Roots 直接引用的对象                              │
+</span></span><span class=line><span class=cl>│                                                                   │
+</span></span><span class=line><span class=cl>│  2. Concurrent Mark (并发)                                       │
+</span></span><span class=line><span class=cl>│     └── 从 Initial Mark 的对象出发，遍历整个对象图                │
+</span></span><span class=line><span class=cl>│     └── 应用线程同时运行，可能产生新的引用                        │
+</span></span><span class=line><span class=cl>│                                                                   │
+</span></span><span class=line><span class=cl>│  3. Pre-Clean (并发)                                             │
+</span></span><span class=line><span class=cl>│     └── 预处理 dirty cards，减少最终暂停时间                     │
+</span></span><span class=line><span class=cl>│                                                                   │
+</span></span><span class=line><span class=cl>│  4. Re-Mark (暂停)                                               │
+</span></span><span class=line><span class=cl>│     └── 重新标记并发期间修改的对象                                │
+</span></span><span class=line><span class=cl>│     └── 使用 SATB (Snapshot-At-The-Beginning) 算法               │
+</span></span><span class=line><span class=cl>│                                                                   │
+</span></span><span class=line><span class=cl>│  5. Concurrent Sweep (并发)                                      │
+</span></span><span class=line><span class=cl>│     └── 回收未被标记的对象                                        │
+</span></span><span class=line><span class=cl>└──────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h3 id=423-关键数据结构>4.2.3 关键数据结构</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// mark_sweep.h
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>MarkSweep</span> <span class=o>:</span> <span class=k>public</span> <span class=n>GarbageCollector</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 标记位图：记录对象是否被标记
+</span></span></span><span class=line><span class=cl>  <span class=n>accounting</span><span class=o>::</span><span class=n>HeapBitmap</span><span class=o>*</span> <span class=n>mark_bitmap_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 标记栈：存放待处理的对象引用
+</span></span></span><span class=line><span class=cl>  <span class=n>accounting</span><span class=o>::</span><span class=n>ObjectStack</span><span class=o>*</span> <span class=n>mark_stack_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 免疫空间：不需要扫描的空间（Image、Zygote）
+</span></span></span><span class=line><span class=cl>  <span class=n>ImmuneSpaces</span> <span class=n>immune_spaces_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 是否并发执行
+</span></span></span><span class=line><span class=cl>  <span class=kt>bool</span> <span class=n>is_concurrent_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=43-semi-space-ss>4.3 Semi-Space (SS)</h2><h3 id=431-算法原理>4.3.1 算法原理</h3><p>Semi-Space 将堆分为两个半空间：From-Space 和 To-Space</p><ol><li>新对象分配在 To-Space</li><li>GC 时，将存活对象从 From-Space 复制到 To-Space</li><li>交换两个空间的角色</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌──────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                     Semi-Space 算法                               │
+</span></span><span class=line><span class=cl>├──────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│  GC 前:                                                          │
+</span></span><span class=line><span class=cl>│  From-Space: [A][B][C][D][E][F] (满)                            │
+</span></span><span class=line><span class=cl>│  To-Space:   [ ][ ][ ][ ][ ][ ] (空)                             │
+</span></span><span class=line><span class=cl>│                                                                   │
+</span></span><span class=line><span class=cl>│  GC 时 (复制存活对象):                                            │
+</span></span><span class=line><span class=cl>│  From-Space: [A][B][C][D][E][F]                                 │
+</span></span><span class=line><span class=cl>│  To-Space:   [A][C][E][ ][ ][ ] (A, C, E 存活)                   │
+</span></span><span class=line><span class=cl>│                                                                   │
+</span></span><span class=line><span class=cl>│  GC 后 (交换空间):                                                │
+</span></span><span class=line><span class=cl>│  From-Space: [ ][ ][ ][ ][ ][ ] (原 To-Space，清空后作为新 From) │
+</span></span><span class=line><span class=cl>│  To-Space:   [A][C][E][ ][ ][ ] (原 From-Space，成为新 To)       │
+</span></span><span class=line><span class=cl>└──────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h3 id=432-优缺点>4.3.2 优缺点</h3><p><strong>优点</strong>：</p><ul><li>分配极快（指针碰撞）</li><li>自动整理内存，无碎片</li><li>适合年轻代对象（存活率低）</li></ul><p><strong>缺点</strong>：</p><ul><li>内存利用率低（只有一半可用）</li><li>需要复制存活对象（存活率高时开销大）</li></ul><h2 id=44-concurrent-copying-cc>4.4 Concurrent Copying (CC)</h2><h3 id=441-算法原理>4.4.1 算法原理</h3><p>CC 是 Android 8.0+ 的默认收集器，结合了复制收集和并发标记的优点：</p><ol><li><strong>Region-based 堆布局</strong>：将堆划分为多个 Region</li><li><strong>Read Barrier</strong>：在读取对象引用时触发屏障，确保引用更新</li><li><strong>并发复制</strong>：与应用线程并发执行对象移动</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌──────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                  Concurrent Copying 架构                          │
+</span></span><span class=line><span class=cl>├──────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────┐ │
+</span></span><span class=line><span class=cl>│  │                    Region Space                              │ │
+</span></span><span class=line><span class=cl>│  │  ┌────┐┌────┐┌────┐┌────┐┌────┐┌────┐┌────┐┌────┐        │ │
+</span></span><span class=line><span class=cl>│  │  │R0  ││R1  ││R2  ││R3  ││R4  ││R5  ││R6  ││R7  │        │ │
+</span></span><span class=line><span class=cl>│  │  │From││From││To  ││To  ││Free││Free││From││To  │        │ │
+</span></span><span class=line><span class=cl>│  │  └────┘└────┘└────┘└────┘└────┘└────┘└────┘└────┘        │ │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────┘ │
+</span></span><span class=line><span class=cl>│                                                                   │
+</span></span><span class=line><span class=cl>│  Read Barrier:                                                   │
+</span></span><span class=line><span class=cl>│  obj.field → 读取时检查 → 如果在 From-Space → 复制到 To-Space    │
+</span></span><span class=line><span class=cl>└──────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h3 id=442-read-barrier-实现>4.4.2 Read Barrier 实现</h3><p>CC 使用 Baker Read Barrier：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 读取对象引用时的屏障伪代码
+</span></span></span><span class=line><span class=cl><span class=n>Object</span><span class=o>*</span> <span class=nf>ReadBarrier</span><span class=p>(</span><span class=n>Object</span><span class=o>*</span> <span class=n>ref</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>ref</span> <span class=o>==</span> <span class=k>nullptr</span><span class=p>)</span> <span class=k>return</span> <span class=k>nullptr</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 检查对象是否在 From-Space（需要移动）
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>IsInFromSpace</span><span class=p>(</span><span class=n>ref</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 获取或创建转发地址
+</span></span></span><span class=line><span class=cl>    <span class=n>Object</span><span class=o>*</span> <span class=n>forwarded</span> <span class=o>=</span> <span class=n>GetForwardingAddress</span><span class=p>(</span><span class=n>ref</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>forwarded</span> <span class=o>==</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=c1>// 首次访问，复制对象
+</span></span></span><span class=line><span class=cl>      <span class=n>forwarded</span> <span class=o>=</span> <span class=n>CopyToToSpace</span><span class=p>(</span><span class=n>ref</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>      <span class=n>SetForwardingAddress</span><span class=p>(</span><span class=n>ref</span><span class=p>,</span> <span class=n>forwarded</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>forwarded</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=n>ref</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h3 id=443-cc-执行流程>4.4.3 CC 执行流程</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// concurrent_copying.cc
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>ConcurrentCopying</span><span class=o>::</span><span class=n>RunPhases</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>InitializePhase</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 阶段 1: 并发标记
+</span></span></span><span class=line><span class=cl>  <span class=n>MarkingPhase</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 阶段 2: 暂停 - 翻转 from/to
+</span></span></span><span class=line><span class=cl>  <span class=n>FlipPhase</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 阶段 3: 并发复制
+</span></span></span><span class=line><span class=cl>  <span class=n>CopyingPhase</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=n>FinishPhase</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=45-concurrent-mark-compact-cmc>4.5 Concurrent Mark-Compact (CMC)</h2><h3 id=451-算法原理>4.5.1 算法原理</h3><p>CMC 结合了 Mark-Sweep 和 Compaction 的优点：</p><ol><li><strong>并发标记</strong>：与应用线程并发执行标记</li><li><strong>并发压缩</strong>：使用 userfaultfd 实现并发对象移动</li><li><strong>滑动压缩</strong>：对象向一端滑动，保持分配顺序</li></ol><h3 id=452-userfaultfd-机制>4.5.2 userfaultfd 机制</h3><p>CMC 利用 Linux userfaultfd 实现页面级别的并发迁移：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌──────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                   CMC + userfaultfd 机制                          │
+</span></span><span class=line><span class=cl>├──────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│  1. 注册 userfaultfd，监控堆内存页面                              │
+</span></span><span class=line><span class=cl>│  2. GC 移动对象时，先复制数据到新位置                              │
+</span></span><span class=line><span class=cl>│  3. 应用访问旧地址时触发 page fault                               │
+</span></span><span class=line><span class=cl>│  4. 内核通知 GC 线程处理                                          │
+</span></span><span class=line><span class=cl>│  5. GC 线程更新页表映射，指向新位置                                │
+</span></span><span class=line><span class=cl>│  6. 应用线程继续执行，无感知对象移动                               │
+</span></span><span class=line><span class=cl>└──────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=46-收集器选择策略>4.6 收集器选择策略</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// heap.cc: ChangeCollector
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>Heap</span><span class=o>::</span><span class=n>ChangeCollector</span><span class=p>(</span><span class=n>CollectorType</span> <span class=n>collector_type</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>collector_type_</span> <span class=o>=</span> <span class=n>collector_type</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=n>gc_plan_</span><span class=p>.</span><span class=n>clear</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=k>switch</span> <span class=p>(</span><span class=n>collector_type</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>case</span> <span class=nl>kCollectorTypeCC</span><span class=p>:</span>
+</span></span><span class=line><span class=cl>      <span class=k>if</span> <span class=p>(</span><span class=n>use_generational_gc_</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>gc_plan_</span><span class=p>.</span><span class=n>push_back</span><span class=p>(</span><span class=n>collector</span><span class=o>::</span><span class=n>kGcTypeSticky</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>      <span class=p>}</span>
+</span></span><span class=line><span class=cl>      <span class=n>gc_plan_</span><span class=p>.</span><span class=n>push_back</span><span class=p>(</span><span class=n>collector</span><span class=o>::</span><span class=n>kGcTypeFull</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>      <span class=k>break</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>      
+</span></span><span class=line><span class=cl>    <span class=k>case</span> <span class=nl>kCollectorTypeCMS</span><span class=p>:</span>
+</span></span><span class=line><span class=cl>      <span class=n>gc_plan_</span><span class=p>.</span><span class=n>push_back</span><span class=p>(</span><span class=n>collector</span><span class=o>::</span><span class=n>kGcTypeSticky</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>      <span class=n>gc_plan_</span><span class=p>.</span><span class=n>push_back</span><span class=p>(</span><span class=n>collector</span><span class=o>::</span><span class=n>kGcTypePartial</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>      <span class=n>gc_plan_</span><span class=p>.</span><span class=n>push_back</span><span class=p>(</span><span class=n>collector</span><span class=o>::</span><span class=n>kGcTypeFull</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>      <span class=k>break</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>      
+</span></span><span class=line><span class=cl>    <span class=k>case</span> <span class=nl>kCollectorTypeSS</span><span class=p>:</span>
+</span></span><span class=line><span class=cl>      <span class=n>gc_plan_</span><span class=p>.</span><span class=n>push_back</span><span class=p>(</span><span class=n>collector</span><span class=o>::</span><span class=n>kGcTypeFull</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>      <span class=k>break</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>默认收集器选择</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// Android 8.0+ 默认使用 CC
+</span></span></span><span class=line><span class=cl><span class=k>if</span> <span class=p>(</span><span class=n>gUseReadBarrier</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>foreground_collector_type_</span> <span class=o>=</span> <span class=n>kCollectorTypeCC</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 低内存设备或旧版本使用 CMS
+</span></span></span><span class=line><span class=cl>  <span class=n>foreground_collector_type_</span> <span class=o>=</span> <span class=n>kCollectorTypeCMS</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=5-gc-root-追踪机制>5. GC Root 追踪机制</h1><h2 id=51-gc-root-类型>5.1 GC Root 类型</h2><p>GC Root 是垃圾回收的起点，所有从 Root 可达的对象都被认为是存活的：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// gc_root.h
+</span></span></span><span class=line><span class=cl><span class=k>enum</span> <span class=nc>RootType</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>kRootUnknown</span> <span class=o>=</span> <span class=mi>0</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>  <span class=n>kRootJNIGlobal</span><span class=p>,</span>      <span class=c1>// JNI 全局引用
+</span></span></span><span class=line><span class=cl>  <span class=n>kRootJNILocal</span><span class=p>,</span>       <span class=c1>// JNI 局部引用
+</span></span></span><span class=line><span class=cl>  <span class=n>kRootJavaFrame</span><span class=p>,</span>      <span class=c1>// Java 栈帧中的引用
+</span></span></span><span class=line><span class=cl>  <span class=n>kRootNativeStack</span><span class=p>,</span>    <span class=c1>// Native 栈上的引用
+</span></span></span><span class=line><span class=cl>  <span class=n>kRootStickyClass</span><span class=p>,</span>    <span class=c1>// 粘性类（已加载的类）
+</span></span></span><span class=line><span class=cl>  <span class=n>kRootThreadBlock</span><span class=p>,</span>    <span class=c1>// 线程块
+</span></span></span><span class=line><span class=cl>  <span class=n>kRootMonitorUsed</span><span class=p>,</span>    <span class=c1>// Monitor 锁定的对象
+</span></span></span><span class=line><span class=cl>  <span class=n>kRootThreadObject</span><span class=p>,</span>   <span class=c1>// Thread 对象本身
+</span></span></span><span class=line><span class=cl>  <span class=n>kRootInternedString</span><span class=p>,</span> <span class=c1>// 字符串常量池
+</span></span></span><span class=line><span class=cl>  <span class=n>kRootFinalizing</span><span class=p>,</span>     <span class=c1>// 正在 finalize 的对象
+</span></span></span><span class=line><span class=cl>  <span class=n>kRootDebugger</span><span class=p>,</span>       <span class=c1>// 调试器持有的引用
+</span></span></span><span class=line><span class=cl>  <span class=n>kRootVMInternal</span><span class=p>,</span>     <span class=c1>// VM 内部引用
+</span></span></span><span class=line><span class=cl>  <span class=n>kRootJNIMonitor</span><span class=p>,</span>     <span class=c1>// JNI Monitor
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=52-root-的存储位置>5.2 Root 的存储位置</h2><h3 id=521-线程级-root>5.2.1 线程级 Root</h3><p>每个线程维护自己的 Root 集合：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// thread.cc: Thread::VisitRoots
+</span></span></span><span class=line><span class=cl><span class=k>template</span> <span class=o>&lt;</span><span class=kt>bool</span> <span class=n>kPrecise</span><span class=o>&gt;</span>
+</span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>Thread</span><span class=o>::</span><span class=n>VisitRoots</span><span class=p>(</span><span class=n>RootVisitor</span><span class=o>*</span> <span class=n>visitor</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=k>const</span> <span class=kt>uint32_t</span> <span class=n>thread_id</span> <span class=o>=</span> <span class=n>GetThreadId</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 线程对象本身
+</span></span></span><span class=line><span class=cl>  <span class=n>visitor</span><span class=o>-&gt;</span><span class=n>VisitRootIfNonNull</span><span class=p>(</span><span class=o>&amp;</span><span class=n>tlsPtr_</span><span class=p>.</span><span class=n>opeer</span><span class=p>,</span> <span class=n>RootInfo</span><span class=p>(</span><span class=n>kRootThreadObject</span><span class=p>,</span> <span class=n>thread_id</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>  <span class=n>visitor</span><span class=o>-&gt;</span><span class=n>VisitRootIfNonNull</span><span class=p>(</span><span class=o>&amp;</span><span class=n>tlsPtr_</span><span class=p>.</span><span class=n>current_peer</span><span class=p>,</span> <span class=n>RootInfo</span><span class=p>(</span><span class=n>kRootThreadObject</span><span class=p>,</span> <span class=n>thread_id</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 异常对象
+</span></span></span><span class=line><span class=cl>  <span class=n>visitor</span><span class=o>-&gt;</span><span class=n>VisitRoot</span><span class=p>(</span><span class=o>&amp;</span><span class=n>tlsPtr_</span><span class=p>.</span><span class=n>exception</span><span class=p>,</span> <span class=n>RootInfo</span><span class=p>(</span><span class=n>kRootNativeStack</span><span class=p>,</span> <span class=n>thread_id</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. Monitor 对象
+</span></span></span><span class=line><span class=cl>  <span class=n>visitor</span><span class=o>-&gt;</span><span class=n>VisitRootIfNonNull</span><span class=p>(</span><span class=o>&amp;</span><span class=n>tlsPtr_</span><span class=p>.</span><span class=n>monitor_enter_object</span><span class=p>,</span> <span class=p>...);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. JNI 局部引用
+</span></span></span><span class=line><span class=cl>  <span class=n>tlsPtr_</span><span class=p>.</span><span class=n>jni_env</span><span class=o>-&gt;</span><span class=n>VisitJniLocalRoots</span><span class=p>(</span><span class=n>visitor</span><span class=p>,</span> <span class=n>RootInfo</span><span class=p>(</span><span class=n>kRootJNILocal</span><span class=p>,</span> <span class=n>thread_id</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 5. JNI Monitor
+</span></span></span><span class=line><span class=cl>  <span class=n>tlsPtr_</span><span class=p>.</span><span class=n>jni_env</span><span class=o>-&gt;</span><span class=n>VisitMonitorRoots</span><span class=p>(</span><span class=n>visitor</span><span class=p>,</span> <span class=n>RootInfo</span><span class=p>(</span><span class=n>kRootJNIMonitor</span><span class=p>,</span> <span class=n>thread_id</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 6. Handle Scope (编译器生成的句柄)
+</span></span></span><span class=line><span class=cl>  <span class=n>HandleScopeVisitRoots</span><span class=p>(</span><span class=n>visitor</span><span class=p>,</span> <span class=n>thread_id</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 7. 栈帧引用 (通过 ReferenceMapVisitor 遍历)
+</span></span></span><span class=line><span class=cl>  <span class=n>ReferenceMapVisitor</span><span class=o>&lt;</span><span class=p>...</span><span class=o>&gt;</span> <span class=n>mapper</span><span class=p>(</span><span class=k>this</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>context</span><span class=p>,</span> <span class=n>visitor_to_callback</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=n>mapper</span><span class=p>.</span><span class=n>WalkStack</span><span class=o>&lt;</span><span class=p>...</span><span class=o>&gt;</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h3 id=522-runtime-级-root>5.2.2 Runtime 级 Root</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// runtime.cc
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>Runtime</span><span class=o>::</span><span class=n>VisitRoots</span><span class=p>(</span><span class=n>RootVisitor</span><span class=o>*</span> <span class=n>visitor</span><span class=p>,</span> <span class=n>VisitRootFlags</span> <span class=n>flags</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 非并发 Root
+</span></span></span><span class=line><span class=cl>  <span class=n>VisitNonConcurrentRoots</span><span class=p>(</span><span class=n>visitor</span><span class=p>,</span> <span class=n>flags</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 并发 Root
+</span></span></span><span class=line><span class=cl>  <span class=n>VisitConcurrentRoots</span><span class=p>(</span><span class=n>visitor</span><span class=p>,</span> <span class=n>flags</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>Runtime</span><span class=o>::</span><span class=n>VisitNonThreadRoots</span><span class=p>(</span><span class=n>RootVisitor</span><span class=o>*</span> <span class=n>visitor</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// JNI 全局引用
+</span></span></span><span class=line><span class=cl>  <span class=n>java_vm_</span><span class=o>-&gt;</span><span class=n>VisitRoots</span><span class=p>(</span><span class=n>visitor</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 预分配的异常对象
+</span></span></span><span class=line><span class=cl>  <span class=n>pre_allocated_OutOfMemoryError_</span><span class=p>...</span><span class=o>-&gt;</span><span class=n>VisitRootIfNonNull</span><span class=p>(</span><span class=n>visitor</span><span class=p>,</span> <span class=p>...);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// Image 空间的根
+</span></span></span><span class=line><span class=cl>  <span class=n>VisitImageRoots</span><span class=p>(</span><span class=n>visitor</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 事务根
+</span></span></span><span class=line><span class=cl>  <span class=n>class_linker_</span><span class=o>-&gt;</span><span class=n>VisitTransactionRoots</span><span class=p>(</span><span class=n>visitor</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>Runtime</span><span class=o>::</span><span class=n>VisitConcurrentRoots</span><span class=p>(</span><span class=n>RootVisitor</span><span class=o>*</span> <span class=n>visitor</span><span class=p>,</span> <span class=n>VisitRootFlags</span> <span class=n>flags</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 字符串常量池
+</span></span></span><span class=line><span class=cl>  <span class=n>intern_table_</span><span class=o>-&gt;</span><span class=n>VisitRoots</span><span class=p>(</span><span class=n>visitor</span><span class=p>,</span> <span class=n>flags</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 类加载器
+</span></span></span><span class=line><span class=cl>  <span class=n>class_linker_</span><span class=o>-&gt;</span><span class=n>VisitRoots</span><span class=p>(</span><span class=n>visitor</span><span class=p>,</span> <span class=n>flags</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// JIT 代码缓存
+</span></span></span><span class=line><span class=cl>  <span class=n>jit_</span><span class=o>-&gt;</span><span class=n>VisitRoots</span><span class=p>(</span><span class=n>visitor</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=53-root-访问架构>5.3 Root 访问架构</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    Runtime::VisitRoots                          │
+</span></span><span class=line><span class=cl>└────────────────────────────┬────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                             │
+</span></span><span class=line><span class=cl>          ┌──────────────────┼──────────────────┐
+</span></span><span class=line><span class=cl>          ▼                  ▼                  ▼
+</span></span><span class=line><span class=cl>┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+</span></span><span class=line><span class=cl>│VisitThreadRoots │ │VisitNonThread   │ │VisitConcurrent  │
+</span></span><span class=line><span class=cl>│                 │ │Roots            │ │Roots            │
+</span></span><span class=line><span class=cl>└────────┬────────┘ └────────┬────────┘ └────────┬────────┘
+</span></span><span class=line><span class=cl>         │                   │                   │
+</span></span><span class=line><span class=cl>         ▼                   ▼                   ▼
+</span></span><span class=line><span class=cl>┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+</span></span><span class=line><span class=cl>│Thread::VisitRoots│ │JavaVM::VisitRoots│ │InternTable::    │
+</span></span><span class=line><span class=cl>│ - JNI Local     │ │ - JNI Global    │ │ VisitRoots      │
+</span></span><span class=line><span class=cl>│ - Handle Scope  │ │ - Pre-allocated │ │ - Interned      │
+</span></span><span class=line><span class=cl>│ - Stack Frames  │ │   Exceptions    │ │   Strings       │
+</span></span><span class=line><span class=cl>└─────────────────┘ └─────────────────┘ └─────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=54-checkpoint-机制>5.4 Checkpoint 机制</h2><p>当 GC 需要访问线程 Root 时，使用 Checkpoint 机制安全地与各线程协作：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// mark_sweep.cc
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>CheckpointMarkThreadRoots</span> <span class=o>:</span> <span class=k>public</span> <span class=n>Closure</span><span class=p>,</span> <span class=k>public</span> <span class=n>RootVisitor</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=kt>void</span> <span class=nf>Run</span><span class=p>(</span><span class=n>Thread</span><span class=o>*</span> <span class=kr>thread</span><span class=p>)</span> <span class=k>override</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 在目标线程上执行
+</span></span></span><span class=line><span class=cl>    <span class=kr>thread</span><span class=o>-&gt;</span><span class=n>VisitRoots</span><span class=p>(</span><span class=k>this</span><span class=p>,</span> <span class=n>kVisitRootFlagAllRoots</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 通过屏障
+</span></span></span><span class=line><span class=cl>    <span class=n>mark_sweep_</span><span class=o>-&gt;</span><span class=n>GetBarrier</span><span class=p>().</span><span class=n>Pass</span><span class=p>(</span><span class=n>self</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=kt>void</span> <span class=nf>VisitRoots</span><span class=p>(</span><span class=n>mirror</span><span class=o>::</span><span class=n>Object</span><span class=o>***</span> <span class=n>roots</span><span class=p>,</span> <span class=n>size_t</span> <span class=n>count</span><span class=p>,</span> <span class=k>const</span> <span class=n>RootInfo</span><span class=o>&amp;</span> <span class=n>info</span><span class=p>)</span> <span class=k>override</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>for</span> <span class=p>(</span><span class=n>size_t</span> <span class=n>i</span> <span class=o>=</span> <span class=mi>0</span><span class=p>;</span> <span class=n>i</span> <span class=o>&lt;</span> <span class=n>count</span><span class=p>;</span> <span class=o>++</span><span class=n>i</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=n>mark_sweep_</span><span class=o>-&gt;</span><span class=n>MarkObjectNonNullParallel</span><span class=p>(</span><span class=o>*</span><span class=n>roots</span><span class=p>[</span><span class=n>i</span><span class=p>]);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>MarkSweep</span><span class=o>::</span><span class=n>MarkRootsCheckpoint</span><span class=p>(</span><span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span> <span class=kt>bool</span> <span class=n>revoke_ros_alloc</span><span class=p>...)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>CheckpointMarkThreadRoots</span> <span class=nf>check_point</span><span class=p>(</span><span class=k>this</span><span class=p>,</span> <span class=n>revoke_ros_alloc</span><span class=p>...);</span>
+</span></span><span class=line><span class=cl>  <span class=n>ThreadList</span><span class=o>*</span> <span class=n>thread_list</span> <span class=o>=</span> <span class=n>Runtime</span><span class=o>::</span><span class=n>Current</span><span class=p>()</span><span class=o>-&gt;</span><span class=n>GetThreadList</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 在所有线程上运行 checkpoint
+</span></span></span><span class=line><span class=cl>  <span class=n>size_t</span> <span class=n>barrier_count</span> <span class=o>=</span> <span class=n>thread_list</span><span class=o>-&gt;</span><span class=n>RunCheckpoint</span><span class=p>(</span><span class=o>&amp;</span><span class=n>check_point</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 等待所有线程完成
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>barrier_count</span> <span class=o>&gt;</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>gc_barrier_</span><span class=o>-&gt;</span><span class=n>Increment</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>barrier_count</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=6-gc-执行流程详解>6. GC 执行流程详解</h1><h2 id=61-整体流程>6.1 整体流程</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// heap.cc: CollectGarbageInternal
+</span></span></span><span class=line><span class=cl><span class=n>collector</span><span class=o>::</span><span class=n>GcType</span> <span class=n>Heap</span><span class=o>::</span><span class=n>CollectGarbageInternal</span><span class=p>(</span><span class=n>collector</span><span class=o>::</span><span class=n>GcType</span> <span class=n>gc_type</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                                               <span class=n>GcCause</span> <span class=n>gc_cause</span><span class=p>,</span> <span class=p>...)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 等待其他 GC 完成
+</span></span></span><span class=line><span class=cl>  <span class=n>WaitForGcToCompleteLocked</span><span class=p>(</span><span class=n>gc_cause</span><span class=p>,</span> <span class=n>self</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 选择收集器
+</span></span></span><span class=line><span class=cl>  <span class=n>collector</span><span class=o>::</span><span class=n>GarbageCollector</span><span class=o>*</span> <span class=n>collector</span> <span class=o>=</span> <span class=n>FindCollectorByGcType</span><span class=p>(</span><span class=n>gc_type</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 运行 GC
+</span></span></span><span class=line><span class=cl>  <span class=n>collector</span><span class=o>-&gt;</span><span class=n>Run</span><span class=p>(</span><span class=n>gc_cause</span><span class=p>,</span> <span class=n>clear_soft_references</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. 处理引用
+</span></span></span><span class=line><span class=cl>  <span class=n>SelfDeletingTask</span><span class=o>*</span> <span class=n>clear</span> <span class=o>=</span> <span class=n>reference_processor_</span><span class=o>-&gt;</span><span class=n>CollectClearedReferences</span><span class=p>(</span><span class=n>self</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 5. 调整堆大小
+</span></span></span><span class=line><span class=cl>  <span class=n>GrowForUtilization</span><span class=p>(</span><span class=n>collector</span><span class=p>,</span> <span class=n>bytes_allocated_before_gc</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 6. 完成 GC
+</span></span></span><span class=line><span class=cl>  <span class=n>FinishGC</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>gc_type</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=62-marksweep-详细流程>6.2 MarkSweep 详细流程</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// mark_sweep.cc: RunPhases
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>MarkSweep</span><span class=o>::</span><span class=n>RunPhases</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span> <span class=o>=</span> <span class=n>Thread</span><span class=o>::</span><span class=n>Current</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// ===== 阶段 1: 初始化 =====
+</span></span></span><span class=line><span class=cl>  <span class=n>InitializePhase</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>IsConcurrent</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ===== 阶段 2: 并发标记 (CMS) =====
+</span></span></span><span class=line><span class=cl>    <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=n>ReaderMutexLock</span> <span class=nf>mu</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=o>*</span><span class=n>Locks</span><span class=o>::</span><span class=n>mutator_lock_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>      <span class=n>MarkingPhase</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// ===== 阶段 3: 暂停阶段 =====
+</span></span></span><span class=line><span class=cl>    <span class=n>ScopedPause</span> <span class=nf>pause</span><span class=p>(</span><span class=k>this</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>PausePhase</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=n>RevokeAllThreadLocalBuffers</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 非并发 MS：全部在暂停中执行
+</span></span></span><span class=line><span class=cl>    <span class=n>ScopedPause</span> <span class=nf>pause</span><span class=p>(</span><span class=k>this</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>MarkingPhase</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=n>PausePhase</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=n>RevokeAllThreadLocalBuffers</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// ===== 阶段 4: 并发回收 =====
+</span></span></span><span class=line><span class=cl>  <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>ReaderMutexLock</span> <span class=nf>mu</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=o>*</span><span class=n>Locks</span><span class=o>::</span><span class=n>mutator_lock_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>ReclaimPhase</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// ===== 阶段 5: 完成 =====
+</span></span></span><span class=line><span class=cl>  <span class=n>FinishPhase</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=63-标记阶段详解>6.3 标记阶段详解</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>void</span> <span class=n>MarkSweep</span><span class=o>::</span><span class=n>MarkingPhase</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span> <span class=o>=</span> <span class=n>Thread</span><span class=o>::</span><span class=n>Current</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 绑定免疫空间的 bitmap
+</span></span></span><span class=line><span class=cl>  <span class=n>BindBitmaps</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 处理 dirty cards
+</span></span></span><span class=line><span class=cl>  <span class=n>heap_</span><span class=o>-&gt;</span><span class=n>ProcessCards</span><span class=p>(</span><span class=n>GetTimings</span><span class=p>(),</span> <span class=nb>false</span><span class=p>,</span> <span class=nb>true</span><span class=p>,</span> <span class=n>GetGcType</span><span class=p>()</span> <span class=o>!=</span> <span class=n>kGcTypeSticky</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 标记根集
+</span></span></span><span class=line><span class=cl>  <span class=n>MarkRoots</span><span class=p>(</span><span class=n>self</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. 递归标记可达对象
+</span></span></span><span class=line><span class=cl>  <span class=n>MarkReachableObjects</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 5. 预清理 dirty cards（减少暂停时间）
+</span></span></span><span class=line><span class=cl>  <span class=n>PreCleanCards</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>MarkSweep</span><span class=o>::</span><span class=n>MarkRoots</span><span class=p>(</span><span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>Locks</span><span class=o>::</span><span class=n>mutator_lock_</span><span class=o>-&gt;</span><span class=n>IsExclusiveHeld</span><span class=p>(</span><span class=n>self</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 暂停中：直接访问所有根
+</span></span></span><span class=line><span class=cl>    <span class=n>Runtime</span><span class=o>::</span><span class=n>Current</span><span class=p>()</span><span class=o>-&gt;</span><span class=n>VisitRoots</span><span class=p>(</span><span class=k>this</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 并发：使用 checkpoint 机制
+</span></span></span><span class=line><span class=cl>    <span class=n>MarkRootsCheckpoint</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>kRevokeRosAllocThreadLocalBuffersAtCheckpoint</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>MarkNonThreadRoots</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=n>MarkConcurrentRoots</span><span class=p>(</span><span class=n>kVisitRootFlagAllRoots</span> <span class=o>|</span> <span class=n>kVisitRootFlagStartLoggingNewRoots</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=64-暂停阶段详解>6.4 暂停阶段详解</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>void</span> <span class=n>MarkSweep</span><span class=o>::</span><span class=n>PausePhase</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span> <span class=o>=</span> <span class=n>Thread</span><span class=o>::</span><span class=n>Current</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>IsConcurrent</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 1. 重新标记并发期间修改的根
+</span></span></span><span class=line><span class=cl>    <span class=n>ReMarkRoots</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 2. 扫描 dirty objects
+</span></span></span><span class=line><span class=cl>    <span class=n>RecursiveMarkDirtyObjects</span><span class=p>(</span><span class=nb>true</span><span class=p>,</span> <span class=n>accounting</span><span class=o>::</span><span class=n>CardTable</span><span class=o>::</span><span class=n>kCardDirty</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 交换 live/allocation stack
+</span></span></span><span class=line><span class=cl>  <span class=n>heap_</span><span class=o>-&gt;</span><span class=n>SwapStacks</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. 撤销线程本地分配栈
+</span></span></span><span class=line><span class=cl>  <span class=n>RevokeAllThreadLocalAllocationStacks</span><span class=p>(</span><span class=n>self</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 5. 设置引用处理器
+</span></span></span><span class=line><span class=cl>  <span class=n>ReferenceProcessor</span><span class=o>*</span> <span class=n>rp</span> <span class=o>=</span> <span class=n>GetHeap</span><span class=p>()</span><span class=o>-&gt;</span><span class=n>GetReferenceProcessor</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=n>rp</span><span class=o>-&gt;</span><span class=n>Setup</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=k>this</span><span class=p>,</span> <span class=nb>true</span><span class=p>,</span> <span class=n>GetCurrentIteration</span><span class=p>()</span><span class=o>-&gt;</span><span class=n>GetClearSoftReferences</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>  <span class=n>rp</span><span class=o>-&gt;</span><span class=n>EnableSlowPath</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=65-回收阶段详解>6.5 回收阶段详解</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>void</span> <span class=n>MarkSweep</span><span class=o>::</span><span class=n>ReclaimPhase</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span> <span class=o>=</span> <span class=n>Thread</span><span class=o>::</span><span class=n>Current</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 处理引用 (Soft/Weak/Phantom/Finalizer)
+</span></span></span><span class=line><span class=cl>  <span class=n>ProcessReferences</span><span class=p>(</span><span class=n>self</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 清理系统弱引用
+</span></span></span><span class=line><span class=cl>  <span class=n>SweepSystemWeaks</span><span class=p>(</span><span class=n>self</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 清理死亡对象
+</span></span></span><span class=line><span class=cl>  <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>WriterMutexLock</span> <span class=nf>mu</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=o>*</span><span class=n>Locks</span><span class=o>::</span><span class=n>heap_bitmap_lock_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>Sweep</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. 交换 bitmap（为下次 GC 准备）
+</span></span></span><span class=line><span class=cl>  <span class=n>SwapBitmaps</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=66-流程图>6.6 流程图</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span><span class=lnt>55
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    CMS GC 完整执行流程                                   │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                          │
+</span></span><span class=line><span class=cl>│  ┌──────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ InitializePhase()                                                 │   │
+</span></span><span class=line><span class=cl>│  │ - 初始化统计信息                                                  │   │
+</span></span><span class=line><span class=cl>│  │ - 设置 GC 类型                                                    │   │
+</span></span><span class=line><span class=cl>│  └──────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                           │
+</span></span><span class=line><span class=cl>│                              ▼                                           │
+</span></span><span class=line><span class=cl>│  ┌──────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ MarkingPhase() [并发]                                             │   │
+</span></span><span class=line><span class=cl>│  │ ┌────────────────────────────────────────────────────────────┐   │   │
+</span></span><span class=line><span class=cl>│  │ │ BindBitmaps()        → 绑定免疫空间 bitmap                  │   │   │
+</span></span><span class=line><span class=cl>│  │ │ ProcessCards()       → 处理 dirty cards                    │   │   │
+</span></span><span class=line><span class=cl>│  │ │ MarkRoots()          → 标记 GC Roots                        │   │   │
+</span></span><span class=line><span class=cl>│  │ │   ├─ MarkRootsCheckpoint() → Checkpoint 标记线程根          │   │   │
+</span></span><span class=line><span class=cl>│  │ │   ├─ MarkNonThreadRoots()  → 标记非线程根                   │   │   │
+</span></span><span class=line><span class=cl>│  │ │   └─ MarkConcurrentRoots() → 标记并发根                     │   │   │
+</span></span><span class=line><span class=cl>│  │ │ MarkReachableObjects() → 递归标记可达对象                   │   │   │
+</span></span><span class=line><span class=cl>│  │ │ PreCleanCards()      → 预清理 dirty cards                   │   │   │
+</span></span><span class=line><span class=cl>│  │ └────────────────────────────────────────────────────────────┘   │   │
+</span></span><span class=line><span class=cl>│  └──────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                           │
+</span></span><span class=line><span class=cl>│                              ▼                                           │
+</span></span><span class=line><span class=cl>│  ┌──────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ PausePhase() [暂停]                                               │   │
+</span></span><span class=line><span class=cl>│  │ ┌────────────────────────────────────────────────────────────┐   │   │
+</span></span><span class=line><span class=cl>│  │ │ ReMarkRoots()        → 重新标记并发期间修改的根              │   │   │
+</span></span><span class=line><span class=cl>│  │ │ RecursiveMarkDirtyObjects() → 标记 dirty objects           │   │   │
+</span></span><span class=line><span class=cl>│  │ │ SwapStacks()         → 交换 live/allocation stack          │   │   │
+</span></span><span class=line><span class=cl>│  │ │ ReferenceProcessor::Setup() → 设置引用处理                 │   │   │
+</span></span><span class=line><span class=cl>│  │ └────────────────────────────────────────────────────────────┘   │   │
+</span></span><span class=line><span class=cl>│  └──────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                           │
+</span></span><span class=line><span class=cl>│                              ▼                                           │
+</span></span><span class=line><span class=cl>│  ┌──────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ ReclaimPhase() [并发]                                             │   │
+</span></span><span class=line><span class=cl>│  │ ┌────────────────────────────────────────────────────────────┐   │   │
+</span></span><span class=line><span class=cl>│  │ │ ProcessReferences()  → 处理 Soft/Weak/Phantom/Finalizer    │   │   │
+</span></span><span class=line><span class=cl>│  │ │ SweepSystemWeaks()   → 清理系统弱引用                       │   │   │
+</span></span><span class=line><span class=cl>│  │ │ Sweep()              → 回收死亡对象                         │   │   │
+</span></span><span class=line><span class=cl>│  │ │ SwapBitmaps()        → 交换 mark/live bitmap               │   │   │
+</span></span><span class=line><span class=cl>│  │ └────────────────────────────────────────────────────────────┘   │   │
+</span></span><span class=line><span class=cl>│  └──────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                           │
+</span></span><span class=line><span class=cl>│                              ▼                                           │
+</span></span><span class=line><span class=cl>│  ┌──────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ FinishPhase()                                                     │   │
+</span></span><span class=line><span class=cl>│  │ - 记录统计信息                                                    │   │
+</span></span><span class=line><span class=cl>│  │ - 唤醒等待的线程                                                  │   │
+</span></span><span class=line><span class=cl>│  └──────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                          │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=7-引用处理机制>7. 引用处理机制</h1><h2 id=71-java-引用类型>7.1 Java 引用类型</h2><p>ART 支持四种 Java 引用类型：</p><table><thead><tr><th>类型</th><th>用途</th><th>回收时机</th></tr></thead><tbody><tr><td><strong>StrongReference</strong></td><td>普通引用</td><td>永不回收（直到不可达）</td></tr><tr><td><strong>SoftReference</strong></td><td>软引用</td><td>内存不足时回收</td></tr><tr><td><strong>WeakReference</strong></td><td>弱引用</td><td>下次 GC 时回收</td></tr><tr><td><strong>PhantomReference</strong></td><td>虚引用</td><td>随时可能回收，get() 永远返回 null</td></tr></tbody></table><p>此外还有 <strong>FinalizerReference</strong>，用于实现 <code>Object.finalize()</code> 方法。</p><h2 id=72-引用处理流程>7.2 引用处理流程</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// reference_processor.cc
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>ReferenceProcessor</span><span class=o>::</span><span class=n>ProcessReferences</span><span class=p>(</span><span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span> <span class=n>TimingLogger</span><span class=o>*</span> <span class=n>timings</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 处理 SoftReference
+</span></span></span><span class=line><span class=cl>  <span class=c1>//    根据内存压力决定是否清除
+</span></span></span><span class=line><span class=cl>  <span class=n>ProcessSoftReferences</span><span class=p>(</span><span class=n>clear_soft_references</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 处理 WeakReference
+</span></span></span><span class=line><span class=cl>  <span class=c1>//    清除未被标记的引用
+</span></span></span><span class=line><span class=cl>  <span class=n>ProcessWeakReferences</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 处理 FinalizerReference
+</span></span></span><span class=line><span class=cl>  <span class=c1>//    将需要 finalize 的对象加入队列
+</span></span></span><span class=line><span class=cl>  <span class=n>ProcessFinalizerReferences</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. 处理 PhantomReference
+</span></span></span><span class=line><span class=cl>  <span class=c1>//    清除所有虚引用
+</span></span></span><span class=line><span class=cl>  <span class=n>ProcessPhantomReferences</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 5. 入队已清除的引用
+</span></span></span><span class=line><span class=cl>  <span class=n>EnqueueClearedReferences</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=73-引用队列机制>7.3 引用队列机制</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    引用队列处理流程                               │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                  │
+</span></span><span class=line><span class=cl>│  GC 标记阶段                                                      │
+</span></span><span class=line><span class=cl>│       │                                                          │
+</span></span><span class=line><span class=cl>│       ▼                                                          │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────┐    │
+</span></span><span class=line><span class=cl>│  │ DelayReferenceReferent()                                │    │
+</span></span><span class=line><span class=cl>│  │ - 发现 Reference 对象                                    │    │
+</span></span><span class=line><span class=cl>│  │ - 检查 referent 是否被标记                               │    │
+</span></span><span class=line><span class=cl>│  │ - 未标记 → 加入 pending 队列                             │    │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────┘    │
+</span></span><span class=line><span class=cl>│       │                                                          │
+</span></span><span class=line><span class=cl>│       ▼                                                          │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────┐    │
+</span></span><span class=line><span class=cl>│  │ ReferenceQueue                                          │    │
+</span></span><span class=line><span class=cl>│  │ - queue: 用户创建的 ReferenceQueue                       │    │
+</span></span><span class=line><span class=cl>│  │ - pending: GC 添加的待处理引用                           │    │
+</span></span><span class=line><span class=cl>│  │ - enqueue: 等待用户处理的引用                            │    │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────┘    │
+</span></span><span class=line><span class=cl>│       │                                                          │
+</span></span><span class=line><span class=cl>│       ▼                                                          │
+</span></span><span class=line><span class=cl>│  用户代码: Reference ref = queue.poll()                          │
+</span></span><span class=line><span class=cl>│                                                                  │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=74-finalizer-处理>7.4 Finalizer 处理</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// FinalizerReference 的特殊处理
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>ReferenceProcessor</span><span class=o>::</span><span class=n>ProcessFinalizerReferences</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 找到所有需要 finalize 的对象
+</span></span></span><span class=line><span class=cl>  <span class=c1>// 2. 将它们加入 FinalizerQueue
+</span></span></span><span class=line><span class=cl>  <span class=c1>// 3. FinalizerDaemon 线程会异步调用 finalize()
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>注意</strong>：<code>finalize()</code> 方法已废弃，应避免使用，原因：</p><ul><li>执行时机不确定</li><li>可能导致对象"复活"</li><li>性能开销大</li></ul><hr><h1 id=8-性能优化策略>8. 性能优化策略</h1><h2 id=81-并发收集>8.1 并发收集</h2><p>ART GC 的核心优化策略是让 GC 尽可能与应用线程并发执行：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    并发 GC 时间线                                 │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                  │
+</span></span><span class=line><span class=cl>│  应用线程: ══════════════════════════════════════════════════   │
+</span></span><span class=line><span class=cl>│                  ↓           ↓              ↓                   │
+</span></span><span class=line><span class=cl>│  GC 线程:   ──┬──┬─────────────┬────┬────────────┬──┬──        │
+</span></span><span class=line><span class=cl>│              │  │  并发标记    │    │  并发清除  │  │           │
+</span></span><span class=line><span class=cl>│              └──┘  (暂停)     └────┘  (暂停)    └──┘           │
+</span></span><span class=line><span class=cl>│              初始标记         重新标记                           │
+</span></span><span class=line><span class=cl>│                                                                  │
+</span></span><span class=line><span class=cl>│  暂停时间: 仅在标记开始和结束时短暂暂停                           │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=82-分代收集>8.2 分代收集</h2><p>利用"弱分代假说"优化：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// heap.cc: GrowForUtilization
+</span></span></span><span class=line><span class=cl><span class=k>if</span> <span class=p>(</span><span class=n>gc_type</span> <span class=o>!=</span> <span class=n>collector</span><span class=o>::</span><span class=n>kGcTypeSticky</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 非 Sticky GC 后，下次优先做 Sticky GC
+</span></span></span><span class=line><span class=cl>  <span class=n>next_gc_type_</span> <span class=o>=</span> <span class=n>collector</span><span class=o>::</span><span class=n>kGcTypeSticky</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// Sticky GC 后，根据吞吐量决定是否升级
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>sticky_gc_throughput</span> <span class=o>&lt;</span> <span class=n>non_sticky_gc_throughput</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>next_gc_type_</span> <span class=o>=</span> <span class=n>non_sticky_gc_type</span><span class=p>;</span>  <span class=c1>// 升级到 Partial/Full
+</span></span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=83-card-table-和-mod-union-table>8.3 Card Table 和 Mod Union Table</h2><p><strong>Card Table</strong>：跟踪堆中对象的修改</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 每张卡 128 字节
+</span></span></span><span class=line><span class=cl><span class=c1>// 对象写入引用字段时，标记对应的卡为 dirty
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=nf>WriteBarrier</span><span class=p>(</span><span class=n>Object</span><span class=o>*</span> <span class=n>obj</span><span class=p>,</span> <span class=n>Object</span><span class=o>*</span> <span class=n>ref</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>card_table</span><span class=o>-&gt;</span><span class=n>MarkCard</span><span class=p>(</span><span class=n>obj</span><span class=p>);</span>  <span class=c1>// 标记为 dirty
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>Mod Union Table</strong>：跟踪免疫空间对其他空间的引用</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    Card Table 工作原理                           │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                  │
+</span></span><span class=line><span class=cl>│  堆内存:  [Card0][Card1][Card2][Card3][Card4][Card5][Card6]...  │
+</span></span><span class=line><span class=cl>│           ────── ────── ────── ────── ────── ────── ──────       │
+</span></span><span class=line><span class=cl>│           clean  dirty  clean  dirty  clean  clean  dirty       │
+</span></span><span class=line><span class=cl>│                                                                  │
+</span></span><span class=line><span class=cl>│  GC 时只需扫描 dirty cards，跳过 clean cards                     │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=84-线程本地分配-tlab>8.4 线程本地分配 (TLAB)</h2><p>减少多线程分配时的锁竞争：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 每个线程有自己的分配缓冲区
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>Thread</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 线程本地分配栈
+</span></span></span><span class=line><span class=cl>  <span class=n>StackReference</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Object</span><span class=o>&gt;*</span> <span class=n>thread_local_allocation_stack_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=n>size_t</span> <span class=n>thread_local_allocation_stack_size_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 分配时优先使用 TLAB
+</span></span></span><span class=line><span class=cl><span class=n>Object</span><span class=o>*</span> <span class=nf>AllocInTLAB</span><span class=p>(</span><span class=n>size_t</span> <span class=n>size</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>thread_local_alloc_stack_pos_</span> <span class=o>+</span> <span class=mi>1</span> <span class=o>&lt;</span> <span class=n>thread_local_alloc_stack_size_</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>thread_local_alloc_stack_</span><span class=p>[</span><span class=n>thread_local_alloc_stack_pos_</span><span class=o>++</span><span class=p>];</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// TLAB 满，回退到全局分配
+</span></span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=n>AllocGlobal</span><span class=p>(</span><span class=n>size</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=85-前后台切换优化>8.5 前后台切换优化</h2><p>应用进入后台时，切换到更激进的收集策略：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// heap.cc: UpdateProcessState
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>Heap</span><span class=o>::</span><span class=n>UpdateProcessState</span><span class=p>(</span><span class=kt>bool</span> <span class=n>foreground</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>foreground</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 前台：减少暂停时间
+</span></span></span><span class=line><span class=cl>    <span class=n>RequestCollectorTransition</span><span class=p>(</span><span class=n>foreground_collector_type_</span><span class=p>,</span> <span class=p>...);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 后台：更激进的内存回收
+</span></span></span><span class=line><span class=cl>    <span class=n>RequestCollectorTransition</span><span class=p>(</span><span class=n>background_collector_type_</span><span class=p>,</span> <span class=p>...);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>前后台收集器对比</strong>：</p><table><thead><tr><th>状态</th><th>收集器</th><th>特点</th></tr></thead><tbody><tr><td>前台</td><td>CC/CMS</td><td>低延迟，并发执行</td></tr><tr><td>后台</td><td>SS/CC Background</td><td>高吞吐量，积极压缩</td></tr></tbody></table><h2 id=86-预清理-preclean>8.6 预清理 (PreClean)</h2><p>在并发标记阶段提前处理 dirty cards，减少最终暂停时间：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>void</span> <span class=n>MarkSweep</span><span class=o>::</span><span class=n>PreCleanCards</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>kPreCleanCards</span> <span class=o>&amp;&amp;</span> <span class=n>IsConcurrent</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 处理 dirty cards
+</span></span></span><span class=line><span class=cl>    <span class=n>heap_</span><span class=o>-&gt;</span><span class=n>ProcessCards</span><span class=p>(</span><span class=n>GetTimings</span><span class=p>(),</span> <span class=nb>false</span><span class=p>,</span> <span class=nb>true</span><span class=p>,</span> <span class=nb>false</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 标记线程根（减少暂停时的工作量）
+</span></span></span><span class=line><span class=cl>    <span class=n>MarkRootsCheckpoint</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=nb>false</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 处理 aged cards
+</span></span></span><span class=line><span class=cl>    <span class=n>RecursiveMarkDirtyObjects</span><span class=p>(</span><span class=nb>false</span><span class=p>,</span> <span class=n>accounting</span><span class=o>::</span><span class=n>CardTable</span><span class=o>::</span><span class=n>kCardDirty</span> <span class=o>-</span> <span class=mi>1</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=9-总结>9. 总结</h1><h2 id=91-art-gc-核心特性>9.1 ART GC 核心特性</h2><table><thead><tr><th>特性</th><th>描述</th></tr></thead><tbody><tr><td><strong>并发收集</strong></td><td>GC 与应用线程并行执行，最小化暂停时间</td></tr><tr><td><strong>分代收集</strong></td><td>Sticky/Partial/Full 三级收集，优化年轻代对象</td></tr><tr><td><strong>多种收集器</strong></td><td>CC (默认)、CMS、SS、CMC，适应不同场景</td></tr><tr><td><strong>Read Barrier</strong></td><td>CC 使用读屏障实现并发对象移动</td></tr><tr><td><strong>Region-based</strong></td><td>CC 使用 Region Space，减少碎片</td></tr><tr><td><strong>动态调整</strong></td><td>根据吞吐量自动调整 GC 类型和堆大小</td></tr></tbody></table><h2 id=92-收集器选择建议>9.2 收集器选择建议</h2><table><thead><tr><th>场景</th><th>推荐收集器</th><th>原因</th></tr></thead><tbody><tr><td>Android 8+ 默认</td><td>CC</td><td>低延迟，自动压缩</td></tr><tr><td>低内存设备</td><td>CMS/SS</td><td>内存开销小</td></tr><tr><td>后台应用</td><td>SS/CC Background</td><td>积极释放内存</td></tr><tr><td>Zygote Fork</td><td>SS</td><td>压缩 Zygote 空间</td></tr></tbody></table><h2 id=93-关键源码文件>9.3 关键源码文件</h2><table><thead><tr><th>文件</th><th>功能</th></tr></thead><tbody><tr><td><code>runtime/gc/heap.h/cc</code></td><td>堆管理，GC 入口</td></tr><tr><td><code>runtime/gc/collector/mark_sweep.h/cc</code></td><td>MS/CMS 实现</td></tr><tr><td><code>runtime/gc/collector/concurrent_copying.h/cc</code></td><td>CC 实现</td></tr><tr><td><code>runtime/gc/collector/semi_space.h/cc</code></td><td>SS 实现</td></tr><tr><td><code>runtime/gc/space/*.h/cc</code></td><td>各种空间实现</td></tr><tr><td><code>runtime/gc_root.h</code></td><td>GC Root 定义</td></tr><tr><td><code>runtime/thread.cc</code></td><td>线程 Root 管理</td></tr><tr><td><code>runtime/runtime.cc</code></td><td>Runtime Root 管理</td></tr></tbody></table><h2 id=94-调试和调优>9.4 调试和调优</h2><p><strong>GC 日志</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>adb shell setprop debug.art.gc.verbose <span class=nb>true</span>
+</span></span><span class=line><span class=cl>adb logcat -s art
+</span></span></code></pre></td></tr></table></div></div><p><strong>强制 GC</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>adb shell am broadcast -a android.intent.action.DEBUG_GC
+</span></span></code></pre></td></tr></table></div></div><p><strong>关键参数</strong>：</p><ul><li><code>target_heap_utilization</code>：目标堆利用率（默认 0.5）</li><li><code>min_free</code> / <code>max_free</code>：堆增长的最小/最大值</li><li><code>heap_growth_multiplier</code>：前台堆增长倍数</li></ul><hr><h1 id=参考资料>参考资料</h1><ol><li>AOSP 源码：<code>art/runtime/gc/</code></li><li>Android 官方文档：
+<a href=https://developer.android.com/topic/performance/memory target=_blank rel=noopener>Manage your app&rsquo;s memory</a></li><li>ART GC 设计文档：<code>art/runtime/gc/README.md</code></li></ol></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Apr 23, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026042302/ title="ART 虚拟机 Space 知识详解">ART 虚拟机 Space 知识详解</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
