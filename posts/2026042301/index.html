@@ -1,0 +1,883 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>ART 虚拟机内存分配器深度解析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.160.1"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Apr 23, 2026
+- 18 minute read</p><h1 class=entry-title>ART 虚拟机内存分配器深度解析</h1></header><div class=entry-content><h1 id=摘要>摘要</h1><p>ART（Android Runtime）虚拟机为了应对不同场景的内存分配需求，设计了多种内存分配器。本文深入分析 DlMallocSpace、RosAllocSpace、BumpPointerSpace、RegionSpace 和 LargeObjectSpace 五种分配器的设计特点、应用场景及其选择策略，帮助读者理解 ART 内存管理的核心机制。</p><p><strong>核心问题</strong>：为什么需要多种分配器？它们各自适合什么场景？</p><hr><h1 id=第一章为什么需要多种分配器>第一章：为什么需要多种分配器</h1><h2 id=11-对象的生命周期差异>1.1 对象的生命周期差异</h2><p>Java 堆中的对象具有显著不同的生命周期特征：</p><table><thead><tr><th>对象类型</th><th>生命周期</th><th>典型示例</th></tr></thead><tbody><tr><td>短期对象</td><td>毫秒级</td><td>方法内的临时变量、循环计数器</td></tr><tr><td>中期对象</td><td>分钟级</td><td>Activity 生命周期内的对象</td></tr><tr><td>长期对象</td><td>进程级</td><td>Application、静态字段引用的对象</td></tr><tr><td>永久对象</td><td>不回收</td><td>Zygote 预加载的系统类</td></tr></tbody></table><p>不同的生命周期对分配器提出不同要求：短期对象需要极速分配，长期对象需要稳定布局。</p><h2 id=12-gc-策略对分配器的要求>1.2 GC 策略对分配器的要求</h2><p>ART 支持多种 GC 算法，每种算法对分配器有不同约束：</p><table><thead><tr><th>GC 类型</th><th>核心机制</th><th>对分配器的要求</th></tr></thead><tbody><tr><td>Mark-Sweep (MS)</td><td>标记-清除</td><td>支持精确释放单个对象</td></tr><tr><td>Concurrent MS (CMS)</td><td>并发标记-清除</td><td>同上，且需低停顿</td></tr><tr><td>Semi-Space (SS)</td><td>复制式 GC</td><td>连续空间，支持整块回收</td></tr><tr><td>Mark-Compact (MC)</td><td>标记-压缩</td><td>连续空间，支持对象移动</td></tr><tr><td>Concurrent Copying (CC)</td><td>并发复制</td><td>区域化管理，支持读屏障</td></tr></tbody></table><h2 id=13-性能优化的多维目标>1.3 性能优化的多维目标</h2><p>分配器设计需要在多个目标间权衡：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>          分配速度
+</span></span><span class=line><span class=cl>            /\
+</span></span><span class=line><span class=cl>           /  \
+</span></span><span class=line><span class=cl>          /    \
+</span></span><span class=line><span class=cl>         /      \
+</span></span><span class=line><span class=cl>        /________\
+</span></span><span class=line><span class=cl>    低碎片      线程扩展
+</span></span></code></pre></td></tr></table></div></div><ul><li><strong>分配速度</strong>：减少分配路径的指令数</li><li><strong>低碎片</strong>：减少内存浪费，提高利用率</li><li><strong>线程扩展</strong>：多核场景下避免锁竞争</li></ul><p><strong>没有万能分配器</strong>，只能针对特定场景优化。</p><h2 id=14-art-分配器全景图>1.4 ART 分配器全景图</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                        Heap::AllocObject()                       │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                                │
+</span></span><span class=line><span class=cl>                                ▼
+</span></span><span class=line><span class=cl>                    ┌───────────────────────┐
+</span></span><span class=line><span class=cl>                    │   对象大小判断          │
+</span></span><span class=line><span class=cl>                    │   (large_object_threshold) │
+</span></span><span class=line><span class=cl>                    └───────────────────────┘
+</span></span><span class=line><span class=cl>                                │
+</span></span><span class=line><span class=cl>              ┌─────────────────┼─────────────────┐
+</span></span><span class=line><span class=cl>              ▼                 ▼                 ▼
+</span></span><span class=line><span class=cl>        ≤ 12KB             &gt; 12KB            特殊场景
+</span></span><span class=line><span class=cl>              │                 │                 │
+</span></span><span class=line><span class=cl>              ▼                 ▼                 ▼
+</span></span><span class=line><span class=cl>    ┌─────────────────┐ ┌─────────────┐ ┌─────────────────┐
+</span></span><span class=line><span class=cl>    │ main_space_     │ │LargeObject  │ │ non_moving_space_│
+</span></span><span class=line><span class=cl>    │ (RosAlloc/DlMalloc│ │   Space     │ │ (DlMalloc)      │
+</span></span><span class=line><span class=cl>    │ /BumpPointer/   │ │             │ │                 │
+</span></span><span class=line><span class=cl>    │  Region)        │ │             │ │                 │
+</span></span><span class=line><span class=cl>    └─────────────────┘ └─────────────┘ └─────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=第二章dlmallocspace---通用分配器>第二章：DlMallocSpace - 通用分配器</h1><h2 id=21-核心特点>2.1 核心特点</h2><p>DlMallocSpace 是对 Doug Lea 的 dlmalloc（glibc malloc 的前身）的封装。</p><p><strong>设计特点</strong>：</p><table><thead><tr><th>特性</th><th>描述</th></tr></thead><tbody><tr><td><strong>成熟稳定</strong></td><td>数十年优化，边界情况处理完善</td></tr><tr><td><strong>任意大小</strong></td><td>支持从几字节到数 MB 的分配</td></tr><tr><td><strong>碎片合并</strong></td><td>相邻空闲块自动合并，减少碎片</td></tr><tr><td><strong>Bin 组织</strong></td><td>128 个 bins，按大小分类管理空闲块</td></tr></tbody></table><p><strong>核心数据结构</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// malloc_chunk 结构（简化）
+</span></span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>malloc_chunk</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>size_t</span> <span class=n>prev_foot</span><span class=p>;</span>   <span class=c1>// 前一个块的大小（仅当前一块空闲时有效）
+</span></span></span><span class=line><span class=cl>    <span class=kt>size_t</span> <span class=n>head</span><span class=p>;</span>        <span class=c1>// 当前块大小 + 标志位
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 用户数据从这里开始
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>boundary tags 机制</strong>：每个块头部和尾部存储大小信息，释放时可快速找到相邻块进行合并。</p><h2 id=22-应用场景>2.2 应用场景</h2><p>DlMallocSpace 在 ART 中有两个核心用途：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    non_moving_space_                        │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  &#34;Non moving space is always dlmalloc since we currently   │
+</span></span><span class=line><span class=cl>│   don&#39;t have support for multiple active rosalloc spaces.&#34; │
+</span></span><span class=line><span class=cl>│                                      —— heap.cc:642        │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><table><thead><tr><th>场景</th><th>空间</th><th>原因</th></tr></thead><tbody><tr><td><strong>Zygote 进程</strong></td><td>non_moving_space_</td><td>预加载类不可移动</td></tr><tr><td><strong>App 进程</strong></td><td>non_moving_space_</td><td>继承自 Zygote 的对象不可移动</td></tr><tr><td><strong>非 CC GC 的主堆</strong></td><td>main_space_</td><td>CMS/MS 场景下的默认选择</td></tr></tbody></table><h2 id=23-为什么适合-zygote>2.3 为什么适合 Zygote</h2><p>Zygote 进程的特殊性决定了必须使用 DlMallocSpace：</p><p><strong>1. 对象不可移动</strong></p><p>Zygote 预加载的类和对象在 fork 后被所有 App 共享，地址不能改变：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Zygote 进程                    App 进程 (fork 后)
+</span></span><span class=line><span class=cl>┌──────────────┐              ┌──────────────┐
+</span></span><span class=line><span class=cl>│ Class A @0x1000│──────────────│ Class A @0x1000│
+</span></span><span class=line><span class=cl>│ Class B @0x2000│  (共享物理页)  │ Class B @0x2000│
+</span></span><span class=line><span class=cl>│ Object X @0x3000│──────────────│ Object X @0x3000│
+</span></span><span class=line><span class=cl>└──────────────┘              └──────────────┘
+</span></span></code></pre></td></tr></table></div></div><p><strong>2. 需要碎片合并</strong></p><p>Zygote 预加载阶段会产生大量分配，部分对象在 fork 前被释放，需要合并空闲块：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>预加载阶段：
+</span></span><span class=line><span class=cl>[Class A][临时对象1][Class B][临时对象2][Class C]
+</span></span><span class=line><span class=cl>           ↓ 释放后
+</span></span><span class=line><span class=cl>[Class A][    空闲    ][Class B][空闲][Class C]
+</span></span><span class=line><span class=cl>           ↓ 合并后
+</span></span><span class=line><span class=cl>[Class A][      大块空闲      ][Class B][Class C]
+</span></span></code></pre></td></tr></table></div></div><p><strong>3. 分配频率低</strong></p><p>Zygote 预加载是一次性操作，不需要极致的分配性能。</p><h2 id=24-局限性>2.4 局限性</h2><table><thead><tr><th>局限</th><th>影响</th></tr></thead><tbody><tr><td><strong>全局锁</strong></td><td>多线程分配时锁竞争严重</td></tr><tr><td><strong>复杂路径</strong></td><td>Bin 搜索、边界检查等开销</td></tr><tr><td><strong>不适合高频分配</strong></td><td>每次分配需要数十到数百条指令</td></tr></tbody></table><hr><h1 id=第三章rosallocspace---高性能分配器>第三章：RosAllocSpace - 高性能分配器</h1><h2 id=31-核心特点>3.1 核心特点</h2><p>RosAlloc（Runs-of-Slots Allocator）专为 ART 设计，针对 Java 对象分配特点优化。</p><p><strong>设计哲学</strong>：用空间换时间，用固定大小槽位换取 O(1) 分配。</p><p><strong>核心参数</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/gc/allocator/rosalloc.h
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>constexpr</span> <span class=n>size_t</span> <span class=n>kLargeSizeThreshold</span> <span class=o>=</span> <span class=mi>2048</span><span class=p>;</span>        <span class=c1>// 大对象阈值
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>constexpr</span> <span class=n>size_t</span> <span class=n>kNumOfSizeBrackets</span> <span class=o>=</span> <span class=mi>42</span><span class=p>;</span>           <span class=c1>// 大小级别数
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>constexpr</span> <span class=n>size_t</span> <span class=n>kNumThreadLocalSizeBrackets</span> <span class=o>=</span> <span class=mi>16</span><span class=p>;</span>  <span class=c1>// 线程本地级别数
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>constexpr</span> <span class=n>size_t</span> <span class=n>kMaxThreadLocalBracketSize</span> <span class=o>=</span> <span class=mi>128</span><span class=p>;</span>  <span class=c1>// 线程本地最大大小
+</span></span></span></code></pre></td></tr></table></div></div><p><strong>42 个大小级别</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>线程本地（≤128 bytes，无锁分配）：
+</span></span><span class=line><span class=cl>  8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>共享分配（&gt;128 bytes，需要锁）：
+</span></span><span class=line><span class=cl>  144, 160, 176, ..., 512    // 16 bytes 递增
+</span></span><span class=line><span class=cl>  1KB, 2KB                   // 大对象边界
+</span></span></code></pre></td></tr></table></div></div><h2 id=32-核心数据结构>3.2 核心数据结构</h2><p><strong>Run 结构</strong>：一个 Run 管理一组相同大小的 Slot。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                         Run (多页)                           │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│ Header (80 bytes)                                           │
+</span></span><span class=line><span class=cl>│   ├─ magic_num          // 魔数校验                          │
+</span></span><span class=line><span class=cl>│   ├─ size_bracket_idx   // 大小级别索引                       │
+</span></span><span class=line><span class=cl>│   ├─ is_thread_local    // 是否线程本地                       │
+</span></span><span class=line><span class=cl>│   ├─ free_list          // 空闲槽位链表                       │
+</span></span><span class=line><span class=cl>│   ├─ bulk_free_list     // 批量释放链表                       │
+</span></span><span class=line><span class=cl>│   └─ thread_local_free_list  // 线程本地释放链表              │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│ Slots (固定大小槽位)                                         │
+</span></span><span class=line><span class=cl>│   [Slot 0][Slot 1][Slot 2]...[Slot N]                       │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><p><strong>page_map_</strong>：跟踪每个页面的类型。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=k>enum</span> <span class=nc>PageMapKind</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>kPageMapReleased</span><span class=p>,</span>     <span class=c1>// 已释放给 OS
+</span></span></span><span class=line><span class=cl>    <span class=n>kPageMapEmpty</span><span class=p>,</span>        <span class=c1>// 空闲
+</span></span></span><span class=line><span class=cl>    <span class=n>kPageMapRun</span><span class=p>,</span>          <span class=c1>// Run 的起始页
+</span></span></span><span class=line><span class=cl>    <span class=n>kPageMapRunPart</span><span class=p>,</span>      <span class=c1>// Run 的后续页
+</span></span></span><span class=line><span class=cl>    <span class=n>kPageMapLargeObject</span><span class=p>,</span>  <span class=c1>// 大对象起始页
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=33-线程本地分配优化>3.3 线程本地分配优化</h2><p><strong>这是 RosAlloc 性能优势的关键</strong>。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/thread.h
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>Thread</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 每个线程持有前 16 个 bracket 的专属 Run
+</span></span></span><span class=line><span class=cl>    <span class=n>RosAlloc</span><span class=o>::</span><span class=n>Run</span><span class=o>*</span> <span class=n>rosalloc_runs_</span><span class=p>[</span><span class=n>kNumRosAllocThreadLocalSizeBracketsInThread</span><span class=p>];</span>  <span class=c1>// = 16
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>无锁分配路径</strong>（≤128 bytes）：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Thread::Alloc(size)
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ▼
+</span></span><span class=line><span class=cl>bracket_idx = size / 8  // 计算大小级别
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ▼
+</span></span><span class=line><span class=cl>run = thread-&gt;rosalloc_runs_[bracket_idx]  // 获取线程本地 Run
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ▼
+</span></span><span class=line><span class=cl>slot = run-&gt;free_list.Remove()  // 从空闲链表取一个槽位
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ▼
+</span></span><span class=line><span class=cl>return slot  // 无锁！
+</span></span></code></pre></td></tr></table></div></div><p><strong>共享分配路径</strong>（>128 bytes）：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Thread::Alloc(size)
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ▼
+</span></span><span class=line><span class=cl>bracket_idx = 计算大小级别
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ▼
+</span></span><span class=line><span class=cl>MutexLock lock(size_bracket_locks_[bracket_idx])  // 需要锁
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ▼
+</span></span><span class=line><span class=cl>run = current_runs_[bracket_idx]  // 获取共享 Run
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ▼
+</span></span><span class=line><span class=cl>slot = run-&gt;free_list.Remove()
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ▼
+</span></span><span class=line><span class=cl>return slot
+</span></span></code></pre></td></tr></table></div></div><h2 id=34-应用场景>3.4 应用场景</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/gc/heap.h
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>constexpr</span> <span class=kt>bool</span> <span class=n>kUseRosAlloc</span> <span class=o>=</span> <span class=nb>true</span><span class=p>;</span>  <span class=c1>// 默认启用
+</span></span></span></code></pre></td></tr></table></div></div><table><thead><tr><th>场景</th><th>空间</th><th>GC 类型</th></tr></thead><tbody><tr><td>App 主堆</td><td>main_space_</td><td>CMS, MS</td></tr></tbody></table><h2 id=35-为什么适合-app-主堆>3.5 为什么适合 App 主堆</h2><p><strong>1. 高频小对象分配</strong></p><p>Java 程序中绝大多数对象小于 128 bytes：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>对象大小分布（典型 Java 应用）：
+</span></span><span class=line><span class=cl>┌────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ ≤128 bytes  ████████████████ 85%   │
+</span></span><span class=line><span class=cl>│ 128-512 B   ████             10%   │
+</span></span><span class=line><span class=cl>│ 512B-2KB    ██                4%   │
+</span></span><span class=line><span class=cl>│ &gt; 2KB       █                 1%   │
+</span></span><span class=line><span class=cl>└────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><p><strong>2. 线程本地分配无锁</strong></p><p>前 16 个 bracket（覆盖 85% 的分配）完全无锁：</p><table><thead><tr><th>大小范围</th><th>分配方式</th><th>锁竞争</th></tr></thead><tbody><tr><td>≤128 bytes</td><td>线程本地 Run</td><td>无</td></tr><tr><td>128-2048 bytes</td><td>共享 Run</td><td>按 bracket 加锁</td></tr><tr><td>>2048 bytes</td><td>页对齐分配</td><td>全局锁</td></tr></tbody></table><p><strong>3. 缓存友好</strong></p><p>同一线程分配的对象在同一 Run 内，内存连续，提高缓存命中率。</p><h2 id=36-局限性>3.6 局限性</h2><table><thead><tr><th>局限</th><th>原因</th></tr></thead><tbody><tr><td><strong>内部碎片</strong></td><td>对象向上对齐到 slot 大小</td></tr><tr><td><strong>不支持合并</strong></td><td>固定大小 slot，无法合并相邻空闲</td></tr><tr><td><strong>依赖 GC</strong></td><td>只能通过 GC 回收整个 Run</td></tr><tr><td><strong>大对象退化</strong></td><td>>2KB 退化为页分配</td></tr></tbody></table><hr><h1 id=第四章bumppointerspace---极简分配器>第四章：BumpPointerSpace - 极简分配器</h1><h2 id=41-核心特点>4.1 核心特点</h2><p>BumpPointerSpace 使用最简单的指针碰撞（Bump Pointer）分配策略。</p><p><strong>核心实现</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/gc/space/bump_pointer_space.h
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>BumpPointerSpace</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>uint8_t</span><span class=o>*</span> <span class=n>begin_</span><span class=p>;</span>    <span class=c1>// 起始地址
+</span></span></span><span class=line><span class=cl>    <span class=kt>uint8_t</span><span class=o>*</span> <span class=n>end_</span><span class=p>;</span>      <span class=c1>// 当前分配指针
+</span></span></span><span class=line><span class=cl>    <span class=kt>uint8_t</span><span class=o>*</span> <span class=n>limit_</span><span class=p>;</span>    <span class=c1>// 结束地址
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 分配实现（简化）
+</span></span></span><span class=line><span class=cl><span class=n>Object</span><span class=o>*</span> <span class=nf>AllocNonvirtual</span><span class=p>(</span><span class=n>size_t</span> <span class=n>size</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>uint8_t</span><span class=o>*</span> <span class=n>old_end</span> <span class=o>=</span> <span class=n>end_</span><span class=p>.</span><span class=n>fetch_add</span><span class=p>(</span><span class=n>size</span><span class=p>);</span>  <span class=c1>// 原子操作
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>old_end</span> <span class=o>+</span> <span class=n>size</span> <span class=o>&lt;=</span> <span class=n>limit_</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=n>old_end</span><span class=p>;</span>  <span class=c1>// 成功
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=k>nullptr</span><span class=p>;</span>  <span class=c1>// 空间不足
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>特点</strong>：</p><table><thead><tr><th>特性</th><th>描述</th></tr></thead><tbody><tr><td><strong>O(1) 分配</strong></td><td>仅需一条原子加法指令</td></tr><tr><td><strong>不支持释放</strong></td><td><code>Free()</code> 返回 0，不做任何操作</td></tr><tr><td><strong>无碎片</strong></td><td>对象连续存放</td></tr><tr><td><strong>需要双倍空间</strong></td><td>from/to 两个空间交替使用</td></tr></tbody></table><h2 id=42-应用场景>4.2 应用场景</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/gc/heap.cc
+</span></span></span><span class=line><span class=cl><span class=k>if</span> <span class=p>(</span><span class=n>IsMovingGc</span><span class=p>(</span><span class=n>foreground_collector_type_</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>bump_pointer_space_</span> <span class=o>=</span> <span class=n>space</span><span class=o>::</span><span class=n>BumpPointerSpace</span><span class=o>::</span><span class=n>CreateFromMemMap</span><span class=p>(...);</span>
+</span></span><span class=line><span class=cl>    <span class=n>temp_space_</span> <span class=o>=</span> <span class=n>space</span><span class=o>::</span><span class=n>BumpPointerSpace</span><span class=o>::</span><span class=n>CreateFromMemMap</span><span class=p>(...);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><table><thead><tr><th>场景</th><th>空间</th><th>GC 类型</th></tr></thead><tbody><tr><td>Semi-Space GC</td><td>main_space_ (from-space)</td><td>SS</td></tr><tr><td>Semi-Space GC</td><td>temp_space_ (to-space)</td><td>SS</td></tr><tr><td>Mark-Compact GC</td><td>main_space_</td><td>MC, CMC</td></tr></tbody></table><h2 id=43-为什么适合移动式-gc>4.3 为什么适合移动式 GC</h2><p><strong>1. 分配极快</strong></p><p>只需移动指针，无需搜索空闲列表：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>分配前：
+</span></span><span class=line><span class=cl>begin_                                          limit_
+</span></span><span class=line><span class=cl>  │                                               │
+</span></span><span class=line><span class=cl>  ▼                                               ▼
+</span></span><span class=line><span class=cl>  [████████████████████                        ]
+</span></span><span class=line><span class=cl>                    ▲
+</span></span><span class=line><span class=cl>                  end_
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>分配 64 bytes 后：
+</span></span><span class=line><span class=cl>begin_                                          limit_
+</span></span><span class=line><span class=cl>  │                                               │
+</span></span><span class=line><span class=cl>  ▼                                               ▼
+</span></span><span class=line><span class=cl>  [████████████████████████                    ]
+</span></span><span class=line><span class=cl>                          ▲
+</span></span><span class=line><span class=cl>                        end_
+</span></span></code></pre></td></tr></table></div></div><p><strong>2. 整块回收</strong></p><p>GC 时直接重置指针，无需逐个释放：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// Semi-Space GC 的 to-space 切换
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>SemiSpace</span><span class=o>::</span><span class=n>SwapSpaces</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>std</span><span class=o>::</span><span class=n>swap</span><span class=p>(</span><span class=n>from_space_</span><span class=p>,</span> <span class=n>to_space_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>to_space_</span><span class=o>-&gt;</span><span class=n>Clear</span><span class=p>();</span>  <span class=c1>// end_ = begin_
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>3. 无碎片</strong></p><p>对象连续存放，GC 时复制到另一个空间，天然压缩。</p><h2 id=44-semi-space-gc-工作原理>4.4 Semi-Space GC 工作原理</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>GC 前：
+</span></span><span class=line><span class=cl>from_space_ (bump_pointer_space_)
+</span></span><span class=line><span class=cl>┌────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ [A][B][C][D][E][F][G][H][  空闲  ]│
+</span></span><span class=line><span class=cl>└────────────────────────────────────┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>to_space_ (temp_space_)
+</span></span><span class=line><span class=cl>┌────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ [            空闲                ]│
+</span></span><span class=line><span class=cl>└────────────────────────────────────┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>GC 后（复制存活对象）：
+</span></span><span class=line><span class=cl>from_space_
+</span></span><span class=line><span class=cl>┌────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ [            空闲                ]│  ← 清空，变成新的 to_space
+</span></span><span class=line><span class=cl>└────────────────────────────────────┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>to_space_
+</span></span><span class=line><span class=cl>┌────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ [A][C][E][G][      空闲          ]│  ← 存活对象连续存放
+</span></span><span class=line><span class=cl>└────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=45-局限性>4.5 局限性</h2><table><thead><tr><th>局限</th><th>影响</th></tr></thead><tbody><tr><td><strong>无法单独释放</strong></td><td>只能整块回收</td></tr><tr><td><strong>需要双倍空间</strong></td><td>内存利用率 50%</td></tr><tr><td><strong>仅适用于移动式 GC</strong></td><td>不兼容 Mark-Sweep</td></tr></tbody></table><hr><h1 id=第五章regionspace---区域化分配器>第五章：RegionSpace - 区域化分配器</h1><h2 id=51-核心特点>5.1 核心特点</h2><p>RegionSpace 将堆划分为固定大小的 Region，专为 Concurrent Copying GC 设计。</p><p><strong>核心参数</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/gc/space/region_space.h
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>constexpr</span> <span class=n>size_t</span> <span class=n>kRegionSize</span> <span class=o>=</span> <span class=mi>256</span> <span class=o>*</span> <span class=n>KB</span><span class=p>;</span>  <span class=c1>// 每个 Region 256KB
+</span></span></span></code></pre></td></tr></table></div></div><p><strong>Region 结构</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    RegionSpace                               │
+</span></span><span class=line><span class=cl>├────────────┬────────────┬────────────┬────────────┬─────────┤
+</span></span><span class=line><span class=cl>│ Region 0   │ Region 1   │ Region 2   │ Region 3   │ ...     │
+</span></span><span class=line><span class=cl>│ 256KB      │ 256KB      │ 256KB      │ 256KB      │         │
+</span></span><span class=line><span class=cl>├────────────┼────────────┼────────────┼────────────┼─────────┤
+</span></span><span class=line><span class=cl>│ RegionType │ RegionType │ RegionType │ RegionType │         │
+</span></span><span class=line><span class=cl>├────────────┼────────────┼────────────┼────────────┼─────────┤
+</span></span><span class=line><span class=cl>│ ●          │ ○          │ ●          │ ○          │         │
+</span></span><span class=line><span class=cl>│ from-space │ to-space   │ from-space │ to-space   │         │
+</span></span><span class=line><span class=cl>└────────────┴────────────┴────────────┴────────────┴─────────┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>● = 需要被 Evacuate（疏散）的 Region
+</span></span><span class=line><span class=cl>○ = 目标 Region（存活对象复制到这里）
+</span></span></code></pre></td></tr></table></div></div><p><strong>Region 类型</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=k>enum</span> <span class=k>class</span> <span class=nc>RegionType</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>kRegionTypeAll</span><span class=p>,</span>          <span class=c1>// 全部可分配
+</span></span></span><span class=line><span class=cl>    <span class=n>kRegionTypeFromSpace</span><span class=p>,</span>    <span class=c1>// from-space，需要疏散
+</span></span></span><span class=line><span class=cl>    <span class=n>kRegionTypeToSpace</span><span class=p>,</span>      <span class=c1>// to-space，疏散目标
+</span></span></span><span class=line><span class=cl>    <span class=n>kRegionTypeNone</span><span class=p>,</span>         <span class=c1>// 不可分配
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=52-应用场景>5.2 应用场景</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/gc/heap.cc
+</span></span></span><span class=line><span class=cl><span class=k>if</span> <span class=p>(</span><span class=n>foreground_collector_type_</span> <span class=o>==</span> <span class=n>kCollectorTypeCC</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>region_space_</span> <span class=o>=</span> <span class=n>space</span><span class=o>::</span><span class=n>RegionSpace</span><span class=o>::</span><span class=n>Create</span><span class=p>(...);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><table><thead><tr><th>场景</th><th>空间</th><th>GC 类型</th></tr></thead><tbody><tr><td>并发复制</td><td>main_space_</td><td>CC (Concurrent Copying)</td></tr></tbody></table><h2 id=53-为什么适合-cc-gc>5.3 为什么适合 CC GC</h2><p><strong>1. 区域化 Evacuation</strong></p><p>不需要整堆移动，可以选择部分 Region 进行疏散：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Evacuation 选择：
+</span></span><span class=line><span class=cl>┌────────────┬────────────┬────────────┬────────────┐
+</span></span><span class=line><span class=cl>│ Region 0   │ Region 1   │ Region 2   │ Region 3   │
+</span></span><span class=line><span class=cl>│ ●          │            │ ●          │            │
+</span></span><span class=line><span class=cl>│ 疏散       │ 不动       │ 疏散       │ 不动       │
+</span></span><span class=line><span class=cl>└────────────┴────────────┴────────────┴────────────┘
+</span></span><span class=line><span class=cl>     ↓                        ↓
+</span></span><span class=line><span class=cl>  复制存活对象            复制存活对象
+</span></span><span class=line><span class=cl>     ↓                        ↓
+</span></span><span class=line><span class=cl>┌────────────┬────────────┬────────────┬────────────┐
+</span></span><span class=line><span class=cl>│ Region 4   │            │ Region 5   │            │
+</span></span><span class=line><span class=cl>│ to-space   │            │ to-space   │            │
+</span></span><span class=line><span class=cl>└────────────┴────────────┴────────────┴────────────┘
+</span></span></code></pre></td></tr></table></div></div><p><strong>2. 读屏障协作</strong></p><p>CC GC 使用读屏障（Read Barrier）实现并发复制：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 读屏障伪代码
+</span></span></span><span class=line><span class=cl><span class=n>Object</span><span class=o>*</span> <span class=nf>ReadBarrier</span><span class=p>(</span><span class=n>Object</span><span class=o>*</span> <span class=n>ref</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>ref</span><span class=o>-&gt;</span><span class=n>region_type</span> <span class=o>==</span> <span class=n>kRegionTypeFromSpace</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 对象在 from-space，需要转发
+</span></span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=n>ForwardObject</span><span class=p>(</span><span class=n>ref</span><span class=p>);</span>  <span class=c1>// 复制到 to-space
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>ref</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>3. TLAB 支持</strong></p><p>每个线程可以在 Region 内进行无锁分配：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/gc/heap.h
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>constexpr</span> <span class=n>size_t</span> <span class=n>kPartialTlabSize</span> <span class=o>=</span> <span class=mi>16</span> <span class=o>*</span> <span class=n>KB</span><span class=p>;</span>  <span class=c1>// TLAB 大小
+</span></span></span></code></pre></td></tr></table></div></div><h2 id=54-与-bumppointerspace-的对比>5.4 与 BumpPointerSpace 的对比</h2><table><thead><tr><th>特性</th><th>BumpPointerSpace</th><th>RegionSpace</th></tr></thead><tbody><tr><td>分配方式</td><td>指针碰撞</td><td>指针碰撞 + TLAB</td></tr><tr><td>回收方式</td><td>整块清空</td><td>选择性 Region 回收</td></tr><tr><td>空间利用率</td><td>50%（双空间）</td><td>更高（部分 Region 疏散）</td></tr><tr><td>GC 并发性</td><td>STW 复制</td><td>并发复制（读屏障）</td></tr><tr><td>适用 GC</td><td>SS, MC</td><td>CC</td></tr></tbody></table><hr><h1 id=第六章largeobjectspace---大对象空间>第六章：LargeObjectSpace - 大对象空间</h1><h2 id=61-核心特点>6.1 核心特点</h2><p>大对象（默认 > 12KB）直接在独立空间分配，避免主堆碎片。</p><p><strong>核心参数</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/gc/heap.h
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>constexpr</span> <span class=n>size_t</span> <span class=n>kMinLargeObjectThreshold</span> <span class=o>=</span> <span class=mi>12</span> <span class=o>*</span> <span class=n>KB</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>constexpr</span> <span class=n>size_t</span> <span class=n>kDefaultLargeObjectThreshold</span> <span class=o>=</span> <span class=n>kMinLargeObjectThreshold</span><span class=p>;</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>设计原因</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>假设主堆使用 RosAlloc，分配一个 100KB 的数组：
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>方案 1：在 RosAlloc 中分配
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ [8B slots][16B slots]...[100KB 大块]...[8B slots]  │
+</span></span><span class=line><span class=cl>│                    ↑                                │
+</span></span><span class=line><span class=cl>│              碎片化！后续小对象无法使用这块空间        │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>方案 2：在 LargeObjectSpace 中分配
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ RosAlloc: [8B slots][16B slots]...[8B slots]       │
+</span></span><span class=line><span class=cl>│ LargeObjectSpace: [100KB 数组]                      │
+</span></span><span class=line><span class=cl>│                    ↑                                │
+</span></span><span class=line><span class=cl>│              独立管理，不影响主堆                      │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=62-两种实现>6.2 两种实现</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/gc/heap.h
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>constexpr</span> <span class=n>space</span><span class=o>::</span><span class=n>LargeObjectSpaceType</span> <span class=n>kDefaultLargeObjectSpaceType</span> <span class=o>=</span>
+</span></span><span class=line><span class=cl>    <span class=n>USE_ART_LOW_4G_ALLOCATOR</span> <span class=o>?</span>
+</span></span><span class=line><span class=cl>        <span class=n>space</span><span class=o>::</span><span class=n>LargeObjectSpaceType</span><span class=o>::</span><span class=nl>kFreeList</span>
+</span></span><span class=line><span class=cl>      <span class=p>:</span> <span class=n>space</span><span class=o>::</span><span class=n>LargeObjectSpaceType</span><span class=o>::</span><span class=n>kMap</span><span class=p>;</span>
+</span></span></code></pre></td></tr></table></div></div><table><thead><tr><th>类型</th><th>实现方式</th><th>适用场景</th></tr></thead><tbody><tr><td><strong>LargeObjectMapSpace</strong></td><td>每个对象独立 mmap</td><td>64 位系统</td></tr><tr><td><strong>FreeListSpace</strong></td><td>页面级空闲列表</td><td>32 位系统（需要低 4GB 地址）</td></tr></tbody></table><p><strong>LargeObjectMapSpace</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>每个大对象独立 mmap：
+</span></span><span class=line><span class=cl>┌─────────────┐
+</span></span><span class=line><span class=cl>│ mmap 100KB  │ ← 对象 A
+</span></span><span class=line><span class=cl>├─────────────┤
+</span></span><span class=line><span class=cl>│ mmap 200KB  │ ← 对象 B
+</span></span><span class=line><span class=cl>├─────────────┤
+</span></span><span class=line><span class=cl>│ mmap 50KB   │ ← 对象 C
+</span></span><span class=line><span class=cl>└─────────────┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>释放时直接 munmap，内存立即归还 OS。
+</span></span></code></pre></td></tr></table></div></div><p><strong>FreeListSpace</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>预分配大块内存，页面级管理：
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ [Page 0-24][Page 25-74][Page 75-87][Page 88-...]   │
+</span></span><span class=line><span class=cl>│   对象 A      对象 B       空闲       对象 C        │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                ↑
+</span></span><span class=line><span class=cl>           空闲页面链表
+</span></span></code></pre></td></tr></table></div></div><h2 id=63-应用场景>6.3 应用场景</h2><table><thead><tr><th>对象类型</th><th>典型大小</th><th>分配位置</th></tr></thead><tbody><tr><td>byte[]</td><td>> 12KB</td><td>LargeObjectSpace</td></tr><tr><td>int[]</td><td>> 12KB</td><td>LargeObjectSpace</td></tr><tr><td>大型 String</td><td>> 12KB</td><td>LargeObjectSpace</td></tr><tr><td>Bitmap 数据</td><td>> 12KB</td><td>LargeObjectSpace</td></tr></tbody></table><h2 id=64-gc-处理>6.4 GC 处理</h2><p>LargeObjectSpace 使用简单的标记-清除：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>标记阶段：
+</span></span><span class=line><span class=cl>┌─────────────┐
+</span></span><span class=line><span class=cl>│ mmap 100KB  │ ← 标记存活
+</span></span><span class=line><span class=cl>├─────────────┤
+</span></span><span class=line><span class=cl>│ mmap 200KB  │ ← 未标记
+</span></span><span class=line><span class=cl>├─────────────┤
+</span></span><span class=line><span class=cl>│ mmap 50KB   │ ← 标记存活
+</span></span><span class=line><span class=cl>└─────────────┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>清除阶段：
+</span></span><span class=line><span class=cl>┌─────────────┐
+</span></span><span class=line><span class=cl>│ mmap 100KB  │ ← 保留
+</span></span><span class=line><span class=cl>├─────────────┤
+</span></span><span class=line><span class=cl>│ (munmap)    │ ← 释放，归还 OS
+</span></span><span class=line><span class=cl>├─────────────┤
+</span></span><span class=line><span class=cl>│ mmap 50KB   │ ← 保留
+</span></span><span class=line><span class=cl>└─────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=第七章分配器选择机制>第七章：分配器选择机制</h1><h2 id=71-初始化时的选择>7.1 初始化时的选择</h2><p>分配器类型由 <code>foreground_collector_type_</code> 决定：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/gc/heap.cc
+</span></span></span><span class=line><span class=cl><span class=k>if</span> <span class=p>(</span><span class=n>foreground_collector_type_</span> <span class=o>==</span> <span class=n>kCollectorTypeCC</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// Concurrent Copying GC
+</span></span></span><span class=line><span class=cl>    <span class=n>region_space_</span> <span class=o>=</span> <span class=n>space</span><span class=o>::</span><span class=n>RegionSpace</span><span class=o>::</span><span class=n>Create</span><span class=p>(...);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span> <span class=k>else</span> <span class=nf>if</span> <span class=p>(</span><span class=n>IsMovingGc</span><span class=p>(</span><span class=n>foreground_collector_type_</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// Semi-Space / Mark-Compact GC
+</span></span></span><span class=line><span class=cl>    <span class=n>bump_pointer_space_</span> <span class=o>=</span> <span class=n>space</span><span class=o>::</span><span class=n>BumpPointerSpace</span><span class=o>::</span><span class=n>Create</span><span class=p>(...);</span>
+</span></span><span class=line><span class=cl>    <span class=n>temp_space_</span> <span class=o>=</span> <span class=n>space</span><span class=o>::</span><span class=n>BumpPointerSpace</span><span class=o>::</span><span class=n>Create</span><span class=p>(...);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// CMS / MS GC
+</span></span></span><span class=line><span class=cl>    <span class=n>main_space_</span> <span class=o>=</span> <span class=n>CreateMainMallocSpace</span><span class=p>(...);</span>  <span class=c1>// RosAlloc 或 DlMalloc
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>决策流程图</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>foreground_collector_type_?
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ├─ kCollectorTypeCC ──────► RegionSpace + DlMallocSpace(non_moving)
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ├─ kCollectorTypeSS ──────► BumpPointerSpace + DlMallocSpace(non_moving)
+</span></span><span class=line><span class=cl>    │   kCollectorTypeMC
+</span></span><span class=line><span class=cl>    │   kCollectorTypeCMC
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    └─ kCollectorTypeCMS ─────► RosAllocSpace + DlMallocSpace(non_moving)
+</span></span><span class=line><span class=cl>        kCollectorTypeMS
+</span></span></code></pre></td></tr></table></div></div><h2 id=72-non_moving_space_-为何始终是-dlmallocspace>7.2 non_moving_space_ 为何始终是 DlMallocSpace</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/gc/heap.cc:642
+</span></span></span><span class=line><span class=cl><span class=c1>// Non moving space is always dlmalloc since we currently don&#39;t
+</span></span></span><span class=line><span class=cl><span class=c1>// have support for multiple active rosalloc spaces.
+</span></span></span><span class=line><span class=cl><span class=n>non_moving_space_</span> <span class=o>=</span> <span class=n>space</span><span class=o>::</span><span class=n>DlMallocSpace</span><span class=o>::</span><span class=n>CreateFromMemMap</span><span class=p>(...);</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>原因</strong>：</p><ol><li><strong>技术限制</strong>：RosAlloc 不支持多个活跃实例</li><li><strong>Zygote 要求</strong>：Zygote 对象不可移动，需要稳定布局</li><li><strong>碎片管理</strong>：长期存活对象需要合并空闲块</li></ol><h2 id=73-zygote-与-app-的差异>7.3 Zygote 与 App 的差异</h2><table><thead><tr><th>阶段</th><th>分配器配置</th></tr></thead><tbody><tr><td><strong>Zygote 启动</strong></td><td>仅 DlMallocSpace</td></tr><tr><td><strong>Zygote fork</strong></td><td>分割为 ZygoteSpace + DlMallocSpace</td></tr><tr><td><strong>App 启动</strong></td><td>根据 GC 类型创建主堆</td></tr></tbody></table><p><strong>ZygoteSpace 创建流程</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Zygote fork 前：
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│              DlMallocSpace (Zygote)                  │
+</span></span><span class=line><span class=cl>│  [预加载类][预加载对象][空闲块][预加载资源]           │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>Zygote fork 后（App 进程）：
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ ZygoteSpace (只读，共享)                             │
+</span></span><span class=line><span class=cl>│  [预加载类][预加载对象]                              │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│ DlMallocSpace (non_moving_space_)                   │
+</span></span><span class=line><span class=cl>│  [空闲块][预加载资源]                                │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=第八章分配器对比分析>第八章：分配器对比分析</h1><h2 id=81-核心特性对比>8.1 核心特性对比</h2><table><thead><tr><th>特性</th><th>DlMalloc</th><th>RosAlloc</th><th>BumpPointer</th><th>Region</th></tr></thead><tbody><tr><td><strong>分配速度</strong></td><td>中</td><td>快（TL 无锁）</td><td>极快</td><td>快（TLAB）</td></tr><tr><td><strong>释放开销</strong></td><td>高（合并）</td><td>低</td><td>无（整块）</td><td>低</td></tr><tr><td><strong>碎片处理</strong></td><td>合并</td><td>GC 回收 Run</td><td>无</td><td>GC 复制</td></tr><tr><td><strong>线程扩展</strong></td><td>锁竞争</td><td>线程本地 Run</td><td>原子操作</td><td>TLAB</td></tr><tr><td><strong>对象大小</strong></td><td>任意</td><td>≤2KB（超过用页）</td><td>任意</td><td>≤256KB/Region</td></tr><tr><td><strong>内存开销</strong></td><td>低</td><td>中</td><td>无</td><td>中</td></tr><tr><td><strong>对象移动</strong></td><td>不支持</td><td>不支持</td><td>支持</td><td>支持</td></tr></tbody></table><h2 id=82-适用场景对比>8.2 适用场景对比</h2><table><thead><tr><th>场景</th><th>推荐分配器</th><th>原因</th></tr></thead><tbody><tr><td>Zygote 预加载</td><td>DlMalloc</td><td>长期存活，需合并，不可移动</td></tr><tr><td>App 小对象（≤128B）</td><td>RosAlloc</td><td>高频分配，线程本地无锁</td></tr><tr><td>App 中等对象（128B-2KB）</td><td>RosAlloc</td><td>按 bracket 分配，低碎片</td></tr><tr><td>移动式 GC</td><td>BumpPointer</td><td>极快分配，整块回收</td></tr><tr><td>并发复制 GC</td><td>Region</td><td>区域化管理，读屏障协作</td></tr><tr><td>大对象（>12KB）</td><td>LargeObject</td><td>避免主堆碎片</td></tr></tbody></table><h2 id=83-性能权衡>8.3 性能权衡</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>              分配延迟（越低越好）
+</span></span><span class=line><span class=cl>                    │
+</span></span><span class=line><span class=cl>        ┌───────────┼───────────┐
+</span></span><span class=line><span class=cl>        │           │           │
+</span></span><span class=line><span class=cl>   BumpPointer   RosAlloc   DlMalloc
+</span></span><span class=line><span class=cl>      极快         快          中
+</span></span><span class=line><span class=cl>        │           │           │
+</span></span><span class=line><span class=cl>        └───────────┼───────────┘
+</span></span><span class=line><span class=cl>                    │
+</span></span><span class=line><span class=cl>              内存利用率（越高越好）
+</span></span><span class=line><span class=cl>                    │
+</span></span><span class=line><span class=cl>        ┌───────────┼───────────┐
+</span></span><span class=line><span class=cl>        │           │           │
+</span></span><span class=line><span class=cl>   DlMalloc     Region     BumpPointer
+</span></span><span class=line><span class=cl>      高          中          低（50%）
+</span></span><span class=line><span class=cl>        │           │           │
+</span></span><span class=line><span class=cl>        └───────────┼───────────┘
+</span></span><span class=line><span class=cl>                    │
+</span></span><span class=line><span class=cl>              线程扩展性（越高越好）
+</span></span><span class=line><span class=cl>                    │
+</span></span><span class=line><span class=cl>        ┌───────────┼───────────┐
+</span></span><span class=line><span class=cl>        │           │           │
+</span></span><span class=line><span class=cl>   RosAlloc     Region     DlMalloc
+</span></span><span class=line><span class=cl>      高          高          低
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=第九章线程本地分配优化>第九章：线程本地分配优化</h1><h2 id=91-为什么需要线程本地分配>9.1 为什么需要线程本地分配</h2><p><strong>问题</strong>：多线程场景下全局锁竞争严重。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>无线程本地优化：
+</span></span><span class=line><span class=cl>Thread 1 ──┐
+</span></span><span class=line><span class=cl>Thread 2 ──┼──► [全局锁] ──► 分配
+</span></span><span class=line><span class=cl>Thread 3 ──┤
+</span></span><span class=line><span class=cl>Thread 4 ──┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>等待时间 = 线程数 × 单次分配时间
+</span></span></code></pre></td></tr></table></div></div><p><strong>解决方案</strong>：每个线程持有独立缓冲区。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>有线程本地优化：
+</span></span><span class=line><span class=cl>Thread 1 ──► [TLAB 1] ──► 无锁分配
+</span></span><span class=line><span class=cl>Thread 2 ──► [TLAB 2] ──► 无锁分配
+</span></span><span class=line><span class=cl>Thread 3 ──► [TLAB 3] ──► 无锁分配
+</span></span><span class=line><span class=cl>Thread 4 ──► [TLAB 4] ──► 无锁分配
+</span></span></code></pre></td></tr></table></div></div><h2 id=92-各分配器的实现>9.2 各分配器的实现</h2><table><thead><tr><th>分配器</th><th>线程本地机制</th><th>覆盖范围</th><th>数据结构</th></tr></thead><tbody><tr><td><strong>RosAlloc</strong></td><td>Thread::rosalloc_runs_[16]</td><td>≤128 bytes</td><td>Run 数组</td></tr><tr><td><strong>BumpPointer</strong></td><td>TLAB 块</td><td>全部</td><td>begin/end 指针</td></tr><tr><td><strong>Region</strong></td><td>TLAB（Region 内）</td><td>全部</td><td>top_ 指针</td></tr><tr><td><strong>DlMalloc</strong></td><td>无</td><td>-</td><td>-</td></tr></tbody></table><h2 id=93-rosalloc-线程本地-run>9.3 RosAlloc 线程本地 Run</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 分配路径（简化）
+</span></span></span><span class=line><span class=cl><span class=kt>void</span><span class=o>*</span> <span class=n>RosAlloc</span><span class=o>::</span><span class=n>Alloc</span><span class=p>(</span><span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span> <span class=n>size_t</span> <span class=n>size</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>size_t</span> <span class=n>bracket_idx</span> <span class=o>=</span> <span class=n>SizeToBracketIndex</span><span class=p>(</span><span class=n>size</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>bracket_idx</span> <span class=o>&lt;</span> <span class=n>kNumThreadLocalSizeBrackets</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 线程本地分配（无锁）
+</span></span></span><span class=line><span class=cl>        <span class=n>Run</span><span class=o>*</span> <span class=n>run</span> <span class=o>=</span> <span class=n>self</span><span class=o>-&gt;</span><span class=n>GetRosAllocRun</span><span class=p>(</span><span class=n>bracket_idx</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>run</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>return</span> <span class=n>run</span><span class=o>-&gt;</span><span class=n>AllocSlot</span><span class=p>();</span>  <span class=c1>// 无锁！
+</span></span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 共享分配（需要锁）
+</span></span></span><span class=line><span class=cl>    <span class=n>MutexLock</span> <span class=nf>lock</span><span class=p>(</span><span class=n>size_bracket_locks_</span><span class=p>[</span><span class=n>bracket_idx</span><span class=p>]);</span>
+</span></span><span class=line><span class=cl>    <span class=n>Run</span><span class=o>*</span> <span class=n>run</span> <span class=o>=</span> <span class=n>current_runs_</span><span class=p>[</span><span class=n>bracket_idx</span><span class=p>];</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>run</span><span class=o>-&gt;</span><span class=n>AllocSlot</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=94-revoke-机制>9.4 Revoke 机制</h2><p>GC 前需要回收所有线程的本地缓冲，保证堆一致性：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/gc/heap.cc
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>Heap</span><span class=o>::</span><span class=n>RevokeAllThreadLocalBuffers</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>bump_pointer_space_</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>bump_pointer_space_</span><span class=o>-&gt;</span><span class=n>RevokeAllThreadLocalBuffers</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>region_space_</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>region_space_</span><span class=o>-&gt;</span><span class=n>RevokeAllThreadLocalBuffers</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// RosAlloc 的 Revoke 在 RosAllocSpace 中处理
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=第十章总结>第十章：总结</h1><h2 id=101-分配器选择决策树>10.1 分配器选择决策树</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>                    对象分配请求
+</span></span><span class=line><span class=cl>                         │
+</span></span><span class=line><span class=cl>                         ▼
+</span></span><span class=line><span class=cl>              ┌─────────────────────┐
+</span></span><span class=line><span class=cl>              │  对象大小 &gt; 12KB?   │
+</span></span><span class=line><span class=cl>              └─────────────────────┘
+</span></span><span class=line><span class=cl>                    │         │
+</span></span><span class=line><span class=cl>                   Yes        No
+</span></span><span class=line><span class=cl>                    │         │
+</span></span><span class=line><span class=cl>                    ▼         ▼
+</span></span><span class=line><span class=cl>           LargeObjectSpace   │
+</span></span><span class=line><span class=cl>                               │
+</span></span><span class=line><span class=cl>                               ▼
+</span></span><span class=line><span class=cl>                    ┌─────────────────────┐
+</span></span><span class=line><span class=cl>                    │  GC 类型是什么?     │
+</span></span><span class=line><span class=cl>                    └─────────────────────┘
+</span></span><span class=line><span class=cl>                         │
+</span></span><span class=line><span class=cl>         ┌───────────────┼───────────────┐
+</span></span><span class=line><span class=cl>         ▼               ▼               ▼
+</span></span><span class=line><span class=cl>        CC           SS/MC/CMC        CMS/MS
+</span></span><span class=line><span class=cl>         │               │               │
+</span></span><span class=line><span class=cl>         ▼               ▼               ▼
+</span></span><span class=line><span class=cl>   RegionSpace    BumpPointerSpace  RosAllocSpace
+</span></span><span class=line><span class=cl>         │               │               │
+</span></span><span class=line><span class=cl>         └───────────────┴───────────────┘
+</span></span><span class=line><span class=cl>                         │
+</span></span><span class=line><span class=cl>                         ▼
+</span></span><span class=line><span class=cl>              + DlMallocSpace (non_moving)
+</span></span></code></pre></td></tr></table></div></div><h2 id=102-设计启示>10.2 设计启示</h2><p><strong>1. 没有万能分配器</strong></p><p>每种分配器都在特定维度优化：</p><ul><li>DlMalloc：碎片管理</li><li>RosAlloc：分配速度 + 线程扩展</li><li>BumpPointer：极致速度</li><li>Region：并发 + 区域化</li></ul><p><strong>2. 场景驱动设计</strong></p><ul><li>Zygote → DlMalloc（长期存活，不可移动）</li><li>App 主堆 → RosAlloc（高频小对象）</li><li>移动式 GC → BumpPointer（整块回收）</li><li>并发复制 → Region（读屏障协作）</li></ul><p><strong>3. 权衡是永恒主题</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>速度 ←→ 碎片
+</span></span><span class=line><span class=cl>线程扩展 ←→ 内存开销
+</span></span><span class=line><span class=cl>简单 ←→ 功能
+</span></span></code></pre></td></tr></table></div></div><h2 id=103-关键配置参数速查>10.3 关键配置参数速查</h2><table><thead><tr><th>参数</th><th>值</th><th>作用</th></tr></thead><tbody><tr><td><code>kUseRosAlloc</code></td><td>true</td><td>默认使用 RosAlloc</td></tr><tr><td><code>kLargeSizeThreshold</code></td><td>2048</td><td>RosAlloc 大对象阈值</td></tr><tr><td><code>kNumThreadLocalSizeBrackets</code></td><td>16</td><td>线程本地 bracket 数</td></tr><tr><td><code>kMinLargeObjectThreshold</code></td><td>12KB</td><td>大对象空间阈值</td></tr><tr><td><code>kRegionSize</code></td><td>256KB</td><td>Region 大小</td></tr><tr><td><code>kPartialTlabSize</code></td><td>16KB</td><td>TLAB 大小</td></tr></tbody></table><hr><h1 id=附录>附录</h1><h2 id=a-源码路径>A. 源码路径</h2><table><thead><tr><th>模块</th><th>路径</th></tr></thead><tbody><tr><td>分配器选择</td><td><code>art/runtime/gc/heap.cc</code></td></tr><tr><td>DlMallocSpace</td><td><code>art/runtime/gc/space/dlmalloc_space.cc</code></td></tr><tr><td>RosAllocSpace</td><td><code>art/runtime/gc/space/rosalloc_space.cc</code></td></tr><tr><td>RosAlloc</td><td><code>art/runtime/gc/allocator/rosalloc.cc</code></td></tr><tr><td>BumpPointerSpace</td><td><code>art/runtime/gc/space/bump_pointer_space.cc</code></td></tr><tr><td>RegionSpace</td><td><code>art/runtime/gc/space/region_space.cc</code></td></tr><tr><td>LargeObjectSpace</td><td><code>art/runtime/gc/space/large_object_space.cc</code></td></tr></tbody></table><h2 id=b-调试命令>B. 调试命令</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 查看堆信息</span>
+</span></span><span class=line><span class=cl>adb shell am dumpheap -n &lt;pid&gt;
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># GC 日志</span>
+</span></span><span class=line><span class=cl>adb logcat -s art:*
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 详细 GC 日志</span>
+</span></span><span class=line><span class=cl>adb shell setprop debug.art.gc verbose
+</span></span><span class=line><span class=cl>adb logcat -s art:*
+</span></span></code></pre></td></tr></table></div></div><h2 id=c-参考资料>C. 参考资料</h2><ol><li>AOSP 源码：https://cs.android.com/android/platform/superproject/+/master:art/runtime/gc/</li><li>RosAlloc 论文：https://dl.acm.org/doi/10.1145/2636906.2636907</li><li>ART GC 设计：https://source.android.com/docs/core/runtime/gc</li></ol></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Apr 23, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026042101/ title="Android ART 虚拟机启动流程深度解析">Android ART 虚拟机启动流程深度解析</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
