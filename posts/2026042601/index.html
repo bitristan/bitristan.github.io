@@ -1,0 +1,1317 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Android ART 虚拟机 ClassLinker 深度解析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.160.1"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Apr 26, 2026
+- 8 minute read</p><h1 class=entry-title>Android ART 虚拟机 ClassLinker 深度解析</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>ClassLinker 是 Android ART 运行时的核心组件，负责 Java 类的加载、链接和初始化。它是连接 DEX 文件与运行时内存结构的桥梁，实现了 Java 虚拟机规范中定义的类加载机制。</p><p>本文基于 Android 15 (API 35) 的 ART 源码，深入分析 ClassLinker 的架构设计与实现细节。</p><hr><h1 id=一classlinker-的核心职责>一、ClassLinker 的核心职责</h1><p>ClassLinker 的主要职责包括：</p><table><thead><tr><th>职责</th><th>描述</th></tr></thead><tbody><tr><td><strong>类查找 (FindClass)</strong></td><td>根据类描述符查找并加载类</td></tr><tr><td><strong>类定义 (DefineClass)</strong></td><td>从 DEX 文件定义新的类</td></tr><tr><td><strong>类加载 (LoadClass)</strong></td><td>加载类的字段和方法</td></tr><tr><td><strong>类链接 (LinkClass)</strong></td><td>解析类的继承关系、实现接口、布局字段</td></tr><tr><td><strong>类初始化 (InitializeClass)</strong></td><td>执行静态初始化器和父类初始化</td></tr><tr><td><strong>类验证 (VerifyClass)</strong></td><td>字节码验证确保类型安全</td></tr><tr><td><strong>资源解析</strong></td><td>解析字符串、类型、方法、字段等</td></tr></tbody></table><hr><h1 id=二classlinker-的核心数据结构>二、ClassLinker 的核心数据结构</h1><h2 id=21-类定义概览>2.1 类定义概览</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/class_linker.h
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>ClassLinker</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl> <span class=k>public</span><span class=o>:</span>
+</span></span><span class=line><span class=cl>  <span class=k>explicit</span> <span class=n>ClassLinker</span><span class=p>(</span><span class=n>InternTable</span><span class=o>*</span> <span class=n>intern_table</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                        <span class=kt>bool</span> <span class=n>fast_class_not_found_exceptions</span> <span class=o>=</span> <span class=nb>true</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=o>~</span><span class=n>ClassLinker</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl> <span class=k>private</span><span class=o>:</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// Boot Class Path 相关
+</span></span></span><span class=line><span class=cl>  <span class=n>std</span><span class=o>::</span><span class=n>vector</span><span class=o>&lt;</span><span class=k>const</span> <span class=n>DexFile</span><span class=o>*&gt;</span> <span class=n>boot_class_path_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=n>std</span><span class=o>::</span><span class=n>vector</span><span class=o>&lt;</span><span class=n>std</span><span class=o>::</span><span class=n>unique_ptr</span><span class=o>&lt;</span><span class=k>const</span> <span class=n>DexFile</span><span class=o>&gt;&gt;</span> <span class=n>boot_dex_files_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// DexCache 注册表
+</span></span></span><span class=line><span class=cl>  <span class=n>std</span><span class=o>::</span><span class=n>unordered_map</span><span class=o>&lt;</span><span class=k>const</span> <span class=n>DexFile</span><span class=o>*</span><span class=p>,</span> <span class=n>DexCacheData</span><span class=o>&gt;</span> <span class=n>dex_caches_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// ClassLoader 数据
+</span></span></span><span class=line><span class=cl>  <span class=n>std</span><span class=o>::</span><span class=n>list</span><span class=o>&lt;</span><span class=n>ClassLoaderData</span><span class=o>&gt;</span> <span class=n>class_loaders_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// Boot Class Table
+</span></span></span><span class=line><span class=cl>  <span class=n>std</span><span class=o>::</span><span class=n>unique_ptr</span><span class=o>&lt;</span><span class=n>ClassTable</span><span class=o>&gt;</span> <span class=n>boot_class_table_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// Class Roots (核心类缓存)
+</span></span></span><span class=line><span class=cl>  <span class=n>GcRoot</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>ObjectArray</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;&gt;</span> <span class=n>class_roots_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 各种 Trampoline
+</span></span></span><span class=line><span class=cl>  <span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>jni_dlsym_lookup_trampoline_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>quick_resolution_trampoline_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>quick_imt_conflict_trampoline_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>quick_generic_jni_trampoline_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>quick_to_interpreter_bridge_trampoline_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>nterp_trampoline_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 类层次分析 (用于去虚拟化优化)
+</span></span></span><span class=line><span class=cl>  <span class=n>std</span><span class=o>::</span><span class=n>unique_ptr</span><span class=o>&lt;</span><span class=n>ClassHierarchyAnalysis</span><span class=o>&gt;</span> <span class=n>cha_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=22-classtable---类查找表>2.2 ClassTable - 类查找表</h2><p>每个 ClassLoader 都有一个 ClassTable，用于存储已加载的类：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/class_table.h
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>ClassTable</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl> <span class=k>public</span><span class=o>:</span>
+</span></span><span class=line><span class=cl>  <span class=k>class</span> <span class=nc>TableSlot</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>   <span class=k>private</span><span class=o>:</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 存储类指针和描述符哈希的低 bits
+</span></span></span><span class=line><span class=cl>    <span class=k>mutable</span> <span class=n>Atomic</span><span class=o>&lt;</span><span class=kt>uint32_t</span><span class=o>&gt;</span> <span class=n>data_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=k>static</span> <span class=k>constexpr</span> <span class=kt>uint32_t</span> <span class=n>kHashMask</span> <span class=o>=</span> <span class=n>kObjectAlignment</span> <span class=o>-</span> <span class=mi>1</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>};</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 使用 HashSet 存储类
+</span></span></span><span class=line><span class=cl>  <span class=n>HashSet</span><span class=o>&lt;</span><span class=n>TableSlot</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>          <span class=n>ClassDescriptorHash</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>          <span class=n>ClassDescriptorEquals</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>          <span class=n>TableSlotEmptyFn</span><span class=o>&gt;</span> <span class=n>classes_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>设计亮点：</strong></p><ul><li><code>TableSlot</code> 将类指针和哈希值压缩在 32 位中</li><li>支持并发读取，使用原子操作</li><li>低 bits 存储哈希值，高 bits 存储压缩的类指针</li></ul><h2 id=23-classroot---核心类缓存>2.3 ClassRoot - 核心类缓存</h2><p>ClassRoot 是预定义的核心类索引，避免重复查找：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/class_root.h
+</span></span></span><span class=line><span class=cl><span class=k>enum</span> <span class=k>class</span> <span class=nc>ClassRoot</span> <span class=o>:</span> <span class=kt>uint32_t</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 核心类
+</span></span></span><span class=line><span class=cl>  <span class=n>kJavaLangClass</span><span class=p>,</span>           <span class=c1>// java.lang.Class
+</span></span></span><span class=line><span class=cl>  <span class=n>kJavaLangObject</span><span class=p>,</span>          <span class=c1>// java.lang.Object
+</span></span></span><span class=line><span class=cl>  <span class=n>kJavaLangString</span><span class=p>,</span>          <span class=c1>// java.lang.String
+</span></span></span><span class=line><span class=cl>  <span class=n>kJavaLangDexCache</span><span class=p>,</span>        <span class=c1>// java.lang.DexCache
+</span></span></span><span class=line><span class=cl>  <span class=n>kJavaLangRefReference</span><span class=p>,</span>    <span class=c1>// java.lang.ref.Reference
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 反射相关
+</span></span></span><span class=line><span class=cl>  <span class=n>kJavaLangReflectConstructor</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>  <span class=n>kJavaLangReflectField</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>  <span class=n>kJavaLangReflectMethod</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>  <span class=n>kJavaLangReflectProxy</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// MethodHandle 相关
+</span></span></span><span class=line><span class=cl>  <span class=n>kJavaLangInvokeMethodHandle</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>  <span class=n>kJavaLangInvokeMethodType</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>  <span class=n>kJavaLangInvokeVarHandle</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 数组类
+</span></span></span><span class=line><span class=cl>  <span class=n>kClassArrayClass</span><span class=p>,</span>         <span class=c1>// Class[]
+</span></span></span><span class=line><span class=cl>  <span class=n>kObjectArrayClass</span><span class=p>,</span>        <span class=c1>// Object[]
+</span></span></span><span class=line><span class=cl>  <span class=n>kBooleanArrayClass</span><span class=p>,</span>       <span class=c1>// boolean[]
+</span></span></span><span class=line><span class=cl>  <span class=n>kByteArrayClass</span><span class=p>,</span>          <span class=c1>// byte[]
+</span></span></span><span class=line><span class=cl>  <span class=c1>// ... 更多数组类
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 原始类型
+</span></span></span><span class=line><span class=cl>  <span class=n>kPrimitiveBoolean</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>  <span class=n>kPrimitiveByte</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>  <span class=n>kPrimitiveChar</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// ...
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=n>kMax</span><span class=p>,</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=24-dexcachedata---dexcache-元数据>2.4 DexCacheData - DexCache 元数据</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=k>struct</span> <span class=nc>DexCacheData</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>jweak</span> <span class=n>weak_root</span><span class=p>;</span>           <span class=c1>// DexCache 的弱引用，支持类卸载
+</span></span></span><span class=line><span class=cl>  <span class=n>ClassTable</span><span class=o>*</span> <span class=n>class_table</span><span class=p>;</span>   <span class=c1>// 关联的 ClassTable
+</span></span></span><span class=line><span class=cl>  <span class=kt>uint64_t</span> <span class=n>registration_index</span><span class=p>;</span> <span class=c1>// 注册顺序，用于确定性编译
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=三classlinker-初始化>三、ClassLinker 初始化</h1><p>ClassLinker 支持两种初始化方式：</p><h2 id=31-从-boot-image-初始化-生产环境>3.1 从 Boot Image 初始化 (生产环境)</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>bool</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>InitFromBootImage</span><span class=p>(</span><span class=n>std</span><span class=o>::</span><span class=n>string</span><span class=o>*</span> <span class=n>error_msg</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>Runtime</span><span class=o>*</span> <span class=k>const</span> <span class=n>runtime</span> <span class=o>=</span> <span class=n>Runtime</span><span class=o>::</span><span class=n>Current</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=n>Thread</span><span class=o>*</span> <span class=k>const</span> <span class=n>self</span> <span class=o>=</span> <span class=n>Thread</span><span class=o>::</span><span class=n>Current</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=n>gc</span><span class=o>::</span><span class=n>Heap</span><span class=o>*</span> <span class=k>const</span> <span class=n>heap</span> <span class=o>=</span> <span class=n>runtime</span><span class=o>-&gt;</span><span class=n>GetHeap</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 获取 Boot Image Spaces
+</span></span></span><span class=line><span class=cl>  <span class=n>std</span><span class=o>::</span><span class=n>vector</span><span class=o>&lt;</span><span class=n>gc</span><span class=o>::</span><span class=n>space</span><span class=o>::</span><span class=n>ImageSpace</span><span class=o>*&gt;</span> <span class=n>spaces</span> <span class=o>=</span> <span class=n>heap</span><span class=o>-&gt;</span><span class=n>GetBootImageSpaces</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=k>const</span> <span class=n>ImageHeader</span><span class=o>&amp;</span> <span class=n>image_header</span> <span class=o>=</span> <span class=n>spaces</span><span class=p>[</span><span class=mi>0</span><span class=p>]</span><span class=o>-&gt;</span><span class=n>GetImageHeader</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 设置指针大小
+</span></span></span><span class=line><span class=cl>  <span class=n>image_pointer_size_</span> <span class=o>=</span> <span class=n>image_header</span><span class=p>.</span><span class=n>GetPointerSize</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 从 Image 恢复运行时方法
+</span></span></span><span class=line><span class=cl>  <span class=n>runtime</span><span class=o>-&gt;</span><span class=n>SetResolutionMethod</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>image_header</span><span class=p>.</span><span class=n>GetImageMethod</span><span class=p>(</span><span class=n>ImageHeader</span><span class=o>::</span><span class=n>kResolutionMethod</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>  <span class=n>runtime</span><span class=o>-&gt;</span><span class=n>SetImtConflictMethod</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>image_header</span><span class=p>.</span><span class=n>GetImageMethod</span><span class=p>(</span><span class=n>ImageHeader</span><span class=o>::</span><span class=n>kImtConflictMethod</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>  <span class=n>runtime</span><span class=o>-&gt;</span><span class=n>SetImtUnimplementedMethod</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>image_header</span><span class=p>.</span><span class=n>GetImageMethod</span><span class=p>(</span><span class=n>ImageHeader</span><span class=o>::</span><span class=n>kImtUnimplementedMethod</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 恢复 Callee Save 方法
+</span></span></span><span class=line><span class=cl>  <span class=n>runtime</span><span class=o>-&gt;</span><span class=n>SetCalleeSaveMethod</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>image_header</span><span class=p>.</span><span class=n>GetImageMethod</span><span class=p>(</span><span class=n>ImageHeader</span><span class=o>::</span><span class=n>kSaveAllCalleeSavesMethod</span><span class=p>),</span>
+</span></span><span class=line><span class=cl>      <span class=n>CalleeSaveType</span><span class=o>::</span><span class=n>kSaveAllCalleeSaves</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// ... 更多 callee save 方法
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 获取 Class Roots
+</span></span></span><span class=line><span class=cl>  <span class=n>class_roots_</span> <span class=o>=</span> <span class=n>GcRoot</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>ObjectArray</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;&gt;</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>image_header</span><span class=p>.</span><span class=n>GetImageRoot</span><span class=p>(</span><span class=n>ImageHeader</span><span class=o>::</span><span class=n>kClassRoots</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 设置各种 Trampoline
+</span></span></span><span class=line><span class=cl>  <span class=n>jni_dlsym_lookup_trampoline_</span> <span class=o>=</span>
+</span></span><span class=line><span class=cl>      <span class=n>image_header</span><span class=p>.</span><span class=n>GetImageMethod</span><span class=p>(</span><span class=n>ImageHeader</span><span class=o>::</span><span class=n>kJniDlsymLookup</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=n>quick_resolution_trampoline_</span> <span class=o>=</span>
+</span></span><span class=line><span class=cl>      <span class=n>image_header</span><span class=p>.</span><span class=n>GetImageMethod</span><span class=p>(</span><span class=n>ImageHeader</span><span class=o>::</span><span class=n>kQuickResolutionTrampoline</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// ...
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=nb>true</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=32-无-image-初始化-dex2oat-编译时>3.2 无 Image 初始化 (dex2oat 编译时)</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>bool</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>InitWithoutImage</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>std</span><span class=o>::</span><span class=n>vector</span><span class=o>&lt;</span><span class=n>std</span><span class=o>::</span><span class=n>unique_ptr</span><span class=o>&lt;</span><span class=k>const</span> <span class=n>DexFile</span><span class=o>&gt;&gt;</span> <span class=n>boot_class_path</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>std</span><span class=o>::</span><span class=n>string</span><span class=o>*</span> <span class=n>error_msg</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>Thread</span><span class=o>*</span> <span class=k>const</span> <span class=n>self</span> <span class=o>=</span> <span class=n>Thread</span><span class=o>::</span><span class=n>Current</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=n>gc</span><span class=o>::</span><span class=n>Heap</span><span class=o>*</span> <span class=k>const</span> <span class=n>heap</span> <span class=o>=</span> <span class=n>runtime</span><span class=o>-&gt;</span><span class=n>GetHeap</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 首先创建 java.lang.Class (它是所有类的类)
+</span></span></span><span class=line><span class=cl>  <span class=k>auto</span> <span class=n>class_class_size</span> <span class=o>=</span> <span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>::</span><span class=n>ClassClassSize</span><span class=p>(</span><span class=n>image_pointer_size_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>java_lang_Class</span><span class=p>(</span><span class=n>hs</span><span class=p>.</span><span class=n>NewHandle</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>heap</span><span class=o>-&gt;</span><span class=n>AllocNonMovableObject</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=k>nullptr</span><span class=p>,</span> <span class=n>class_class_size</span><span class=p>,</span> <span class=n>VoidFunctor</span><span class=p>())));</span>
+</span></span><span class=line><span class=cl>  <span class=n>java_lang_Class</span><span class=o>-&gt;</span><span class=n>SetClass</span><span class=p>(</span><span class=n>java_lang_Class</span><span class=p>.</span><span class=n>Get</span><span class=p>());</span>  <span class=c1>// Class 的 class 是它自己
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 创建 Class[] 数组类
+</span></span></span><span class=line><span class=cl>  <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>class_array_class</span><span class=p>(</span><span class=n>hs</span><span class=p>.</span><span class=n>NewHandle</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>AllocClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>java_lang_Class</span><span class=p>.</span><span class=n>Get</span><span class=p>(),</span>
+</span></span><span class=line><span class=cl>                 <span class=n>mirror</span><span class=o>::</span><span class=n>ObjectArray</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;::</span><span class=n>ClassSize</span><span class=p>(</span><span class=n>image_pointer_size_</span><span class=p>))));</span>
+</span></span><span class=line><span class=cl>  <span class=n>class_array_class</span><span class=o>-&gt;</span><span class=n>SetComponentType</span><span class=p>(</span><span class=n>java_lang_Class</span><span class=p>.</span><span class=n>Get</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 创建 java.lang.Object (所有类的超类)
+</span></span></span><span class=line><span class=cl>  <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>java_lang_Object</span><span class=p>(</span><span class=n>hs</span><span class=p>.</span><span class=n>NewHandle</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>AllocClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>java_lang_Class</span><span class=p>.</span><span class=n>Get</span><span class=p>(),</span>
+</span></span><span class=line><span class=cl>                 <span class=n>mirror</span><span class=o>::</span><span class=n>Object</span><span class=o>::</span><span class=n>ClassSize</span><span class=p>(</span><span class=n>image_pointer_size_</span><span class=p>))));</span>
+</span></span><span class=line><span class=cl>  <span class=n>java_lang_Class</span><span class=o>-&gt;</span><span class=n>SetSuperClass</span><span class=p>(</span><span class=n>java_lang_Object</span><span class=p>.</span><span class=n>Get</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. 创建 Class Roots 数组
+</span></span></span><span class=line><span class=cl>  <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>ObjectArray</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;&gt;</span> <span class=n>class_roots</span><span class=p>(</span><span class=n>hs</span><span class=p>.</span><span class=n>NewHandle</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>mirror</span><span class=o>::</span><span class=n>ObjectArray</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;::</span><span class=n>Alloc</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>          <span class=n>self</span><span class=p>,</span> <span class=n>class_array_class</span><span class=p>.</span><span class=n>Get</span><span class=p>(),</span> <span class=n>ClassRoot</span><span class=o>::</span><span class=n>kMax</span><span class=p>)));</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 5. 设置 Class Roots
+</span></span></span><span class=line><span class=cl>  <span class=n>SetClassRoot</span><span class=p>(</span><span class=n>ClassRoot</span><span class=o>::</span><span class=n>kJavaLangClass</span><span class=p>,</span> <span class=n>java_lang_Class</span><span class=p>.</span><span class=n>Get</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>  <span class=n>SetClassRoot</span><span class=p>(</span><span class=n>ClassRoot</span><span class=o>::</span><span class=n>kJavaLangObject</span><span class=p>,</span> <span class=n>java_lang_Object</span><span class=p>.</span><span class=n>Get</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// ...
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 6. 加载 Boot Class Path
+</span></span></span><span class=line><span class=cl>  <span class=k>for</span> <span class=p>(</span><span class=k>auto</span><span class=o>&amp;</span> <span class=nl>dex_file</span> <span class=p>:</span> <span class=n>boot_class_path</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>boot_class_path_</span><span class=p>.</span><span class=n>push_back</span><span class=p>(</span><span class=n>dex_file</span><span class=p>.</span><span class=n>get</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>    <span class=n>boot_dex_files_</span><span class=p>.</span><span class=n>push_back</span><span class=p>(</span><span class=n>std</span><span class=o>::</span><span class=n>move</span><span class=p>(</span><span class=n>dex_file</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 7. 创建原始类型类
+</span></span></span><span class=line><span class=cl>  <span class=n>CreatePrimitiveClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>Primitive</span><span class=o>::</span><span class=n>kPrimBoolean</span><span class=p>,</span> <span class=n>ClassRoot</span><span class=o>::</span><span class=n>kPrimitiveBoolean</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=n>CreatePrimitiveClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>Primitive</span><span class=o>::</span><span class=n>kPrimByte</span><span class=p>,</span> <span class=n>ClassRoot</span><span class=o>::</span><span class=n>kPrimitiveByte</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// ...
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 8. 完成初始化
+</span></span></span><span class=line><span class=cl>  <span class=n>FinishInit</span><span class=p>(</span><span class=n>self</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=nb>true</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=四类加载流程详解>四、类加载流程详解</h1><h2 id=41-findclass---类查找入口>4.1 FindClass - 类查找入口</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>FindClass</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=kt>char</span><span class=o>*</span> <span class=n>descriptor</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>size_t</span> <span class=n>descriptor_length</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>ClassLoader</span><span class=o>&gt;</span> <span class=n>class_loader</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 处理原始类型
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>descriptor_length</span> <span class=o>==</span> <span class=mi>1u</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nf>FindPrimitiveClass</span><span class=p>(</span><span class=n>descriptor</span><span class=p>[</span><span class=mi>0</span><span class=p>]);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 计算描述符哈希
+</span></span></span><span class=line><span class=cl>  <span class=k>const</span> <span class=n>size_t</span> <span class=n>hash</span> <span class=o>=</span> <span class=n>ComputeModifiedUtf8Hash</span><span class=p>(</span><span class=n>descriptor</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 在已加载类表中查找
+</span></span></span><span class=line><span class=cl>  <span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass</span> <span class=o>=</span> <span class=n>LookupClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>descriptor</span><span class=p>,</span> <span class=n>hash</span><span class=p>,</span> <span class=n>class_loader</span><span class=p>.</span><span class=n>Get</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>klass</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nf>EnsureResolved</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>descriptor</span><span class=p>,</span> <span class=n>klass</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. 类未加载，需要加载
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>descriptor</span><span class=p>[</span><span class=mi>0</span><span class=p>]</span> <span class=o>!=</span> <span class=sc>&#39;[&#39;</span> <span class=o>&amp;&amp;</span> <span class=n>class_loader</span> <span class=o>==</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// Boot ClassLoader 加载非数组类
+</span></span></span><span class=line><span class=cl>    <span class=n>ClassPathEntry</span> <span class=n>pair</span> <span class=o>=</span> <span class=n>FindInClassPath</span><span class=p>(</span><span class=n>descriptor</span><span class=p>,</span> <span class=n>hash</span><span class=p>,</span> <span class=n>boot_class_path_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>pair</span><span class=p>.</span><span class=n>second</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=k>return</span> <span class=nf>DefineClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>descriptor</span><span class=p>,</span> <span class=n>descriptor_length</span><span class=p>,</span> <span class=n>hash</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                         <span class=n>ScopedNullHandle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>ClassLoader</span><span class=o>&gt;</span><span class=p>(),</span>
+</span></span><span class=line><span class=cl>                         <span class=o>*</span><span class=n>pair</span><span class=p>.</span><span class=n>first</span><span class=p>,</span> <span class=o>*</span><span class=n>pair</span><span class=p>.</span><span class=n>second</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=nf>if</span> <span class=p>(</span><span class=n>descriptor</span><span class=p>[</span><span class=mi>0</span><span class=p>]</span> <span class=o>==</span> <span class=sc>&#39;[&#39;</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 数组类
+</span></span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>CreateArrayClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>descriptor</span><span class=p>,</span> <span class=n>descriptor_length</span><span class=p>,</span> <span class=n>hash</span><span class=p>,</span> <span class=n>class_loader</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 应用 ClassLoader
+</span></span></span><span class=line><span class=cl>    <span class=kt>bool</span> <span class=n>success</span> <span class=o>=</span> <span class=n>FindClassInBaseDexClassLoader</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>descriptor</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                                                  <span class=n>descriptor_length</span><span class=p>,</span> <span class=n>hash</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                                                  <span class=n>class_loader</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>result_ptr</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>success</span> <span class=o>&amp;&amp;</span> <span class=n>result_ptr</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=k>return</span> <span class=n>result_ptr</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=k>nullptr</span><span class=p>;</span>  <span class=c1>// 类未找到
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=42-defineclass---类定义>4.2 DefineClass - 类定义</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>DefineClass</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=kt>char</span><span class=o>*</span> <span class=n>descriptor</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>size_t</span> <span class=n>descriptor_length</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>size_t</span> <span class=n>hash</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>ClassLoader</span><span class=o>&gt;</span> <span class=n>class_loader</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=n>DexFile</span><span class=o>&amp;</span> <span class=n>dex_file</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=n>dex</span><span class=o>::</span><span class=n>ClassDef</span><span class=o>&amp;</span> <span class=n>dex_class_def</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=n>StackHandleScope</span><span class=o>&lt;</span><span class=mi>3</span><span class=o>&gt;</span> <span class=n>hs</span><span class=p>(</span><span class=n>self</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass</span><span class=p>(</span><span class=n>hs</span><span class=p>.</span><span class=n>NewHandle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span><span class=p>(</span><span class=k>nullptr</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 处理特殊核心类 (初始化阶段)
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>UNLIKELY</span><span class=p>(</span><span class=o>!</span><span class=n>init_done_</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>descriptor</span> <span class=o>==</span> <span class=s>&#34;Ljava/lang/Object;&#34;</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=n>klass</span><span class=p>.</span><span class=n>Assign</span><span class=p>(</span><span class=n>GetClassRoot</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Object</span><span class=o>&gt;</span><span class=p>(</span><span class=k>this</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>descriptor</span> <span class=o>==</span> <span class=s>&#34;Ljava/lang/Class;&#34;</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=n>klass</span><span class=p>.</span><span class=n>Assign</span><span class=p>(</span><span class=n>GetClassRoot</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span><span class=p>(</span><span class=k>this</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ...
+</span></span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 分配 Class 对象
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>klass</span> <span class=o>==</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>klass</span><span class=p>.</span><span class=n>Assign</span><span class=p>(</span><span class=n>AllocClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>SizeOfClassWithoutEmbeddedTables</span><span class=p>(</span><span class=n>dex_file</span><span class=p>,</span> <span class=n>dex_class_def</span><span class=p>)));</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 设置类基本信息
+</span></span></span><span class=line><span class=cl>  <span class=n>SetupClass</span><span class=p>(</span><span class=n>dex_file</span><span class=p>,</span> <span class=n>dex_class_def</span><span class=p>,</span> <span class=n>klass</span><span class=p>,</span> <span class=n>class_loader</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. 注册到 ClassTable (可能在其他线程被访问)
+</span></span></span><span class=line><span class=cl>  <span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>existing</span> <span class=o>=</span> <span class=n>InsertClass</span><span class=p>(</span><span class=n>descriptor</span><span class=p>,</span> <span class=n>klass</span><span class=p>.</span><span class=n>Get</span><span class=p>(),</span> <span class=n>hash</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>existing</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 已有同名类，返回已有的
+</span></span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nf>EnsureResolved</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>descriptor</span><span class=p>,</span> <span class=n>existing</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 5. 加载类内容 (字段、方法)
+</span></span></span><span class=line><span class=cl>  <span class=n>LoadClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>dex_file</span><span class=p>,</span> <span class=n>dex_class_def</span><span class=p>,</span> <span class=n>klass</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 6. 链接类
+</span></span></span><span class=line><span class=cl>  <span class=n>MutableHandle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>h_new_class</span><span class=p>(</span><span class=n>hs</span><span class=p>.</span><span class=n>NewHandle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span><span class=p>(</span><span class=k>nullptr</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>LinkClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>descriptor</span><span class=p>,</span> <span class=n>klass</span><span class=p>,</span> <span class=n>interfaces</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>h_new_class</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=k>nullptr</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 7. 返回链接后的类
+</span></span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=n>h_new_class</span><span class=p>.</span><span class=n>Get</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=43-loadclass---加载类内容>4.3 LoadClass - 加载类内容</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>void</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>LoadClass</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=n>DexFile</span><span class=o>&amp;</span> <span class=n>dex_file</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=n>dex</span><span class=o>::</span><span class=n>ClassDef</span><span class=o>&amp;</span> <span class=n>dex_class_def</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=n>ClassAccessor</span> <span class=nf>accessor</span><span class=p>(</span><span class=n>dex_file</span><span class=p>,</span> <span class=n>dex_class_def</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 禁止线程挂起，确保字段和方法数组完整
+</span></span></span><span class=line><span class=cl>  <span class=n>ScopedAssertNoThreadSuspension</span> <span class=nf>nts</span><span class=p>(</span><span class=n>__FUNCTION__</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 获取分配器
+</span></span></span><span class=line><span class=cl>  <span class=n>LinearAlloc</span><span class=o>*</span> <span class=k>const</span> <span class=n>allocator</span> <span class=o>=</span> <span class=n>GetAllocatorForClassLoader</span><span class=p>(</span><span class=n>klass</span><span class=o>-&gt;</span><span class=n>GetClassLoader</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 分配静态字段数组
+</span></span></span><span class=line><span class=cl>  <span class=n>LengthPrefixedArray</span><span class=o>&lt;</span><span class=n>ArtField</span><span class=o>&gt;*</span> <span class=n>sfields</span> <span class=o>=</span> <span class=n>AllocArtFieldArray</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>self</span><span class=p>,</span> <span class=n>allocator</span><span class=p>,</span> <span class=n>accessor</span><span class=p>.</span><span class=n>NumStaticFields</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 分配实例字段数组
+</span></span></span><span class=line><span class=cl>  <span class=n>LengthPrefixedArray</span><span class=o>&lt;</span><span class=n>ArtField</span><span class=o>&gt;*</span> <span class=n>ifields</span> <span class=o>=</span> <span class=n>AllocArtFieldArray</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>self</span><span class=p>,</span> <span class=n>allocator</span><span class=p>,</span> <span class=n>accessor</span><span class=p>.</span><span class=n>NumInstanceFields</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 分配方法数组
+</span></span></span><span class=line><span class=cl>  <span class=n>LengthPrefixedArray</span><span class=o>&lt;</span><span class=n>ArtMethod</span><span class=o>&gt;*</span> <span class=n>methods</span> <span class=o>=</span> <span class=n>AllocArtMethodArray</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>self</span><span class=p>,</span> <span class=n>allocator</span><span class=p>,</span> <span class=n>accessor</span><span class=p>.</span><span class=n>NumMethods</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. 加载字段和方法
+</span></span></span><span class=line><span class=cl>  <span class=n>accessor</span><span class=p>.</span><span class=n>VisitFieldsAndMethods</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=p>[</span><span class=o>&amp;</span><span class=p>](</span><span class=k>const</span> <span class=n>ClassAccessor</span><span class=o>::</span><span class=n>Field</span><span class=o>&amp;</span> <span class=n>field</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 加载静态字段
+</span></span></span><span class=line><span class=cl>        <span class=n>LoadField</span><span class=p>(</span><span class=n>field</span><span class=p>,</span> <span class=n>klass</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>sfields</span><span class=o>-&gt;</span><span class=n>At</span><span class=p>(</span><span class=n>num_sfields</span><span class=o>++</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>      <span class=p>},</span>
+</span></span><span class=line><span class=cl>      <span class=p>[</span><span class=o>&amp;</span><span class=p>](</span><span class=k>const</span> <span class=n>ClassAccessor</span><span class=o>::</span><span class=n>Field</span><span class=o>&amp;</span> <span class=n>field</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 加载实例字段
+</span></span></span><span class=line><span class=cl>        <span class=n>LoadField</span><span class=p>(</span><span class=n>field</span><span class=p>,</span> <span class=n>klass</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>ifields</span><span class=o>-&gt;</span><span class=n>At</span><span class=p>(</span><span class=n>num_ifields</span><span class=o>++</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>      <span class=p>},</span>
+</span></span><span class=line><span class=cl>      <span class=p>[</span><span class=o>&amp;</span><span class=p>](</span><span class=k>const</span> <span class=n>ClassAccessor</span><span class=o>::</span><span class=n>Method</span><span class=o>&amp;</span> <span class=n>method</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 加载方法
+</span></span></span><span class=line><span class=cl>        <span class=n>LoadMethod</span><span class=p>(</span><span class=n>dex_file</span><span class=p>,</span> <span class=n>method</span><span class=p>,</span> <span class=n>klass</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>mai_direct</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>methods</span><span class=o>-&gt;</span><span class=n>At</span><span class=p>(</span><span class=n>method_idx</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>        <span class=n>LinkCode</span><span class=p>(</span><span class=o>&amp;</span><span class=n>methods</span><span class=o>-&gt;</span><span class=n>At</span><span class=p>(</span><span class=n>method_idx</span><span class=p>),</span> <span class=n>class_def_method_index</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>occi</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>      <span class=p>});</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 5. 设置类的字段和方法指针
+</span></span></span><span class=line><span class=cl>  <span class=n>klass</span><span class=o>-&gt;</span><span class=n>SetSFieldsPtr</span><span class=p>(</span><span class=n>sfields</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=n>klass</span><span class=o>-&gt;</span><span class=n>SetIFieldsPtr</span><span class=p>(</span><span class=n>ifields</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=n>klass</span><span class=o>-&gt;</span><span class=n>SetMethodsPtr</span><span class=p>(</span><span class=n>methods</span><span class=p>,</span> <span class=n>accessor</span><span class=p>.</span><span class=n>NumDirectMethods</span><span class=p>(),</span> <span class=n>accessor</span><span class=p>.</span><span class=n>NumVirtualMethods</span><span class=p>());</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=44-linkclass---类链接>4.4 LinkClass - 类链接</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span><span class=lnt>55
+</span><span class=lnt>56
+</span><span class=lnt>57
+</span><span class=lnt>58
+</span><span class=lnt>59
+</span><span class=lnt>60
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>bool</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>LinkClass</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=kt>char</span><span class=o>*</span> <span class=n>descriptor</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>ObjectArray</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;&gt;</span> <span class=n>interfaces</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>MutableHandle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;*</span> <span class=n>h_new_class_out</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=n>CHECK_EQ</span><span class=p>(</span><span class=n>ClassStatus</span><span class=o>::</span><span class=n>kLoaded</span><span class=p>,</span> <span class=n>klass</span><span class=o>-&gt;</span><span class=n>GetStatus</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 链接父类
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>LinkSuperClass</span><span class=p>(</span><span class=n>klass</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nb>false</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 链接方法 (创建 vtable 和 itable)
+</span></span></span><span class=line><span class=cl>  <span class=n>ArtMethod</span><span class=o>*</span> <span class=n>imt_data</span><span class=p>[</span><span class=n>ImTable</span><span class=o>::</span><span class=n>kSize</span><span class=p>];</span>
+</span></span><span class=line><span class=cl>  <span class=kt>bool</span> <span class=n>new_conflict</span> <span class=o>=</span> <span class=nb>false</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>LinkMethods</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>klass</span><span class=p>,</span> <span class=n>interfaces</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>new_conflict</span><span class=p>,</span> <span class=n>imt_data</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nb>false</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 链接实例字段 (计算字段偏移)
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>LinkInstanceFields</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>klass</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nb>false</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. 链接静态字段 (计算类大小)
+</span></span></span><span class=line><span class=cl>  <span class=n>size_t</span> <span class=n>class_size</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>LinkStaticFields</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>klass</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>class_size</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nb>false</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 5. 创建 IMT (Interface Method Table)
+</span></span></span><span class=line><span class=cl>  <span class=n>ImTable</span><span class=o>*</span> <span class=n>imt</span> <span class=o>=</span> <span class=k>nullptr</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>klass</span><span class=o>-&gt;</span><span class=n>ShouldHaveImt</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 尝试复用父类的 IMT
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>new_conflict</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=n>ImTable</span><span class=o>*</span> <span class=n>super_imt</span> <span class=o>=</span> <span class=n>klass</span><span class=o>-&gt;</span><span class=n>FindSuperImt</span><span class=p>(</span><span class=n>image_pointer_size_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>      <span class=k>if</span> <span class=p>(</span><span class=n>super_imt</span> <span class=o>!=</span> <span class=k>nullptr</span> <span class=o>&amp;&amp;</span> <span class=n>ImtEquals</span><span class=p>(</span><span class=n>super_imt</span><span class=p>,</span> <span class=n>imt_data</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>imt</span> <span class=o>=</span> <span class=n>super_imt</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>      <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>imt</span> <span class=o>==</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=n>imt</span> <span class=o>=</span> <span class=n>CreateImt</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>klass</span><span class=p>,</span> <span class=n>imt_data</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 6. 如果类大小变化，需要重新分配
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>class_size</span> <span class=o>!=</span> <span class=n>klass</span><span class=o>-&gt;</span><span class=n>GetClassSize</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>klass</span><span class=p>.</span><span class=n>Assign</span><span class=p>(</span><span class=n>MirrorClass</span><span class=p>(</span><span class=n>klass</span><span class=p>.</span><span class=n>Get</span><span class=p>(),</span> <span class=n>class_size</span><span class=p>,</span> <span class=n>imt</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>klass</span><span class=o>-&gt;</span><span class=n>SetImt</span><span class=p>(</span><span class=n>imt</span><span class=p>,</span> <span class=n>image_pointer_size_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 7. 更新类状态为已解析
+</span></span></span><span class=line><span class=cl>  <span class=n>klass</span><span class=o>-&gt;</span><span class=n>SetStatus</span><span class=p>(</span><span class=n>ClassStatus</span><span class=o>::</span><span class=n>kResolved</span><span class=p>,</span> <span class=n>self</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=n>h_new_class_out</span><span class=o>-&gt;</span><span class=n>Assign</span><span class=p>(</span><span class=n>klass</span><span class=p>.</span><span class=n>Get</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=nb>true</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=45-initializeclass---类初始化>4.5 InitializeClass - 类初始化</h2><p>遵循 JLS 12.4.2 规范的初始化过程：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span><span class=lnt>55
+</span><span class=lnt>56
+</span><span class=lnt>57
+</span><span class=lnt>58
+</span><span class=lnt>59
+</span><span class=lnt>60
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>bool</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>InitializeClass</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=kt>bool</span> <span class=n>can_init_statics</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=kt>bool</span> <span class=n>can_init_parents</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 检查是否已初始化
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>klass</span><span class=o>-&gt;</span><span class=n>IsInitialized</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nb>true</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 获取类锁
+</span></span></span><span class=line><span class=cl>  <span class=n>ObjectLock</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>lock</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>klass</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 再次检查 (double-check locking)
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>klass</span><span class=o>-&gt;</span><span class=n>IsInitialized</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nb>true</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. 检查是否为错误状态
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>klass</span><span class=o>-&gt;</span><span class=n>IsErroneous</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>ThrowEarlierClassFailure</span><span class=p>(</span><span class=n>klass</span><span class=p>.</span><span class=n>Get</span><span class=p>(),</span> <span class=nb>true</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nb>false</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 5. 验证类
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>klass</span><span class=o>-&gt;</span><span class=n>IsVerified</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>VerifyClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=k>nullptr</span><span class=p>,</span> <span class=n>klass</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>klass</span><span class=o>-&gt;</span><span class=n>IsVerified</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=k>return</span> <span class=nb>false</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 6. 初始化父类
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>can_init_parents</span> <span class=o>&amp;&amp;</span> <span class=n>klass</span><span class=o>-&gt;</span><span class=n>GetSuperClass</span><span class=p>()</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>EnsureInitialized</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>klass</span><span class=o>-&gt;</span><span class=n>GetSuperClass</span><span class=p>(),</span> <span class=nb>true</span><span class=p>,</span> <span class=nb>true</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=k>return</span> <span class=nb>false</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 7. 设置状态为初始化中
+</span></span></span><span class=line><span class=cl>  <span class=n>klass</span><span class=o>-&gt;</span><span class=n>SetStatus</span><span class=p>(</span><span class=n>ClassStatus</span><span class=o>::</span><span class=n>kInitializing</span><span class=p>,</span> <span class=n>self</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 8. 初始化静态字段
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>can_init_statics</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>InitializeStaticFields</span><span class=p>(</span><span class=n>klass</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 9. 执行 &lt;clinit&gt; 方法
+</span></span></span><span class=line><span class=cl>  <span class=n>ArtMethod</span><span class=o>*</span> <span class=n>clinit</span> <span class=o>=</span> <span class=n>klass</span><span class=o>-&gt;</span><span class=n>GetClassInitializer</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>clinit</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 执行静态初始化器
+</span></span></span><span class=line><span class=cl>    <span class=n>clinit</span><span class=o>-&gt;</span><span class=n>Invoke</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=p>...);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 10. 设置状态为已初始化
+</span></span></span><span class=line><span class=cl>  <span class=n>klass</span><span class=o>-&gt;</span><span class=n>SetStatus</span><span class=p>(</span><span class=n>ClassStatus</span><span class=o>::</span><span class=n>kInitialized</span><span class=p>,</span> <span class=n>self</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=nb>true</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=五类状态机>五、类状态机</h1><p>ClassLinker 管理类的生命周期状态：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>kNotReady
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>kIdx (有 ClassDef 索引)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>kLoaded (已加载字段和方法)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>kResolved (已链接)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>kVerifyingAtRuntime (运行时验证中)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>kVerified (已验证)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>kInitializing (初始化中)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>kInitialized (已初始化)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>kVisiblyInitialized (可见初始化 - 用于优化)
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>错误状态: kErroneous, kErroneousResolved
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=六方法解析与-imt>六、方法解析与 IMT</h1><h2 id=61-interface-method-table-imt>6.1 Interface Method Table (IMT)</h2><p>IMT 是 ART 的优化技术，用于加速接口方法调用：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// IMT 大小为 43 (质数，减少冲突)
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>ImTable</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=k>static</span> <span class=k>constexpr</span> <span class=n>size_t</span> <span class=n>kSize</span> <span class=o>=</span> <span class=mi>43</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 存储 43 个方法槽位
+</span></span></span><span class=line><span class=cl>  <span class=c1>// 每个槽位可能是:
+</span></span></span><span class=line><span class=cl>  <span class=c1>// 1. 单个方法 (无冲突)
+</span></span></span><span class=line><span class=cl>  <span class=c1>// 2. 冲突方法 (需要查表)
+</span></span></span><span class=line><span class=cl>  <span class=n>ArtMethod</span><span class=o>*</span> <span class=n>methods_</span><span class=p>[</span><span class=n>kSize</span><span class=p>];</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// IMT 冲突表
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>ImtConflictTable</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 存储冲突的方法对 (接口方法, 实现方法)
+</span></span></span><span class=line><span class=cl>  <span class=n>std</span><span class=o>::</span><span class=n>pair</span><span class=o>&lt;</span><span class=n>ArtMethod</span><span class=o>*</span><span class=p>,</span> <span class=n>ArtMethod</span><span class=o>*&gt;</span> <span class=n>entries_</span><span class=p>[];</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=62-方法链接过程>6.2 方法链接过程</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>bool</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>LinkMethods</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>ObjectArray</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;&gt;</span> <span class=n>interfaces</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=kt>bool</span><span class=o>*</span> <span class=n>out_new_conflict</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>ArtMethod</span><span class=o>**</span> <span class=n>out_imt</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 链接虚方法 (创建 vtable)
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>LinkVirtualMethods</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>klass</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nb>false</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 链接接口方法
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>LinkInterfaceMethods</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>klass</span><span class=p>,</span> <span class=n>interfaces</span><span class=p>,</span> <span class=n>out_new_conflict</span><span class=p>,</span> <span class=n>out_imt</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nb>false</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=nb>true</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=七dexcache-与运行时解析>七、DexCache 与运行时解析</h1><h2 id=71-dexcache-结构>7.1 DexCache 结构</h2><p>DexCache 缓存 DEX 文件中的解析结果：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/mirror/dex_cache.h
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>MANAGED</span> <span class=nl>DexCache</span> <span class=p>:</span> <span class=k>public</span> <span class=n>Object</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 解析的类型缓存
+</span></span></span><span class=line><span class=cl>  <span class=n>GcRoot</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;*</span> <span class=n>resolved_types_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 解析的方法缓存
+</span></span></span><span class=line><span class=cl>  <span class=n>ArtMethod</span><span class=o>**</span> <span class=n>resolved_methods_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 解析的字段缓存
+</span></span></span><span class=line><span class=cl>  <span class=n>ArtField</span><span class=o>**</span> <span class=n>resolved_fields_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 解析的字符串缓存
+</span></span></span><span class=line><span class=cl>  <span class=n>GcRoot</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>String</span><span class=o>&gt;*</span> <span class=n>resolved_strings_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// MethodType 缓存
+</span></span></span><span class=line><span class=cl>  <span class=n>GcRoot</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>MethodType</span><span class=o>&gt;*</span> <span class=n>resolved_method_types_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// MethodHandle 缓存
+</span></span></span><span class=line><span class=cl>  <span class=n>GcRoot</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>MethodHandle</span><span class=o>&gt;*</span> <span class=n>resolved_method_handles_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=72-类型解析>7.2 类型解析</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>ResolveType</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>dex</span><span class=o>::</span><span class=n>TypeIndex</span> <span class=n>type_idx</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>DexCache</span><span class=o>&gt;</span> <span class=n>dex_cache</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>ClassLoader</span><span class=o>&gt;</span> <span class=n>class_loader</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 检查 DexCache 缓存
+</span></span></span><span class=line><span class=cl>  <span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>resolved</span> <span class=o>=</span> <span class=n>dex_cache</span><span class=o>-&gt;</span><span class=n>GetResolvedType</span><span class=p>(</span><span class=n>type_idx</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>resolved</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>resolved</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 未缓存，执行解析
+</span></span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=nf>DoResolveType</span><span class=p>(</span><span class=n>type_idx</span><span class=p>,</span> <span class=n>dex_cache</span><span class=p>,</span> <span class=n>class_loader</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>DoResolveType</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>dex</span><span class=o>::</span><span class=n>TypeIndex</span> <span class=n>type_idx</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>DexCache</span><span class=o>&gt;</span> <span class=n>dex_cache</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>ClassLoader</span><span class=o>&gt;</span> <span class=n>class_loader</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=k>const</span> <span class=n>DexFile</span><span class=o>&amp;</span> <span class=n>dex_file</span> <span class=o>=</span> <span class=o>*</span><span class=n>dex_cache</span><span class=o>-&gt;</span><span class=n>GetDexFile</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=k>const</span> <span class=kt>char</span><span class=o>*</span> <span class=n>descriptor</span> <span class=o>=</span> <span class=n>dex_file</span><span class=p>.</span><span class=n>GetTypeDescriptor</span><span class=p>(</span><span class=n>type_idx</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 查找类
+</span></span></span><span class=line><span class=cl>  <span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass</span> <span class=o>=</span> <span class=n>FindClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>descriptor</span><span class=p>,</span> <span class=n>class_loader</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 缓存结果
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>klass</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>dex_cache</span><span class=o>-&gt;</span><span class=n>SetResolvedType</span><span class=p>(</span><span class=n>type_idx</span><span class=p>,</span> <span class=n>klass</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=n>klass</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=八trampoline-机制>八、Trampoline 机制</h1><p>ClassLinker 管理各种运行时跳板代码：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 类定义中的 Trampoline 成员
+</span></span></span><span class=line><span class=cl><span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>jni_dlsym_lookup_trampoline_</span><span class=p>;</span>           <span class=c1>// JNI 动态查找
+</span></span></span><span class=line><span class=cl><span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>jni_dlsym_lookup_critical_trampoline_</span><span class=p>;</span>  <span class=c1>// Critical JNI 查找
+</span></span></span><span class=line><span class=cl><span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>quick_resolution_trampoline_</span><span class=p>;</span>           <span class=c1>// 快速方法解析
+</span></span></span><span class=line><span class=cl><span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>quick_imt_conflict_trampoline_</span><span class=p>;</span>         <span class=c1>// IMT 冲突处理
+</span></span></span><span class=line><span class=cl><span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>quick_generic_jni_trampoline_</span><span class=p>;</span>          <span class=c1>// 通用 JNI 桥接
+</span></span></span><span class=line><span class=cl><span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>quick_to_interpreter_bridge_trampoline_</span><span class=p>;</span> <span class=c1>// 解释器桥接
+</span></span></span><span class=line><span class=cl><span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>nterp_trampoline_</span><span class=p>;</span>                      <span class=c1>// Nterp 解释器入口
+</span></span></span></code></pre></td></tr></table></div></div><h2 id=81-方法解析流程>8.1 方法解析流程</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>编译代码调用未解析方法
+</span></span><span class=line><span class=cl>        ↓
+</span></span><span class=line><span class=cl>quick_resolution_trampoline_
+</span></span><span class=line><span class=cl>        ↓
+</span></span><span class=line><span class=cl>ResolveMethod (ClassLinker)
+</span></span><span class=line><span class=cl>        ↓
+</span></span><span class=line><span class=cl>更新方法入口点
+</span></span><span class=line><span class=cl>        ↓
+</span></span><span class=line><span class=cl>下次直接调用实际代码
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=九类层次分析-cha>九、类层次分析 (CHA)</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// art/runtime/cha.h
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>ClassHierarchyAnalysis</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl> <span class=k>public</span><span class=o>:</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 检查方法是否只有一个实现 (用于去虚拟化)
+</span></span></span><span class=line><span class=cl>  <span class=kt>bool</span> <span class=n>HasSingleImplementation</span><span class=p>(</span><span class=n>ArtMethod</span><span class=o>*</span> <span class=n>method</span><span class=p>,</span> <span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 通知类被卸载
+</span></span></span><span class=line><span class=cl>  <span class=kt>void</span> <span class=nf>NotifyClassUnload</span><span class=p>(</span><span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl> <span class=k>private</span><span class=o>:</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 方法实现映射
+</span></span></span><span class=line><span class=cl>  <span class=n>HashMap</span><span class=o>&lt;</span><span class=n>ArtMethod</span><span class=o>*</span><span class=p>,</span> <span class=n>ImplementationInfo</span><span class=o>&gt;</span> <span class=n>method_map_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p>CHA 用于优化：</p><ul><li>将虚调用转换为直接调用</li><li>内联优化</li><li>类卸载时失效优化</li></ul><hr><h1 id=十类卸载支持>十、类卸载支持</h1><h2 id=101-classloader-卸载>10.1 ClassLoader 卸载</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>void</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>CleanupClassLoaders</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>Thread</span><span class=o>*</span> <span class=k>const</span> <span class=n>self</span> <span class=o>=</span> <span class=n>Thread</span><span class=o>::</span><span class=n>Current</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=n>MutexLock</span> <span class=nf>mu</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>Locks</span><span class=o>::</span><span class=n>classlinker_classes_lock_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=k>for</span> <span class=p>(</span><span class=k>auto</span> <span class=n>it</span> <span class=o>=</span> <span class=n>class_loaders_</span><span class=p>.</span><span class=n>begin</span><span class=p>();</span> <span class=n>it</span> <span class=o>!=</span> <span class=n>class_loaders_</span><span class=p>.</span><span class=n>end</span><span class=p>();</span> <span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>ClassLoaderData</span><span class=o>&amp;</span> <span class=n>data</span> <span class=o>=</span> <span class=o>*</span><span class=n>it</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 检查弱引用是否被清除
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>data</span><span class=p>.</span><span class=n>weak_root</span> <span class=o>==</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=c1>// 准备删除
+</span></span></span><span class=line><span class=cl>      <span class=n>PrepareToDeleteClassLoader</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>data</span><span class=p>,</span> <span class=cm>/*cleanup_cha=*/</span><span class=nb>true</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>      <span class=c1>// 删除 ClassTable 和 LinearAlloc
+</span></span></span><span class=line><span class=cl>      <span class=k>delete</span> <span class=n>data</span><span class=p>.</span><span class=n>class_table</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>      <span class=k>delete</span> <span class=n>data</span><span class=p>.</span><span class=n>allocator</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>      <span class=n>it</span> <span class=o>=</span> <span class=n>class_loaders_</span><span class=p>.</span><span class=n>erase</span><span class=p>(</span><span class=n>it</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>      <span class=o>++</span><span class=n>it</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=102-dexcache-卸载>10.2 DexCache 卸载</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>void</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>RemoveDexFromCaches</span><span class=p>(</span><span class=k>const</span> <span class=n>DexFile</span><span class=o>&amp;</span> <span class=n>dex_file</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>Thread</span><span class=o>*</span> <span class=k>const</span> <span class=n>self</span> <span class=o>=</span> <span class=n>Thread</span><span class=o>::</span><span class=n>Current</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  <span class=n>MutexLock</span> <span class=nf>mu</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>Locks</span><span class=o>::</span><span class=n>dex_lock_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=k>auto</span> <span class=n>it</span> <span class=o>=</span> <span class=n>dex_caches_</span><span class=p>.</span><span class=n>find</span><span class=p>(</span><span class=o>&amp;</span><span class=n>dex_file</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>it</span> <span class=o>!=</span> <span class=n>dex_caches_</span><span class=p>.</span><span class=n>end</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 清除弱引用
+</span></span></span><span class=line><span class=cl>    <span class=n>it</span><span class=o>-&gt;</span><span class=n>second</span><span class=p>.</span><span class=n>weak_root</span> <span class=o>=</span> <span class=k>nullptr</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=n>dex_caches_</span><span class=p>.</span><span class=n>erase</span><span class=p>(</span><span class=n>it</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=十一proxy-类支持>十一、Proxy 类支持</h1><p>ClassLinker 支持动态代理类创建：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>CreateProxyClass</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>ScopedObjectAccessAlreadyRunnable</span><span class=o>&amp;</span> <span class=n>soa</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>jstring</span> <span class=n>name</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>jobjectArray</span> <span class=n>interfaces</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>jobject</span> <span class=n>loader</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>jobjectArray</span> <span class=n>methods</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>jobjectArray</span> <span class=k>throws</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span> <span class=o>=</span> <span class=n>soa</span><span class=p>.</span><span class=n>Self</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 分配 Proxy 类
+</span></span></span><span class=line><span class=cl>  <span class=n>Handle</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass</span> <span class=o>=</span> <span class=n>hs</span><span class=p>.</span><span class=n>NewHandle</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=n>AllocClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>mirror</span><span class=o>::</span><span class=n>Proxy</span><span class=o>::</span><span class=n>ProxyClassSize</span><span class=p>(</span><span class=n>image_pointer_size_</span><span class=p>)));</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 设置类属性
+</span></span></span><span class=line><span class=cl>  <span class=n>klass</span><span class=o>-&gt;</span><span class=n>SetAccessFlags</span><span class=p>(</span><span class=n>kAccPublic</span> <span class=o>|</span> <span class=n>kAccFinal</span> <span class=o>|</span> <span class=n>kAccAbstract</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=n>klass</span><span class=o>-&gt;</span><span class=n>SetClassLoader</span><span class=p>(</span><span class=n>loader</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=n>klass</span><span class=o>-&gt;</span><span class=n>SetDexCache</span><span class=p>(</span><span class=n>dex_cache</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 设置父类为 java.lang.reflect.Proxy
+</span></span></span><span class=line><span class=cl>  <span class=n>klass</span><span class=o>-&gt;</span><span class=n>SetSuperClass</span><span class=p>(</span><span class=n>GetClassRoot</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Proxy</span><span class=o>&gt;</span><span class=p>(</span><span class=k>this</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 4. 创建方法
+</span></span></span><span class=line><span class=cl>  <span class=k>for</span> <span class=p>(</span><span class=n>size_t</span> <span class=n>i</span> <span class=o>=</span> <span class=mi>0</span><span class=p>;</span> <span class=n>i</span> <span class=o>&lt;</span> <span class=n>num_methods</span><span class=p>;</span> <span class=o>++</span><span class=n>i</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>CreateProxyMethod</span><span class=p>(</span><span class=n>klass</span><span class=p>,</span> <span class=n>prototype</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>methods</span><span class=o>-&gt;</span><span class=n>At</span><span class=p>(</span><span class=n>i</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=c1>// 5. 链接类
+</span></span></span><span class=line><span class=cl>  <span class=n>LinkClass</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>descriptor</span><span class=p>,</span> <span class=n>klass</span><span class=p>,</span> <span class=n>interfaces</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>h_new_class</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=n>h_new_class</span><span class=p>.</span><span class=n>Get</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=十二性能优化>十二、性能优化</h1><h2 id=121-数组类缓存>12.1 数组类缓存</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 缓存最近查找的数组类
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>constexpr</span> <span class=n>size_t</span> <span class=n>kFindArrayCacheSize</span> <span class=o>=</span> <span class=mi>16</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=n>std</span><span class=o>::</span><span class=n>atomic</span><span class=o>&lt;</span><span class=n>GcRoot</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;&gt;</span> <span class=n>find_array_class_cache_</span><span class=p>[</span><span class=n>kFindArrayCacheSize</span><span class=p>];</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=122-visibly-initialized-状态>12.2 Visibly Initialized 状态</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kt>void</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>MakeInitializedClassesVisiblyInitialized</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span> <span class=kt>bool</span> <span class=n>wait</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 使用 membarrier 优化类初始化检查
+</span></span></span><span class=line><span class=cl>  <span class=c1>// 避免每次调用都检查类是否初始化
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=123-jni-stub-复用>12.3 JNI Stub 复用</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 复用 Boot Image 中的 JNI Stub
+</span></span></span><span class=line><span class=cl><span class=n>JniStubHashMap</span><span class=o>&lt;</span><span class=k>const</span> <span class=kt>void</span><span class=o>*&gt;</span> <span class=n>boot_image_jni_stubs_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>const</span> <span class=kt>void</span><span class=o>*</span> <span class=n>ClassLinker</span><span class=o>::</span><span class=n>FindBootJniStub</span><span class=p>(</span><span class=n>ArtMethod</span><span class=o>*</span> <span class=n>method</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>JniStubKey</span> <span class=n>key</span> <span class=o>=</span> <span class=n>ComputeJniStubKey</span><span class=p>(</span><span class=n>method</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=n>boot_image_jni_stubs_</span><span class=p>.</span><span class=n>Get</span><span class=p>(</span><span class=n>key</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=十三关键锁保护>十三、关键锁保护</h1><table><thead><tr><th>锁</th><th>保护内容</th></tr></thead><tbody><tr><td><code>Locks::dex_lock_</code></td><td>DexCache 注册表</td></tr><tr><td><code>Locks::classlinker_classes_lock_</code></td><td>ClassTable 和 ClassLoader 列表</td></tr><tr><td><code>ObjectLock&lt;Class></code></td><td>类初始化状态</td></tr><tr><td><code>visibly_initialized_callback_lock_</code></td><td>VisiblyInitialized 回调</td></tr><tr><td><code>critical_native_code_with_clinit_check_lock_</code></td><td>Critical Native 方法</td></tr></tbody></table><hr><h1 id=十四总结>十四、总结</h1><p>ClassLinker 是 ART 运行时的核心组件，实现了完整的 Java 类加载机制：</p><ol><li><strong>类查找与加载</strong>：支持 Boot ClassLoader 和应用 ClassLoader</li><li><strong>类链接</strong>：解析继承关系、布局字段、创建方法表</li><li><strong>类初始化</strong>：遵循 JLS 规范的初始化流程</li><li><strong>性能优化</strong>：IMT、CHA、缓存机制</li><li><strong>内存管理</strong>：支持类卸载、LinearAlloc</li></ol><p>理解 ClassLinker 对于深入理解 ART 虚拟机和 Android 应用启动性能至关重要。</p><hr><h1 id=参考资料>参考资料</h1><ul><li>Android ART 源码: <code>art/runtime/class_linker.h</code>, <code>art/runtime/class_linker.cc</code></li><li>Java Language Specification (JLS) 12.4.2 &ldquo;Detailed Initialization Procedure&rdquo;</li><li>Android Runtime (ART) 设计文档</li></ul></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Apr 26, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026042303/ title="Android Runtime (ART) 垃圾回收深度解析">Android Runtime (ART) 垃圾回收深度解析</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
