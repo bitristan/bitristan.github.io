@@ -1,0 +1,1650 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>ART 虚拟机对象分配原理深度解析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.161.0"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Apr 29, 2026
+- 29 minute read</p><h1 class=entry-title>ART 虚拟机对象分配原理深度解析</h1></header><div class=entry-content><h1 id=目录>目录</h1><ul><li><a href=#1-%e5%bc%95%e8%a8%80>1. 引言</a></li><li><a href=#2-%e5%af%b9%e8%b1%a1%e5%88%86%e9%85%8d%e6%a6%82%e8%bf%b0>2. 对象分配概述</a></li><li><a href=#3-%e7%b1%bb%e8%a7%a3%e6%9e%90%e9%98%b6%e6%ae%b5>3. 类解析阶段</a></li><li><a href=#4-%e5%86%85%e5%ad%98%e5%88%86%e9%85%8d%e6%a0%b8%e5%bf%83%e6%b5%81%e7%a8%8b>4. 内存分配核心流程</a></li><li><a href=#5-tlab-%e5%88%86%e9%85%8d%e6%9c%ba%e5%88%b6>5. TLAB 分配机制</a></li><li><a href=#6-%e5%88%86%e9%85%8d%e5%99%a8%e7%b1%bb%e5%9e%8b>6. 分配器类型</a></li><li><a href=#7-%e5%af%b9%e8%b1%a1%e5%86%85%e5%ad%98%e5%b8%83%e5%b1%80>7. 对象内存布局</a></li><li><a href=#8-%e6%9e%84%e9%80%a0%e5%87%bd%e6%95%b0%e8%b0%83%e7%94%a8>8. 构造函数调用</a></li><li><a href=#9-%e5%ae%8c%e6%95%b4%e6%97%b6%e5%ba%8f%e5%9b%be>9. 完整时序图</a></li><li><a href=#10-%e6%80%bb%e7%bb%93>10. 总结</a></li></ul><hr><h1 id=1-引言>1. 引言</h1><h2 id=11-art-运行时简介>1.1 ART 运行时简介</h2><p>ART (Android Runtime) 是 Android 5.0 引入的运行时环境，取代了之前的 Dalvik 虚拟机。与 Dalvik 的 JIT 编译不同，ART 采用 AOT (Ahead-Of-Time) 编译技术，将 DEX 字节码在安装时编译为本地机器码，显著提升了应用启动速度和运行效率。</p><p>对象分配是 ART 运行时的核心功能之一，其性能直接影响应用的内存使用效率和 GC (垃圾回收) 压力。理解对象分配的底层原理，对于优化 Android 应用性能、排查内存问题具有重要意义。</p><h2 id=12-研究对象>1.2 研究对象</h2><p>本文将以一个简单的对象创建语句为例，深入分析 ART 中对象分配的完整过程：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-java data-lang=java><span class=line><span class=cl><span class=c1>// Person.java</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=kn>package</span><span class=w> </span><span class=nn>com.example.model</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>
+</span></span></span><span class=line><span class=cl><span class=kd>public</span><span class=w> </span><span class=kd>class</span> <span class=nc>Person</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=kd>private</span><span class=w> </span><span class=n>String</span><span class=w> </span><span class=n>name</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=kd>private</span><span class=w> </span><span class=kt>int</span><span class=w> </span><span class=n>age</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=kd>public</span><span class=w> </span><span class=nf>Person</span><span class=p>()</span><span class=w> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=k>this</span><span class=p>.</span><span class=na>name</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=s>&#34;Unknown&#34;</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=k>this</span><span class=p>.</span><span class=na>age</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=n>0</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>}</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>
+</span></span></span><span class=line><span class=cl><span class=c1>// 使用示例</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=n>Person</span><span class=w> </span><span class=n>obj</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=k>new</span><span class=w> </span><span class=n>Person</span><span class=p>();</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><h2 id=13-文章目标>1.3 文章目标</h2><p>通过阅读本文，你将了解：</p><ol><li><code>new Person()</code> 语句如何被编译为 DEX 字节码</li><li>类的解析、加载、链接、验证、初始化过程</li><li>对象内存分配的核心算法和数据结构</li><li>TLAB (Thread Local Allocation Buffer) 快速分配机制</li><li>不同分配器的选择策略和适用场景</li><li>对象在内存中的布局结构</li><li>构造函数的调用和字段初始化过程</li></ol><hr><h1 id=2-对象分配概述>2. 对象分配概述</h1><h2 id=21-字节码表示>2.1 字节码表示</h2><p><code>Person obj = new Person()</code> 语句会被编译为以下 DEX 字节码：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-smali data-lang=smali><span class=line><span class=cl><span class=w> </span><span class=nf>test</span><span class=p>()</span><span class=w> </span><span class=err>方法编译后的</span><span class=w> </span><span class=kt>D</span><span class=err>EX</span><span class=w> </span><span class=err>字节码</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=k>.method</span><span class=w> </span><span class=k>public</span><span class=w> </span><span class=nf>test</span><span class=p>()</span><span class=kt>V</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c># Person obj = new Person();
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c># Step 1: 分配对象内存
+</span></span></span><span class=line><span class=cl><span class=w>    </span>new-instance<span class=w> </span><span class=nb>v0</span><span class=p>,</span><span class=w> </span><span class=kt>L</span>com/example/model/<span class=nc>Person</span>;<span class=w>    </span><span class=c># v0 = 分配 Person 对象
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c># Step 2: 调用构造函数
+</span></span></span><span class=line><span class=cl><span class=w>    </span>invoke-direct<span class=w> </span><span class=p>{</span><span class=nb>v0</span><span class=p>},</span><span class=w> </span><span class=kt>L</span>com/example/model/<span class=nc>Person</span>;<span class=p>-&gt;</span><span class=nf>&lt;init&gt;</span><span class=p>()</span><span class=kt>V</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c># Step 3: 存储到局部变量
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c># (v0 已经是 obj 了，不需要额外指令)
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span>return-void<span class=w>
+</span></span></span><span class=line><span class=cl><span class=k>.end</span><span class=w> </span><span class=k>method</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><p><strong>关键指令解析：</strong></p><table><thead><tr><th>指令</th><th>作用</th><th>操作数</th></tr></thead><tbody><tr><td><code>new-instance</code></td><td>分配对象内存</td><td>目标寄存器 v0，类型 Person</td></tr><tr><td><code>invoke-direct</code></td><td>调用实例方法</td><td>对象引用 v0，方法 <code>&lt;init></code></td></tr></tbody></table><h2 id=22-分配的两个阶段>2.2 分配的两个阶段</h2><p>对象创建分为两个独立的阶段：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                    对象创建的两个阶段                            │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>│  Phase 1: 内存分配 (new-instance)                               │
+</span></span><span class=line><span class=cl>│  ┌───────────────────────────────────────────────────────────┐ │
+</span></span><span class=line><span class=cl>│  │ 1. 解析 Person 类                                          │ │
+</span></span><span class=line><span class=cl>│  │ 2. 获取对象大小                                             │ │
+</span></span><span class=line><span class=cl>│  │ 3. 分配内存空间                                             │ │
+</span></span><span class=line><span class=cl>│  │ 4. 设置 klass_ 指针                                         │ │
+</span></span><span class=line><span class=cl>│  │ 5. 初始化对象头                                             │ │
+</span></span><span class=line><span class=cl>│  └───────────────────────────────────────────────────────────┘ │
+</span></span><span class=line><span class=cl>│                              │                                  │
+</span></span><span class=line><span class=cl>│                              ▼                                  │
+</span></span><span class=line><span class=cl>│  Phase 2: 构造函数调用 (invoke-direct)                          │
+</span></span><span class=line><span class=cl>│  ┌───────────────────────────────────────────────────────────┐ │
+</span></span><span class=line><span class=cl>│  │ 1. 调用父类构造函数 (Object.&lt;init&gt;)                         │ │
+</span></span><span class=line><span class=cl>│  │ 2. 初始化实例字段                                           │ │
+</span></span><span class=line><span class=cl>│  │    - name = &#34;Unknown&#34;                                      │ │
+</span></span><span class=line><span class=cl>│  │    - age = 0                                               │ │
+</span></span><span class=line><span class=cl>│  └───────────────────────────────────────────────────────────┘ │
+</span></span><span class=line><span class=cl>│                                                                 │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><p><strong>重要区别：</strong></p><ul><li><strong>内存分配</strong>：只分配空间，设置对象头，字段值为默认值 (null/0)</li><li><strong>构造函数</strong>：执行用户定义的初始化代码，设置字段初始值</li></ul><hr><h1 id=3-类解析阶段>3. 类解析阶段</h1><h2 id=31-符号引用与实际引用>3.1 符号引用与实际引用</h2><p>在 DEX 文件中，类以<strong>符号引用</strong>的形式存在：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>符号引用 (DEX 文件):
+</span></span><span class=line><span class=cl>  TypeId[Person] → &#34;Lcom/example/model/Person;&#34;
+</span></span></code></pre></td></tr></table></div></div><p>运行时需要将符号引用解析为<strong>实际引用</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>实际引用 (内存中):
+</span></span><span class=line><span class=cl>  Class&lt;Person&gt; 对象 @ 0x7a123456
+</span></span></code></pre></td></tr></table></div></div><h2 id=32-类解析流程>3.2 类解析流程</h2><p><code>new-instance</code> 指令执行时，首先需要解析类：</p><p><strong>源码位置：</strong> <code>runtime/interpreter/interpreter_switch_impl-inl.h:862</code></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=n>HANDLER_ATTRIBUTES</span> <span class=kt>bool</span> <span class=nf>NEW_INSTANCE</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// Step 1: 解析并验证类
+</span></span></span><span class=line><span class=cl>    <span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>c</span> <span class=o>=</span> <span class=n>ResolveVerifyAndClinit</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>        <span class=n>dex</span><span class=o>::</span><span class=n>TypeIndex</span><span class=p>(</span><span class=n>B</span><span class=p>()),</span>      <span class=c1>// Person 类的符号引用索引
+</span></span></span><span class=line><span class=cl>        <span class=n>shadow_frame_</span><span class=p>.</span><span class=n>GetMethod</span><span class=p>(),</span>
+</span></span><span class=line><span class=cl>        <span class=n>Self</span><span class=p>(),</span>
+</span></span><span class=line><span class=cl>        <span class=nb>false</span><span class=p>,</span>                    <span class=c1>// 不检查访问权限
+</span></span></span><span class=line><span class=cl>        <span class=o>!</span><span class=n>shadow_frame_</span><span class=p>.</span><span class=n>GetMethod</span><span class=p>()</span><span class=o>-&gt;</span><span class=n>SkipAccessChecks</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>LIKELY</span><span class=p>(</span><span class=n>c</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 类解析成功，继续分配...
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ...
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>ResolveVerifyAndClinit 流程：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-gdscript3 data-lang=gdscript3><span class=line><span class=cl><span class=err>┌─────────────────────────────────────────────────────────────────────────────┐</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>                          <span class=err>类解析流程</span>                                          <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>├─────────────────────────────────────────────────────────────────────────────┤</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>                                                                             <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=n>Step</span> <span class=mi>1</span><span class=p>:</span> <span class=err>从</span> <span class=n>DexCache</span> <span class=err>查找</span>                                                   <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>┌───────────────────────────────────────────────────────────────────────┐</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span> <span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=p>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>c</span> <span class=o>=</span> <span class=n>dex_cache</span><span class=o>-&gt;</span><span class=n>GetResolvedType</span><span class=p>(</span><span class=n>type_idx</span><span class=p>);</span>       <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span> <span class=k>if</span> <span class=p>(</span><span class=n>c</span> <span class=o>==</span> <span class=n>nullptr</span><span class=p>)</span> <span class=p>{</span>                                                    <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span>     <span class=o>//</span> <span class=err>未解析，需要加载类</span>                                                <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span>     <span class=n>c</span> <span class=o>=</span> <span class=n>ClassLinker</span><span class=p>::</span><span class=n>ResolveType</span><span class=p>(</span><span class=n>type_idx</span><span class=p>,</span> <span class=n>method</span><span class=p>);</span>                   <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span> <span class=p>}</span>                                                                      <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>└───────────────────────────────────────────────────────────────────────┘</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>                              <span class=err>│</span>                                              <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>                              <span class=err>▼</span>                                              <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=n>Step</span> <span class=mi>2</span><span class=p>:</span> <span class=err>类加载</span> <span class=p>(</span><span class=err>如果需要</span><span class=p>)</span>                                                   <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>┌───────────────────────────────────────────────────────────────────────┐</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span> <span class=n>ClassLinker</span><span class=p>::</span><span class=n>FindClass</span><span class=p>(</span><span class=s2>&#34;Lcom/example/model/Person;&#34;</span><span class=p>,</span> <span class=n>class_loader</span><span class=p>)</span>    <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span>   <span class=err>├─</span> <span class=n>DefineClass</span><span class=p>()</span>     <span class=o>//</span> <span class=err>定义类</span>                                        <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span>   <span class=err>├─</span> <span class=n>LoadClass</span><span class=p>()</span>       <span class=o>//</span> <span class=err>加载字段和方法</span>                                 <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span>   <span class=err>├─</span> <span class=n>LinkClass</span><span class=p>()</span>       <span class=o>//</span> <span class=err>链接</span> <span class=p>(</span><span class=err>建立方法表</span><span class=p>)</span>                              <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span>   <span class=err>├─</span> <span class=n>VerifyClass</span><span class=p>()</span>     <span class=o>//</span> <span class=err>验证字节码</span>                                     <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span>   <span class=err>└─</span> <span class=n>InitializeClass</span><span class=p>()</span> <span class=o>//</span> <span class=err>初始化</span> <span class=p>(</span><span class=err>执行</span> <span class=o>&lt;</span><span class=n>clinit</span><span class=o>&gt;</span><span class=p>)</span>                        <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>└───────────────────────────────────────────────────────────────────────┘</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>                              <span class=err>│</span>                                              <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>                              <span class=err>▼</span>                                              <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=n>Step</span> <span class=mi>3</span><span class=p>:</span> <span class=err>类状态检查</span>                                                         <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>┌───────────────────────────────────────────────────────────────────────┐</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span> <span class=o>//</span> <span class=err>确保类已初始化</span>                                                        <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span> <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>c</span><span class=o>-&gt;</span><span class=n>IsInitialized</span><span class=p>())</span> <span class=p>{</span>                                             <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span>     <span class=n>ClassLinker</span><span class=p>::</span><span class=n>EnsureInitialized</span><span class=p>(</span><span class=n>c</span><span class=p>);</span>                                 <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span> <span class=p>}</span>                                                                      <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>│</span> <span class=n>CHECK</span><span class=p>(</span><span class=n>c</span><span class=o>-&gt;</span><span class=n>IsInitialized</span><span class=p>()</span> <span class=o>||</span> <span class=n>c</span><span class=o>-&gt;</span><span class=n>IsInitializing</span><span class=p>());</span>                     <span class=err>│</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>  <span class=err>└───────────────────────────────────────────────────────────────────────┘</span> <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>│</span>                                                                             <span class=err>│</span>
+</span></span><span class=line><span class=cl><span class=err>└─────────────────────────────────────────────────────────────────────────────┘</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=33-类状态转换>3.3 类状态转换</h2><p>ART 中类的状态定义在 <code>runtime/class_status.h</code>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=k>enum</span> <span class=k>class</span> <span class=nc>ClassStatus</span> <span class=o>:</span> <span class=kt>uint8_t</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>kNotReady</span> <span class=o>=</span> <span class=mi>0</span><span class=p>,</span>        <span class=c1>// 新分配的 Class 对象
+</span></span></span><span class=line><span class=cl>  <span class=n>kIdx</span> <span class=o>=</span> <span class=mi>4</span><span class=p>,</span>             <span class=c1>// 已设置 DEX 索引
+</span></span></span><span class=line><span class=cl>  <span class=n>kLoaded</span> <span class=o>=</span> <span class=mi>5</span><span class=p>,</span>          <span class=c1>// 已加载字段和方法
+</span></span></span><span class=line><span class=cl>  <span class=n>kResolving</span> <span class=o>=</span> <span class=mi>6</span><span class=p>,</span>       <span class=c1>// 正在链接
+</span></span></span><span class=line><span class=cl>  <span class=n>kResolved</span> <span class=o>=</span> <span class=mi>7</span><span class=p>,</span>        <span class=c1>// 已链接完成
+</span></span></span><span class=line><span class=cl>  <span class=n>kVerifying</span> <span class=o>=</span> <span class=mi>8</span><span class=p>,</span>       <span class=c1>// 正在验证
+</span></span></span><span class=line><span class=cl>  <span class=n>kVerified</span> <span class=o>=</span> <span class=mi>11</span><span class=p>,</span>       <span class=c1>// 已验证
+</span></span></span><span class=line><span class=cl>  <span class=n>kInitializing</span> <span class=o>=</span> <span class=mi>13</span><span class=p>,</span>   <span class=c1>// 正在初始化
+</span></span></span><span class=line><span class=cl>  <span class=n>kInitialized</span> <span class=o>=</span> <span class=mi>14</span><span class=p>,</span>    <span class=c1>// 已初始化
+</span></span></span><span class=line><span class=cl>  <span class=n>kVisiblyInitialized</span> <span class=o>=</span> <span class=mi>15</span><span class=p>,</span> <span class=c1>// 已初始化且对所有线程可见
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>状态转换图：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>kNotReady → kIdx → kLoaded → kResolving → kResolved → kVerifying → kVerified → kInitializing → kInitialized
+</span></span><span class=line><span class=cl>   │          │        │           │            │           │            │            │              │
+</span></span><span class=line><span class=cl>   │          │        │           │            │           │            │            │              │
+</span></span><span class=line><span class=cl> AllocClass  Setup   LoadClass  LinkClass    验证中    VerifyClass   验证完成    执行&lt;clinit&gt;   初始化完成
+</span></span></code></pre></td></tr></table></div></div><h2 id=34-class-对象的作用>3.4 Class 对象的作用</h2><p>Class 对象是对象分配的关键，它存储了：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// runtime/mirror/class.h
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>Class</span> <span class=o>:</span> <span class=k>public</span> <span class=n>Object</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 对象大小 (已计算好，包含所有实例字段)
+</span></span></span><span class=line><span class=cl>  <span class=kt>uint32_t</span> <span class=n>object_size_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 类状态
+</span></span></span><span class=line><span class=cl>  <span class=n>ClassStatus</span> <span class=n>status_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 父类
+</span></span></span><span class=line><span class=cl>  <span class=n>HeapReference</span><span class=o>&lt;</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>super_class_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 类加载器
+</span></span></span><span class=line><span class=cl>  <span class=n>HeapReference</span><span class=o>&lt;</span><span class=n>ClassLoader</span><span class=o>&gt;</span> <span class=n>class_loader_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 方法数组
+</span></span></span><span class=line><span class=cl>  <span class=n>LengthPrefixedArray</span><span class=o>&lt;</span><span class=n>ArtMethod</span><span class=o>&gt;*</span> <span class=n>methods_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 字段数组
+</span></span></span><span class=line><span class=cl>  <span class=n>LengthPrefixedArray</span><span class=o>&lt;</span><span class=n>ArtField</span><span class=o>&gt;*</span> <span class=n>fields_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 访问标志
+</span></span></span><span class=line><span class=cl>  <span class=kt>uint32_t</span> <span class=n>access_flags_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>对于 Person 类：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Class&lt;Person&gt; @ 0x7a123456:
+</span></span><span class=line><span class=cl>  object_size_ = 24 bytes    // Person 对象大小
+</span></span><span class=line><span class=cl>  status_ = kInitialized     // 已初始化
+</span></span><span class=line><span class=cl>  super_class_ = Class&lt;Object&gt; @ 0x7a100000
+</span></span><span class=line><span class=cl>  methods_ = [&lt;init&gt;, getName, setName, ...]
+</span></span><span class=line><span class=cl>  fields_ = [name, age]
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  字段偏移:
+</span></span><span class=line><span class=cl>    name offset = 8   // Object header 后
+</span></span><span class=line><span class=cl>    age offset = 16   // name 字段后
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=4-内存分配核心流程>4. 内存分配核心流程</h1><h2 id=41-分配入口allocobjectfromcode>4.1 分配入口：AllocObjectFromCode</h2><p>类解析完成后，进入内存分配阶段。</p><p><strong>源码位置：</strong> <code>runtime/entrypoints/entrypoint_utils-inl.h:235</code></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kr>inline</span> <span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Object</span><span class=o>&gt;</span> <span class=n>AllocObjectFromCode</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass</span><span class=p>,</span>      <span class=c1>// Person Class 对象
+</span></span></span><span class=line><span class=cl>    <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span>                     <span class=c1>// 当前线程
+</span></span></span><span class=line><span class=cl>    <span class=n>gc</span><span class=o>::</span><span class=n>AllocatorType</span> <span class=n>allocator_type</span>  <span class=c1>// 分配器类型
+</span></span></span><span class=line><span class=cl><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>bool</span> <span class=n>slow_path</span> <span class=o>=</span> <span class=nb>false</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 检查类是否已初始化
+</span></span></span><span class=line><span class=cl>    <span class=n>klass</span> <span class=o>=</span> <span class=n>CheckObjectAlloc</span><span class=p>(</span><span class=n>klass</span><span class=p>,</span> <span class=n>self</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>slow_path</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>UNLIKELY</span><span class=p>(</span><span class=n>slow_path</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>klass</span> <span class=o>==</span> <span class=k>nullptr</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>return</span> <span class=k>nullptr</span><span class=p>;</span>  <span class=c1>// 异常待处理
+</span></span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 慢速路径：可能发生线程挂起
+</span></span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=n>klass</span><span class=o>-&gt;</span><span class=n>Alloc</span><span class=o>&lt;</span><span class=cm>/*kInstrumented=*/</span><span class=nb>true</span><span class=o>&gt;</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>            <span class=n>self</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>            <span class=n>Runtime</span><span class=o>::</span><span class=n>Current</span><span class=p>()</span><span class=o>-&gt;</span><span class=n>GetHeap</span><span class=p>()</span><span class=o>-&gt;</span><span class=n>GetCurrentAllocator</span><span class=p>());</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 快速路径：直接分配
+</span></span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>klass</span><span class=o>-&gt;</span><span class=n>Alloc</span><span class=o>&lt;</span><span class=n>kInstrumented</span><span class=o>&gt;</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=n>allocator_type</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=42-类级分配classalloc>4.2 类级分配：Class::Alloc</h2><p><strong>源码位置：</strong> <code>runtime/mirror/class-alloc-inl.h:50</code></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=k>template</span><span class=o>&lt;</span><span class=kt>bool</span> <span class=n>kIsInstrumented</span><span class=p>,</span> 
+</span></span><span class=line><span class=cl>         <span class=n>Class</span><span class=o>::</span><span class=n>AddFinalizer</span> <span class=n>kAddFinalizer</span><span class=p>,</span> 
+</span></span><span class=line><span class=cl>         <span class=kt>bool</span> <span class=n>kCheckAddFinalizer</span><span class=o>&gt;</span>
+</span></span><span class=line><span class=cl><span class=kr>inline</span> <span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>Object</span><span class=o>&gt;</span> <span class=n>Class</span><span class=o>::</span><span class=n>Alloc</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span> 
+</span></span><span class=line><span class=cl>    <span class=n>gc</span><span class=o>::</span><span class=n>AllocatorType</span> <span class=n>allocator_type</span>
+</span></span><span class=line><span class=cl><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 检查对象分配前提条件
+</span></span></span><span class=line><span class=cl>    <span class=n>CheckObjectAlloc</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=n>gc</span><span class=o>::</span><span class=n>Heap</span><span class=o>*</span> <span class=n>heap</span> <span class=o>=</span> <span class=n>Runtime</span><span class=o>::</span><span class=n>Current</span><span class=p>()</span><span class=o>-&gt;</span><span class=n>GetHeap</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 检查是否需要添加 finalizer
+</span></span></span><span class=line><span class=cl>    <span class=kt>bool</span> <span class=n>add_finalizer</span> <span class=o>=</span> <span class=n>IsFinalizable</span><span class=p>();</span>  <span class=c1>// Person 没有 finalize 方法
+</span></span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// ═════════════════════════════════════════════════════════════
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 核心：调用 Heap 分配对象内存
+</span></span></span><span class=line><span class=cl>    <span class=c1>// ═════════════════════════════════════════════════════════════
+</span></span></span><span class=line><span class=cl>    <span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>Object</span><span class=o>&gt;</span> <span class=n>obj</span> <span class=o>=</span>
+</span></span><span class=line><span class=cl>        <span class=n>heap</span><span class=o>-&gt;</span><span class=n>AllocObjectWithAllocator</span><span class=o>&lt;</span><span class=n>kIsInstrumented</span><span class=p>,</span> <span class=nb>false</span><span class=o>&gt;</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>            <span class=n>self</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>            <span class=k>this</span><span class=p>,</span>                    <span class=c1>// Person Class 对象
+</span></span></span><span class=line><span class=cl>            <span class=k>this</span><span class=o>-&gt;</span><span class=n>object_size_</span><span class=p>,</span>      <span class=c1>// 24 bytes
+</span></span></span><span class=line><span class=cl>            <span class=n>allocator_type</span><span class=p>,</span>          <span class=c1>// 分配器类型
+</span></span></span><span class=line><span class=cl>            <span class=n>VoidFunctor</span><span class=p>()</span>            <span class=c1>// 无 pre-fence 回调
+</span></span></span><span class=line><span class=cl>        <span class=p>);</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 如果需要 finalizer，添加到 finalizer 引用表
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>add_finalizer</span> <span class=o>&amp;&amp;</span> <span class=n>LIKELY</span><span class=p>(</span><span class=n>obj</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>heap</span><span class=o>-&gt;</span><span class=n>AddFinalizerReference</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>obj</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>obj</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>关键参数说明：</strong></p><table><thead><tr><th>参数</th><th>值</th><th>说明</th></tr></thead><tbody><tr><td><code>klass</code></td><td>Class&lt;Person></td><td>Person 类的 Class 对象</td></tr><tr><td><code>object_size_</code></td><td>24 bytes</td><td>Person 对象大小 (已计算好)</td></tr><tr><td><code>allocator_type</code></td><td>kAllocatorTypeTLAB</td><td>当前分配器类型</td></tr></tbody></table><h2 id=43-堆级分配heapallocobjectwithallocator>4.3 堆级分配：Heap::AllocObjectWithAllocator</h2><p><strong>源码位置：</strong> <code>runtime/gc/heap-inl.h:45</code></p><p>这是对象分配的核心函数，实现了完整的分配逻辑：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span><span class=lnt>55
+</span><span class=lnt>56
+</span><span class=lnt>57
+</span><span class=lnt>58
+</span><span class=lnt>59
+</span><span class=lnt>60
+</span><span class=lnt>61
+</span><span class=lnt>62
+</span><span class=lnt>63
+</span><span class=lnt>64
+</span><span class=lnt>65
+</span><span class=lnt>66
+</span><span class=lnt>67
+</span><span class=lnt>68
+</span><span class=lnt>69
+</span><span class=lnt>70
+</span><span class=lnt>71
+</span><span class=lnt>72
+</span><span class=lnt>73
+</span><span class=lnt>74
+</span><span class=lnt>75
+</span><span class=lnt>76
+</span><span class=lnt>77
+</span><span class=lnt>78
+</span><span class=lnt>79
+</span><span class=lnt>80
+</span><span class=lnt>81
+</span><span class=lnt>82
+</span><span class=lnt>83
+</span><span class=lnt>84
+</span><span class=lnt>85
+</span><span class=lnt>86
+</span><span class=lnt>87
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=kr>inline</span> <span class=n>mirror</span><span class=o>::</span><span class=n>Object</span><span class=o>*</span> <span class=n>Heap</span><span class=o>::</span><span class=n>AllocObjectWithAllocator</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>Thread</span><span class=o>*</span> <span class=n>self</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>ObjPtr</span><span class=o>&lt;</span><span class=n>mirror</span><span class=o>::</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>size_t</span> <span class=n>byte_count</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>AllocatorType</span> <span class=n>allocator</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=n>PreFenceVisitor</span><span class=o>&amp;</span> <span class=n>pre_fence_visitor</span>
+</span></span><span class=line><span class=cl><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ═════════════════════════════════════════════════════════════
+</span></span></span><span class=line><span class=cl>    <span class=c1>// Step 1: 检查是否需要分配大对象
+</span></span></span><span class=line><span class=cl>    <span class=c1>// ═════════════════════════════════════════════════════════════
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>kCheckLargeObject</span> <span class=o>&amp;&amp;</span> <span class=n>UNLIKELY</span><span class=p>(</span><span class=n>ShouldAllocLargeObject</span><span class=p>(</span><span class=n>klass</span><span class=p>,</span> <span class=n>byte_count</span><span class=p>)))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// Person 对象很小 (24 bytes)，不会走这个分支
+</span></span></span><span class=line><span class=cl>        <span class=n>obj</span> <span class=o>=</span> <span class=n>AllocLargeObject</span><span class=o>&lt;</span><span class=n>kInstrumented</span><span class=p>,</span> <span class=n>PreFenceVisitor</span><span class=o>&gt;</span><span class=p>(...);</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=n>obj</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// ═════════════════════════════════════════════════════════════
+</span></span></span><span class=line><span class=cl>    <span class=c1>// Step 2: 尝试 TLAB 快速分配
+</span></span></span><span class=line><span class=cl>    <span class=c1>// ═════════════════════════════════════════════════════════════
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>IsTLABAllocator</span><span class=p>(</span><span class=n>allocator</span><span class=p>)</span> <span class=o>&amp;&amp;</span> <span class=n>byte_count</span> <span class=o>&lt;=</span> <span class=n>self</span><span class=o>-&gt;</span><span class=n>TlabSize</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// TLAB 快速路径：从线程本地缓冲区分配
+</span></span></span><span class=line><span class=cl>        <span class=n>obj</span> <span class=o>=</span> <span class=n>self</span><span class=o>-&gt;</span><span class=n>AllocTlab</span><span class=p>(</span><span class=n>byte_count</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        <span class=n>DCHECK</span><span class=p>(</span><span class=n>obj</span> <span class=o>!=</span> <span class=k>nullptr</span><span class=p>)</span> <span class=o>&lt;&lt;</span> <span class=s>&#34;AllocTlab can&#39;t fail&#34;</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>        
+</span></span><span class=line><span class=cl>        <span class=c1>// 设置对象的 Class 指针
+</span></span></span><span class=line><span class=cl>        <span class=n>obj</span><span class=o>-&gt;</span><span class=n>SetClass</span><span class=p>(</span><span class=n>klass</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        
+</span></span><span class=line><span class=cl>        <span class=n>bytes_allocated</span> <span class=o>=</span> <span class=n>byte_count</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>        <span class=n>usable_size</span> <span class=o>=</span> <span class=n>bytes_allocated</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>        
+</span></span><span class=line><span class=cl>        <span class=c1>// 执行 pre-fence 回调
+</span></span></span><span class=line><span class=cl>        <span class=n>no_suspend_pre_fence_visitor</span><span class=p>(</span><span class=n>obj</span><span class=p>,</span> <span class=n>usable_size</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        
+</span></span><span class=line><span class=cl>        <span class=c1>// 内存屏障，确保构造函数正确执行
+</span></span></span><span class=line><span class=cl>        <span class=n>QuasiAtomic</span><span class=o>::</span><span class=n>ThreadFenceForConstructor</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// ═════════════════════════════════════════════════════════════
+</span></span></span><span class=line><span class=cl>    <span class=c1>// Step 3: 非 TLAB 分配 (需要锁)
+</span></span></span><span class=line><span class=cl>    <span class=c1>// ═════════════════════════════════════════════════════════════
+</span></span></span><span class=line><span class=cl>    <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>obj</span> <span class=o>=</span> <span class=n>TryToAllocate</span><span class=o>&lt;</span><span class=n>kInstrumented</span><span class=p>,</span> <span class=nb>false</span><span class=o>&gt;</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>            <span class=n>self</span><span class=p>,</span> <span class=n>allocator</span><span class=p>,</span> <span class=n>byte_count</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>            <span class=o>&amp;</span><span class=n>bytes_allocated</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>usable_size</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>bytes_tl_bulk_allocated</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>UNLIKELY</span><span class=p>(</span><span class=n>obj</span> <span class=o>==</span> <span class=k>nullptr</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=c1>// 分配失败，触发 GC 后重试
+</span></span></span><span class=line><span class=cl>            <span class=n>obj</span> <span class=o>=</span> <span class=n>AllocateInternalWithGc</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>                <span class=n>self</span><span class=p>,</span> <span class=n>allocator</span><span class=p>,</span> <span class=n>kInstrumented</span><span class=p>,</span> <span class=n>byte_count</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                <span class=o>&amp;</span><span class=n>bytes_allocated</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>usable_size</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>bytes_tl_bulk_allocated</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>klass</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>        
+</span></span><span class=line><span class=cl>        <span class=c1>// 设置对象的 Class 指针
+</span></span></span><span class=line><span class=cl>        <span class=n>obj</span><span class=o>-&gt;</span><span class=n>SetClass</span><span class=p>(</span><span class=n>klass</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        
+</span></span><span class=line><span class=cl>        <span class=c1>// 执行 pre-fence 回调
+</span></span></span><span class=line><span class=cl>        <span class=n>no_suspend_pre_fence_visitor</span><span class=p>(</span><span class=n>obj</span><span class=p>,</span> <span class=n>usable_size</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        
+</span></span><span class=line><span class=cl>        <span class=c1>// 内存屏障
+</span></span></span><span class=line><span class=cl>        <span class=n>QuasiAtomic</span><span class=o>::</span><span class=n>ThreadFenceForConstructor</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// ═════════════════════════════════════════════════════════════
+</span></span></span><span class=line><span class=cl>    <span class=c1>// Step 4: 后处理
+</span></span></span><span class=line><span class=cl>    <span class=c1>// ═════════════════════════════════════════════════════════════
+</span></span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 更新统计信息
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>kInstrumented</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=o>++</span><span class=n>thread_stats</span><span class=o>-&gt;</span><span class=n>allocated_objects</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>        <span class=n>thread_stats</span><span class=o>-&gt;</span><span class=n>allocated_bytes</span> <span class=o>+=</span> <span class=n>bytes_allocated</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 将对象加入分配栈 (用于 GC)
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>AllocatorHasAllocationStack</span><span class=p>(</span><span class=n>allocator</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>PushOnAllocationStack</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>obj</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 检查是否需要触发并发 GC
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>UNLIKELY</span><span class=p>(</span><span class=n>need_gc</span> <span class=o>==</span> <span class=n>kNeedGc</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>RequestConcurrentGCAndSaveObject</span><span class=p>(</span><span class=n>self</span><span class=p>,</span> <span class=nb>false</span><span class=p>,</span> <span class=n>starting_gc_num</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>obj</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 验证对象
+</span></span></span><span class=line><span class=cl>    <span class=n>VerifyObject</span><span class=p>(</span><span class=n>obj</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>obj</span><span class=p>.</span><span class=n>Ptr</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>分配流程图：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span><span class=lnt>55
+</span><span class=lnt>56
+</span><span class=lnt>57
+</span><span class=lnt>58
+</span><span class=lnt>59
+</span><span class=lnt>60
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                        Heap::AllocObjectWithAllocator 流程                              │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  输入: klass = Class&lt;Person&gt;, byte_count = 24, allocator = kAllocatorTypeTLAB          │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ Step 1: 检查大对象                                                              │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  ShouldAllocLargeObject(24 bytes)?                                              │   │
+</span></span><span class=line><span class=cl>│  │  threshold = 12KB                                                               │   │
+</span></span><span class=line><span class=cl>│  │  24 &lt; 12KB → false (不是大对象)                                                  │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                                         │
+</span></span><span class=line><span class=cl>│                              ▼                                                         │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ Step 2: TLAB 分配检查                                                           │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  IsTLABAllocator(kAllocatorTypeTLAB)? → true                                    │   │
+</span></span><span class=line><span class=cl>│  │  24 &lt;= TlabSize()? → true (假设 TLAB 有足够空间)                                 │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  进入 TLAB 快速分配路径                                                          │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                                         │
+</span></span><span class=line><span class=cl>│                              ▼                                                         │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ Step 3: TLAB 分配                                                               │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  obj = self-&gt;AllocTlab(24);                                                     │   │
+</span></span><span class=line><span class=cl>│  │  // 指针碰撞分配，无锁操作                                                        │   │
+</span></span><span class=line><span class=cl>│  │  // obj = 0x7b100                                                               │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  obj-&gt;SetClass(klass);                                                          │   │
+</span></span><span class=line><span class=cl>│  │  // 设置 klass_ = Class&lt;Person&gt; @ 0x7a123456                                    │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  QuasiAtomic::ThreadFenceForConstructor();                                      │   │
+</span></span><span class=line><span class=cl>│  │  // 内存屏障                                                                    │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                                         │
+</span></span><span class=line><span class=cl>│                              ▼                                                         │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ Step 4: 后处理                                                                  │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  // 更新统计                                                                    │   │
+</span></span><span class=line><span class=cl>│  │  ++thread_stats-&gt;allocated_objects;                                             │   │
+</span></span><span class=line><span class=cl>│  │  thread_stats-&gt;allocated_bytes += 24;                                           │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  // 加入分配栈                                                                   │   │
+</span></span><span class=line><span class=cl>│  │  PushOnAllocationStack(self, &amp;obj);                                             │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  // 检查是否需要 GC                                                              │   │
+</span></span><span class=line><span class=cl>│  │  if (bytes_allocated &gt; threshold) {                                             │   │
+</span></span><span class=line><span class=cl>│  │      RequestConcurrentGC();                                                     │   │
+</span></span><span class=line><span class=cl>│  │  }                                                                              │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                                         │
+</span></span><span class=line><span class=cl>│                              ▼                                                         │
+</span></span><span class=line><span class=cl>│  输出: Person 对象 @ 0x7b100                                                            │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=5-tlab-分配机制>5. TLAB 分配机制</h1><h2 id=51-tlab-设计理念>5.1 TLAB 设计理念</h2><p><strong>TLAB (Thread Local Allocation Buffer)</strong> 是 ART 优化小对象分配的核心机制。</p><p><strong>设计目标：</strong></p><ol><li><strong>无锁分配</strong>：每个线程有独立的分配缓冲区，避免多线程竞争</li><li><strong>指针碰撞</strong>：通过简单的指针移动完成分配，效率极高</li><li><strong>批量分配</strong>：一次从堆中申请大块内存，多次分配使用</li></ol><h2 id=52-tlab-数据结构>5.2 TLAB 数据结构</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// Thread 类中的 TLAB 相关字段
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>Thread</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// TLAB 起始地址
+</span></span></span><span class=line><span class=cl>  <span class=kt>uint8_t</span><span class=o>*</span> <span class=n>tlab_ptr_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// TLAB 当前位置 (指针碰撞)
+</span></span></span><span class=line><span class=cl>  <span class=kt>uint8_t</span><span class=o>*</span> <span class=n>tlab_pos_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// TLAB 结束地址
+</span></span></span><span class=line><span class=cl>  <span class=kt>uint8_t</span><span class=o>*</span> <span class=n>tlab_end_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// TLAB 大小
+</span></span></span><span class=line><span class=cl>  <span class=n>size_t</span> <span class=n>tlab_size_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>内存布局：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                              TLAB 内存布局                                               │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  Thread Local Allocation Buffer (TLAB):                                                 │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  tlab_ptr_        ──────► ┌──────────────────────────────────────────────────┐ │   │
+</span></span><span class=line><span class=cl>│  │                          │                                                  │ │   │
+</span></span><span class=line><span class=cl>│  │  tlab_pos_        ──────► │    [已分配区域]    │    [空闲区域]               │ │   │
+</span></span><span class=line><span class=cl>│  │                          │                    ↑                             │ │   │
+</span></span><span class=line><span class=cl>│  │                          │                    tlab_pos_                     │ │   │
+</span></span><span class=line><span class=cl>│  │  tlab_end_        ──────► │                                                  │ │   │
+</span></span><span class=line><span class=cl>│  │                          └──────────────────────────────────────────────────┘ │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  tlab_size_ = 8KB (典型值)                                                      │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  已分配区域示例:                                                                         │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  [Obj1][Obj2][Obj3][Obj4][Obj5][Obj6][    空闲区域    ][    空闲区域    ]        │   │
+</span></span><span class=line><span class=cl>│  │    ↑     ↑     ↑     ↑     ↑     ↑      ↑                                       │   │
+</span></span><span class=line><span class=cl>│  │    │     │     │     │     │     │      tlab_pos_ (下一个分配位置)               │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=53-tlab-分配算法>5.3 TLAB 分配算法</h2><p><strong>Thread::AllocTlab 实现：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 简化的 TLAB 分配实现
+</span></span></span><span class=line><span class=cl><span class=kr>inline</span> <span class=n>Object</span><span class=o>*</span> <span class=n>Thread</span><span class=o>::</span><span class=n>AllocTlab</span><span class=p>(</span><span class=n>size_t</span> <span class=n>bytes</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 检查是否有足够空间
+</span></span></span><span class=line><span class=cl>    <span class=n>DCHECK</span><span class=p>(</span><span class=n>tlab_pos_</span> <span class=o>+</span> <span class=n>bytes</span> <span class=o>&lt;=</span> <span class=n>tlab_end_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 指针碰撞分配
+</span></span></span><span class=line><span class=cl>    <span class=n>Object</span><span class=o>*</span> <span class=n>obj</span> <span class=o>=</span> <span class=k>reinterpret_cast</span><span class=o>&lt;</span><span class=n>Object</span><span class=o>*&gt;</span><span class=p>(</span><span class=n>tlab_pos_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>tlab_pos_</span> <span class=o>+=</span> <span class=n>bytes</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>obj</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>分配 Person 对象示例：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Before:
+</span></span><span class=line><span class=cl>  tlab_ptr_ = 0x7b000
+</span></span><span class=line><span class=cl>  tlab_pos_ = 0x7b100  (已分配 256 bytes)
+</span></span><span class=line><span class=cl>  tlab_end_ = 0x7c000  (TLAB 大小 4KB)
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>AllocTlab(24):  // Person 对象大小
+</span></span><span class=line><span class=cl>  obj = 0x7b100
+</span></span><span class=line><span class=cl>  tlab_pos_ = 0x7b100 + 24 = 0x7b118
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>After:
+</span></span><span class=line><span class=cl>  tlab_pos_ = 0x7b118
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  内存:
+</span></span><span class=line><span class=cl>  [0x7b000 ... 0x7b100][Person@0x7b100][空闲...]
+</span></span><span class=line><span class=cl>                         ↑
+</span></span><span class=line><span class=cl>                         24 bytes
+</span></span></code></pre></td></tr></table></div></div><h2 id=54-tlab-性能优势>5.4 TLAB 性能优势</h2><p><strong>与传统 malloc 对比：</strong></p><table><thead><tr><th>特性</th><th>TLAB</th><th>malloc</th></tr></thead><tbody><tr><td>锁竞争</td><td>无锁</td><td>需要锁</td></tr><tr><td>分配操作</td><td>指针移动 (1-2 条指令)</td><td>复杂查找算法</td></tr><tr><td>内存碎片</td><td>极少</td><td>可能较多</td></tr><tr><td>缓存友好</td><td>连续内存</td><td>可能分散</td></tr><tr><td>适用场景</td><td>小对象频繁分配</td><td>通用分配</td></tr></tbody></table><p><strong>性能对比：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>TLAB 分配:
+</span></span><span class=line><span class=cl>  mov rax, [tlab_pos_]      ; 获取当前位置
+</span></span><span class=line><span class=cl>  add [tlab_pos_], 24       ; 移动指针
+</span></span><span class=line><span class=cl>  ; 2 条指令，约 1-2 纳秒
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>malloc 分配:
+</span></span><span class=line><span class=cl>  ; 需要查找空闲列表
+</span></span><span class=line><span class=cl>  ; 可能需要锁
+</span></span><span class=line><span class=cl>  ; 可能触发系统调用
+</span></span><span class=line><span class=cl>  ; 约 50-100 纳秒
+</span></span></code></pre></td></tr></table></div></div><h2 id=55-tlab-补充机制>5.5 TLAB 补充机制</h2><p>当 TLAB 空间不足时：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=k>if</span> <span class=p>(</span><span class=n>byte_count</span> <span class=o>&gt;</span> <span class=n>self</span><span class=o>-&gt;</span><span class=n>TlabSize</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// TLAB 空间不足，使用其他分配器
+</span></span></span><span class=line><span class=cl>    <span class=n>obj</span> <span class=o>=</span> <span class=n>TryToAllocate</span><span class=o>&lt;</span><span class=n>kInstrumented</span><span class=p>,</span> <span class=nb>false</span><span class=o>&gt;</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>        <span class=n>self</span><span class=p>,</span> <span class=n>allocator</span><span class=p>,</span> <span class=n>byte_count</span><span class=p>,</span> <span class=p>...);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>补充策略：</strong></p><ol><li><strong>从堆中申请新的 TLAB</strong>：当前 TLAB 用完时，从堆中申请新的缓冲区</li><li><strong>直接在堆中分配</strong>：对于大对象，直接在堆中分配</li><li><strong>触发 GC</strong>：内存不足时，触发 GC 回收内存</li></ol><hr><h1 id=6-分配器类型>6. 分配器类型</h1><p>ART 支持多种分配器，根据 GC 策略和对象特性选择。</p><h2 id=61-分配器类型定义>6.1 分配器类型定义</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=k>enum</span> <span class=nc>AllocatorType</span> <span class=o>:</span> <span class=kt>char</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeBumpPointer</span><span class=p>,</span>     <span class=c1>// 指针碰撞 (SS/SSC GC)
+</span></span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeTLAB</span><span class=p>,</span>            <span class=c1>// 线程本地分配缓冲区
+</span></span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeRosAlloc</span><span class=p>,</span>        <span class=c1>// RosAlloc 分层分配
+</span></span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeDlMalloc</span><span class=p>,</span>        <span class=c1>// dlmalloc 传统分配
+</span></span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeNonMoving</span><span class=p>,</span>       <span class=c1>// 非移动区域
+</span></span></span><span class=line><span class=cl>  <span class=n>kAllocatorTypeLOS</span><span class=p>,</span>             <span class=c1>// 大对象空间
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=62-各分配器特点>6.2 各分配器特点</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                              ART 分配器对比                                              │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  ┌───────────────────────────────────────────────────────────────────────────────────┐ │
+</span></span><span class=line><span class=cl>│  │ 分配器              │ 适用场景          │ 特点                    │ GC 类型      │ │
+</span></span><span class=line><span class=cl>│  ├───────────────────────────────────────────────────────────────────────────────────┤ │
+</span></span><span class=line><span class=cl>│  │ kAllocatorTypeTLAB  │ 小对象 (&lt;8KB)     │ 无锁，指针碰撞，最快     │ CMS/CC      │ │
+</span></span><span class=line><span class=cl>│  │                     │ 频繁分配          │ 线程私有                │              │ │
+</span></span><span class=line><span class=cl>│  ├───────────────────────────────────────────────────────────────────────────────────┤ │
+</span></span><span class=line><span class=cl>│  │ kAllocatorTypeRosAlloc │ 中等对象       │ 分层大小类              │ CMS          │ │
+</span></span><span class=line><span class=cl>│  │                     │                   │ 减少碎片                │              │ │
+</span></span><span class=line><span class=cl>│  ├───────────────────────────────────────────────────────────────────────────────────┤ │
+</span></span><span class=line><span class=cl>│  │ kAllocatorTypeDlMalloc │ 大对象/通用    │ 传统 malloc             │ SS           │ │
+</span></span><span class=line><span class=cl>│  │                     │                   │ 有锁                    │              │ │
+</span></span><span class=line><span class=cl>│  ├───────────────────────────────────────────────────────────────────────────────────┤ │
+</span></span><span class=line><span class=cl>│  │ kAllocatorTypeNonMoving │ 不可移动对象  │ 非压缩区域              │ 所有         │ │
+</span></span><span class=line><span class=cl>│  │                     │ JNI 引用          │ 不参与 GC 移动          │              │ │
+</span></span><span class=line><span class=cl>│  ├───────────────────────────────────────────────────────────────────────────────────┤ │
+</span></span><span class=line><span class=cl>│  │ kAllocatorTypeLOS   │ 大对象 (&gt;12KB)    │ 单独管理                │ 所有         │ │
+</span></span><span class=line><span class=cl>│  │                     │                   │ 直接 mmap               │              │ │
+</span></span><span class=line><span class=cl>│  └───────────────────────────────────────────────────────────────────────────────────┘ │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=63-分配器选择策略>6.3 分配器选择策略</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// Heap::GetCurrentAllocator()
+</span></span></span><span class=line><span class=cl><span class=n>AllocatorType</span> <span class=n>Heap</span><span class=o>::</span><span class=n>GetCurrentAllocator</span><span class=p>()</span> <span class=k>const</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=n>current_allocator_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 分配器选择逻辑 (简化)
+</span></span></span><span class=line><span class=cl><span class=n>AllocatorType</span> <span class=nf>SelectAllocator</span><span class=p>(</span><span class=n>Class</span><span class=o>*</span> <span class=n>klass</span><span class=p>,</span> <span class=n>size_t</span> <span class=n>size</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 1. 检查是否是大对象
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>size</span> <span class=o>&gt;</span> <span class=n>kLargeObjectThreshold</span><span class=p>)</span> <span class=p>{</span>  <span class=c1>// 12KB
+</span></span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>kAllocatorTypeLOS</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 2. 检查是否需要非移动区域
+</span></span></span><span class=line><span class=cl>  <span class=k>if</span> <span class=p>(</span><span class=n>klass</span><span class=o>-&gt;</span><span class=n>IsNonMovable</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>kAllocatorTypeNonMoving</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 3. 根据 GC 类型选择
+</span></span></span><span class=line><span class=cl>  <span class=k>switch</span> <span class=p>(</span><span class=n>gc_type</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>case</span> <span class=nl>kCollectorTypeCMS</span><span class=p>:</span>
+</span></span><span class=line><span class=cl>    <span class=k>case</span> <span class=nl>kCollectorTypeCC</span><span class=p>:</span>
+</span></span><span class=line><span class=cl>      <span class=k>return</span> <span class=n>kAllocatorTypeTLAB</span><span class=p>;</span>  <span class=c1>// 使用 TLAB
+</span></span></span><span class=line><span class=cl>      
+</span></span><span class=line><span class=cl>    <span class=k>case</span> <span class=nl>kCollectorTypeSS</span><span class=p>:</span>
+</span></span><span class=line><span class=cl>      <span class=k>return</span> <span class=n>kAllocatorTypeBumpPointer</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>      
+</span></span><span class=line><span class=cl>    <span class=k>default</span><span class=o>:</span>
+</span></span><span class=line><span class=cl>      <span class=k>return</span> <span class=n>kAllocatorTypeDlMalloc</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=64-person-对象分配路径>6.4 Person 对象分配路径</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Person 对象分配:
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>1. 检查大小:
+</span></span><span class=line><span class=cl>   size = 24 bytes
+</span></span><span class=line><span class=cl>   threshold = 12KB
+</span></span><span class=line><span class=cl>   24 &lt; 12KB → 不是大对象
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>2. 检查是否 NonMoving:
+</span></span><span class=line><span class=cl>   Person 类没有特殊标记 → 不需要
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>3. 选择分配器:
+</span></span><span class=line><span class=cl>   GetCurrentAllocator() → kAllocatorTypeTLAB
+</span></span><span class=line><span class=cl>   (假设使用 CMS GC)
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>4. TLAB 分配:
+</span></span><span class=line><span class=cl>   self-&gt;AllocTlab(24) → 成功
+</span></span><span class=line><span class=cl>   返回 Person @ 0x7b100
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=7-对象内存布局>7. 对象内存布局</h1><h2 id=71-对象结构>7.1 对象结构</h2><p>ART 中每个对象都继承自 <code>Object</code> 类：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// runtime/mirror/object.h
+</span></span></span><span class=line><span class=cl><span class=k>class</span> <span class=nc>Object</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 指向 Class 对象的指针
+</span></span></span><span class=line><span class=cl>  <span class=n>HeapReference</span><span class=o>&lt;</span><span class=n>Class</span><span class=o>&gt;</span> <span class=n>klass_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 监视器锁 (用于同步)
+</span></span></span><span class=line><span class=cl>  <span class=kt>uint32_t</span> <span class=n>monitor_</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>对象头大小：</strong></p><ul><li><code>klass_</code>: 4 bytes (32-bit) / 8 bytes (64-bit)</li><li><code>monitor_</code>: 4 bytes</li></ul><h2 id=72-person-对象内存布局>7.2 Person 对象内存布局</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                           Person 对象内存布局                                            │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  Class&lt;Person&gt; @ 0x7a123456                                                             │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ object_size_ = 24 bytes                                                         │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │ 字段偏移表:                                                                      │   │
+</span></span><span class=line><span class=cl>│  │   name_ offset = 8                                                              │   │
+</span></span><span class=line><span class=cl>│  │   age_  offset = 16                                                             │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  Person 对象 @ 0x7b100                                                                  │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  Offset │ Size │  Field     │  Value                                           │   │
+</span></span><span class=line><span class=cl>│  │  ───────┼──────┼────────────┼─────────────────────────────────────────────────  │   │
+</span></span><span class=line><span class=cl>│  │  0      │ 4    │  klass_    │  → Class&lt;Person&gt; @ 0x7a123456                     │   │
+</span></span><span class=line><span class=cl>│  │  4      │ 4    │  monitor_  │  0 (无锁)                                         │   │
+</span></span><span class=line><span class=cl>│  │  ───────┼──────┼────────────┼─────────────────────────────────────────────────  │   │
+</span></span><span class=line><span class=cl>│  │  8      │ 8    │  name_     │  → String &#34;Unknown&#34; @ 0x7c100                     │   │
+</span></span><span class=line><span class=cl>│  │  16     │ 4    │  age_      │  0                                                │   │
+</span></span><span class=line><span class=cl>│  │  20     │ 4    │  (padding) │  (对齐到 8 字节边界)                               │   │
+</span></span><span class=line><span class=cl>│  │  ───────┼──────┼────────────┼─────────────────────────────────────────────────  │   │
+</span></span><span class=line><span class=cl>│  │  Total: 24 bytes                                                                │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  内存视图 (小端序):                                                                      │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  Address   │  Hex Value   │  Description                                        │   │
+</span></span><span class=line><span class=cl>│  │  ─────────┼──────────────┼────────────────────────────────────────────────────  │   │
+</span></span><span class=line><span class=cl>│  │  0x7b100  │  56 34 12 7a  │  klass_ = 0x7a123456                                │   │
+</span></span><span class=line><span class=cl>│  │  0x7b104  │  00 00 00 00  │  monitor_ = 0                                       │   │
+</span></span><span class=line><span class=cl>│  │  0x7b108  │  00 10 7c 00  │  name_ = 0x007c1000                                 │   │
+</span></span><span class=line><span class=cl>│  │  0x7b10c  │  00 00 00 00  │  name_ (高 32 位)                                   │   │
+</span></span><span class=line><span class=cl>│  │  0x7b110  │  00 00 00 00  │  age_ = 0                                           │   │
+</span></span><span class=line><span class=cl>│  │  0x7b114  │  00 00 00 00  │  padding                                            │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=73-对象大小计算>7.3 对象大小计算</h2><p>对象大小在类链接时计算：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// Class::ComputeClassSize() 简化逻辑
+</span></span></span><span class=line><span class=cl><span class=kt>uint32_t</span> <span class=nf>ComputeClassSize</span><span class=p>(</span><span class=kt>uint32_t</span> <span class=n>num_ref_fields</span><span class=p>,</span> 
+</span></span><span class=line><span class=cl>                          <span class=kt>uint32_t</span> <span class=n>num_32bit_fields</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                          <span class=kt>uint32_t</span> <span class=n>num_64bit_fields</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 对象头
+</span></span></span><span class=line><span class=cl>  <span class=kt>uint32_t</span> <span class=n>size</span> <span class=o>=</span> <span class=k>sizeof</span><span class=p>(</span><span class=n>Object</span><span class=p>);</span>  <span class=c1>// 8 bytes
+</span></span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 引用字段 (8 bytes each on 64-bit)
+</span></span></span><span class=line><span class=cl>  <span class=n>size</span> <span class=o>+=</span> <span class=n>num_ref_fields</span> <span class=o>*</span> <span class=mi>8</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 64-bit 字段 (long, double)
+</span></span></span><span class=line><span class=cl>  <span class=n>size</span> <span class=o>+=</span> <span class=n>num_64bit_fields</span> <span class=o>*</span> <span class=mi>8</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 32-bit 字段 (int, float)
+</span></span></span><span class=line><span class=cl>  <span class=n>size</span> <span class=o>+=</span> <span class=n>num_32bit_fields</span> <span class=o>*</span> <span class=mi>4</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 对齐到 8 字节边界
+</span></span></span><span class=line><span class=cl>  <span class=n>size</span> <span class=o>=</span> <span class=n>RoundUp</span><span class=p>(</span><span class=n>size</span><span class=p>,</span> <span class=mi>8</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=k>return</span> <span class=n>size</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// Person 类:
+</span></span></span><span class=line><span class=cl><span class=c1>//   num_ref_fields = 1 (name)
+</span></span></span><span class=line><span class=cl><span class=c1>//   num_32bit_fields = 1 (age)
+</span></span></span><span class=line><span class=cl><span class=c1>//   num_64bit_fields = 0
+</span></span></span><span class=line><span class=cl><span class=c1>// 
+</span></span></span><span class=line><span class=cl><span class=c1>// size = 8 + 1*8 + 1*4 = 20
+</span></span></span><span class=line><span class=cl><span class=c1>// size = RoundUp(20, 8) = 24 bytes
+</span></span></span></code></pre></td></tr></table></div></div><h2 id=74-字段偏移计算>7.4 字段偏移计算</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 字段偏移在类链接时计算
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=nf>LinkFields</span><span class=p>(</span><span class=n>Class</span><span class=o>*</span> <span class=n>klass</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=n>size_t</span> <span class=n>offset</span> <span class=o>=</span> <span class=k>sizeof</span><span class=p>(</span><span class=n>Object</span><span class=p>);</span>  <span class=c1>// 从对象头后开始
+</span></span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 先排列引用字段 (便于 GC 扫描)
+</span></span></span><span class=line><span class=cl>  <span class=k>for</span> <span class=p>(</span><span class=n>Field</span><span class=o>&amp;</span> <span class=nl>field</span> <span class=p>:</span> <span class=n>ref_fields</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>field</span><span class=p>.</span><span class=n>SetOffset</span><span class=p>(</span><span class=n>offset</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>offset</span> <span class=o>+=</span> <span class=mi>8</span><span class=p>;</span>  <span class=c1>// 64-bit
+</span></span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 再排列 64-bit 字段
+</span></span></span><span class=line><span class=cl>  <span class=k>for</span> <span class=p>(</span><span class=n>Field</span><span class=o>&amp;</span> <span class=nl>field</span> <span class=p>:</span> <span class=n>fields_64bit</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>field</span><span class=p>.</span><span class=n>SetOffset</span><span class=p>(</span><span class=n>offset</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>offset</span> <span class=o>+=</span> <span class=mi>8</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 最后排列 32-bit 字段
+</span></span></span><span class=line><span class=cl>  <span class=k>for</span> <span class=p>(</span><span class=n>Field</span><span class=o>&amp;</span> <span class=nl>field</span> <span class=p>:</span> <span class=n>fields_32bit</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>field</span><span class=p>.</span><span class=n>SetOffset</span><span class=p>(</span><span class=n>offset</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>offset</span> <span class=o>+=</span> <span class=mi>4</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// Person 类字段偏移:
+</span></span></span><span class=line><span class=cl><span class=c1>//   name_ offset = 8
+</span></span></span><span class=line><span class=cl><span class=c1>//   age_ offset = 16
+</span></span></span></code></pre></td></tr></table></div></div><hr><h1 id=8-构造函数调用>8. 构造函数调用</h1><h2 id=81-invoke-direct-指令>8.1 invoke-direct 指令</h2><p>对象内存分配完成后，需要调用构造函数初始化字段：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-smali data-lang=smali><span class=line><span class=cl><span class=c># 调用 Person 的构造函数
+</span></span></span><span class=line><span class=cl>invoke-direct<span class=w> </span><span class=p>{</span><span class=nb>v0</span><span class=p>},</span><span class=w> </span><span class=kt>L</span>com/example/model/<span class=nc>Person</span>;<span class=p>-&gt;</span><span class=nf>&lt;init&gt;</span><span class=p>()</span><span class=kt>V</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><p><strong>源码位置：</strong> <code>runtime/interpreter/interpreter_switch_impl-inl.h:1241</code></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=n>HANDLER_ATTRIBUTES</span> <span class=kt>bool</span> <span class=nf>INVOKE_DIRECT</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>HandleInvoke</span><span class=o>&lt;</span><span class=n>kDirect</span><span class=p>,</span> <span class=cm>/*is_range=*/</span> <span class=nb>false</span><span class=o>&gt;</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=82-构造函数字节码>8.2 构造函数字节码</h2><p>Person 的默认构造函数编译后的字节码：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-smali data-lang=smali><span class=line><span class=cl><span class=k>.method</span><span class=w> </span><span class=k>public</span><span class=w> </span><span class=k>constructor</span><span class=w> </span><span class=nf>&lt;init&gt;</span><span class=p>()</span><span class=kt>V</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c># 调用父类 Object 的构造函数
+</span></span></span><span class=line><span class=cl><span class=w>    </span>invoke-direct<span class=w> </span><span class=p>{</span><span class=nb>p0</span><span class=p>},</span><span class=w> </span><span class=kt>L</span>java/lang/<span class=nc>Object</span>;<span class=p>-&gt;</span><span class=nf>&lt;init&gt;</span><span class=p>()</span><span class=kt>V</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c># this.name = &#34;Unknown&#34;
+</span></span></span><span class=line><span class=cl><span class=w>    </span>const-string<span class=w> </span><span class=nb>v1</span><span class=p>,</span><span class=w> </span><span class=s>&#34;Unknown&#34;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span>iput-object<span class=w> </span><span class=nb>v1</span><span class=p>,</span><span class=w> </span><span class=nb>p0</span><span class=p>,</span><span class=w> </span><span class=kt>L</span>com/example/model/<span class=nc>Person</span>;<span class=p>-&gt;</span><span class=nv>name</span><span class=p>:</span><span class=kt>L</span>java/lang/<span class=nc>String</span>;<span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=c># this.age = 0
+</span></span></span><span class=line><span class=cl><span class=w>    </span>const/4<span class=w> </span><span class=nb>v1</span><span class=p>,</span><span class=w> </span><span class=mi>0</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span>iput<span class=w> </span><span class=nb>v1</span><span class=p>,</span><span class=w> </span><span class=nb>p0</span><span class=p>,</span><span class=w> </span><span class=kt>L</span>com/example/model/<span class=nc>Person</span>;<span class=p>-&gt;</span><span class=nv>age</span><span class=p>:</span><span class=kt>I</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    
+</span></span></span><span class=line><span class=cl><span class=w>    </span>return-void<span class=w>
+</span></span></span><span class=line><span class=cl><span class=k>.end</span><span class=w> </span><span class=k>method</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><h2 id=83-构造函数执行流程>8.3 构造函数执行流程</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span><span class=lnt>55
+</span><span class=lnt>56
+</span><span class=lnt>57
+</span><span class=lnt>58
+</span><span class=lnt>59
+</span><span class=lnt>60
+</span><span class=lnt>61
+</span><span class=lnt>62
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                          构造函数执行流程                                                 │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  输入: this = Person @ 0x7b100                                                          │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  Step 1: invoke-direct {this}, Object.&lt;init&gt;                                            │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  // 调用 java.lang.Object 的构造函数                                            │   │
+</span></span><span class=line><span class=cl>│  │  // Object 构造函数是空的，直接返回                                              │   │
+</span></span><span class=line><span class=cl>│  │  // 但确保了对象继承链的正确初始化                                                │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                                         │
+</span></span><span class=line><span class=cl>│                              ▼                                                         │
+</span></span><span class=line><span class=cl>│  Step 2: iput-object &#34;Unknown&#34;, this.name_                                             │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  // 解析字符串常量                                                              │   │
+</span></span><span class=line><span class=cl>│  │  String str = ResolveString(&#34;Unknown&#34;);  // str @ 0x7c100                       │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  // 计算字段地址                                                                │   │
+</span></span><span class=line><span class=cl>│  │  address = this + name_offset = 0x7b100 + 8 = 0x7b108                           │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  // 写入字段值                                                                  │   │
+</span></span><span class=line><span class=cl>│  │  *address = str;  // name_ = 0x7c100                                            │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  内存变化:                                                                      │   │
+</span></span><span class=line><span class=cl>│  │  [0x7b108] = 0x007c1000  (String &#34;Unknown&#34;)                                     │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                                         │
+</span></span><span class=line><span class=cl>│                              ▼                                                         │
+</span></span><span class=line><span class=cl>│  Step 3: iput 0, this.age_                                                              │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  // 计算字段地址                                                                │   │
+</span></span><span class=line><span class=cl>│  │  address = this + age_offset = 0x7b100 + 16 = 0x7b110                           │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  // 写入字段值                                                                  │   │
+</span></span><span class=line><span class=cl>│  │  *address = 0;  // age_ = 0                                                     │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  内存变化:                                                                      │   │
+</span></span><span class=line><span class=cl>│  │  [0x7b110] = 0x00000000  (int 0)                                                │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                                         │
+</span></span><span class=line><span class=cl>│                              ▼                                                         │
+</span></span><span class=line><span class=cl>│  Step 4: return-void                                                                    │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │  // 构造函数完成，返回                                                          │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                              │                                                         │
+</span></span><span class=line><span class=cl>│                              ▼                                                         │
+</span></span><span class=line><span class=cl>│  输出: Person 对象初始化完成                                                             │
+</span></span><span class=line><span class=cl>│        name_ = &#34;Unknown&#34; @ 0x7c100                                                      │
+</span></span><span class=line><span class=cl>│        age_ = 0                                                                          │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=84-字段访问指令>8.4 字段访问指令</h2><p><strong>iput-object 指令：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-cpp data-lang=cpp><span class=line><span class=cl><span class=c1>// 简化的 iput-object 实现
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=nf>IputObject</span><span class=p>(</span><span class=n>Object</span><span class=o>*</span> <span class=n>obj</span><span class=p>,</span> <span class=n>Field</span><span class=o>*</span> <span class=n>field</span><span class=p>,</span> <span class=n>Object</span><span class=o>*</span> <span class=n>value</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>  <span class=c1>// 获取字段偏移
+</span></span></span><span class=line><span class=cl>  <span class=n>size_t</span> <span class=n>offset</span> <span class=o>=</span> <span class=n>field</span><span class=o>-&gt;</span><span class=n>GetOffset</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 计算地址
+</span></span></span><span class=line><span class=cl>  <span class=n>Object</span><span class=o>**</span> <span class=n>address</span> <span class=o>=</span> <span class=k>reinterpret_cast</span><span class=o>&lt;</span><span class=n>Object</span><span class=o>**&gt;</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>      <span class=k>reinterpret_cast</span><span class=o>&lt;</span><span class=kt>uint8_t</span><span class=o>*&gt;</span><span class=p>(</span><span class=n>obj</span><span class=p>)</span> <span class=o>+</span> <span class=n>offset</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 写入值
+</span></span></span><span class=line><span class=cl>  <span class=o>*</span><span class=n>address</span> <span class=o>=</span> <span class=n>value</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>  <span class=c1>// 写屏障 (用于 GC)
+</span></span></span><span class=line><span class=cl>  <span class=n>WriteBarrier</span><span class=o>::</span><span class=n>ForFieldWrite</span><span class=p>(</span><span class=n>obj</span><span class=p>,</span> <span class=n>offset</span><span class=p>,</span> <span class=n>value</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=9-完整时序图>9. 完整时序图</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span><span class=lnt>55
+</span><span class=lnt>56
+</span><span class=lnt>57
+</span><span class=lnt>58
+</span><span class=lnt>59
+</span><span class=lnt>60
+</span><span class=lnt>61
+</span><span class=lnt>62
+</span><span class=lnt>63
+</span><span class=lnt>64
+</span><span class=lnt>65
+</span><span class=lnt>66
+</span><span class=lnt>67
+</span><span class=lnt>68
+</span><span class=lnt>69
+</span><span class=lnt>70
+</span><span class=lnt>71
+</span><span class=lnt>72
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                  Person obj = new Person() 完整时序图                                    │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  Time │ Component     │ Action                                                          │
+</span></span><span class=line><span class=cl>│  ─────┼───────────────┼──────────────────────────────────────────────────────────────── │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  T1   │ Interpreter   │ 执行 new-instance v0, TypeId[Person]                            │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  T2   │ ClassLinker   │ ResolveVerifyAndClinit(TypeId[Person])                          │
+</span></span><span class=line><span class=cl>│       │               │ ├─ 从 DexCache 查找 Person Class                                │
+</span></span><span class=line><span class=cl>│       │               │ ├─ 若未解析，触发类加载                                          │
+</span></span><span class=line><span class=cl>│       │               │ └─ 检查类是否已初始化                                            │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  T3   │ ClassLinker   │ 返回 Class&lt;Person&gt; @ 0x7a123456                                 │
+</span></span><span class=line><span class=cl>│       │               │ ├─ object_size_ = 24                                            │
+</span></span><span class=line><span class=cl>│       │               │ ├─ name_ offset = 8                                             │
+</span></span><span class=line><span class=cl>│       │               │ └─ age_ offset = 16                                             │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  T4   │ Heap          │ GetCurrentAllocator()                                           │
+</span></span><span class=line><span class=cl>│       │               │ └─ 返回 kAllocatorTypeTLAB                                       │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  T5   │ Thread        │ AllocTlab(24 bytes)                                             │
+</span></span><span class=line><span class=cl>│       │               │ ├─ 检查 TLAB 空间足够                                            │
+</span></span><span class=line><span class=cl>│       │               │ ├─ 指针碰撞分配                                                  │
+</span></span><span class=line><span class=cl>│       │               │ └─ 返回 Object @ 0x7b100                                        │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  T6   │ Object        │ SetClass(Class&lt;Person&gt;)                                         │
+</span></span><span class=line><span class=cl>│       │               │ └─ klass_ = 0x7a123456                                          │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  T7   │ Heap          │ PushOnAllocationStack(obj)                                      │
+</span></span><span class=line><span class=cl>│       │               │ └─ 将对象加入分配栈 (用于 GC)                                    │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  T8   │ Interpreter   │ SetVRegReference(v0, obj)                                       │
+</span></span><span class=line><span class=cl>│       │               │ └─ v0 = Person @ 0x7b100                                        │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  ─────┼───────────────┼──────────────────────────────────────────────────────────────── │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  T9   │ Interpreter   │ 执行 invoke-direct {v0}, MethodId[Person.&lt;init&gt;]                │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  T10  │ ClassLinker   │ ResolveMethod(MethodId[Person.&lt;init&gt;])                          │
+</span></span><span class=line><span class=cl>│       │               │ └─ 返回 ArtMethod @ 0x7d100                                     │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  T11  │ ArtMethod     │ Invoke(self, args)                                              │
+</span></span><span class=line><span class=cl>│       │               │ ├─ args[0] = this = Person @ 0x7b100                            │
+</span></span><span class=line><span class=cl>│       │               │ └─ 跳转到构造函数代码                                            │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  T12  │ Interpreter   │ 执行 Person.&lt;init&gt;() 构造函数                                    │
+</span></span><span class=line><span class=cl>│       │               │ ├─ invoke-direct {this}, Object.&lt;init&gt;                          │
+</span></span><span class=line><span class=cl>│       │               │ ├─ iput-object &#34;Unknown&#34;, this.name_                            │
+</span></span><span class=line><span class=cl>│       │               │ └─ iput 0, this.age_                                            │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  T13  │ Object        │ 字段初始化完成                                                   │
+</span></span><span class=line><span class=cl>│       │               │ ├─ name_ = String &#34;Unknown&#34; @ 0x7c100                           │
+</span></span><span class=line><span class=cl>│       │               │ └─ age_ = 0                                                     │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  T14  │ Interpreter   │ 构造函数返回，对象创建完成                                        │
+</span></span><span class=line><span class=cl>│       │               │                                                                 │
+</span></span><span class=line><span class=cl>│  ─────┼───────────────┼──────────────────────────────────────────────────────────────── │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  Result:                                                                                │
+</span></span><span class=line><span class=cl>│  ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+</span></span><span class=line><span class=cl>│  │ v0 (obj) = Person @ 0x7b100                                                     │   │
+</span></span><span class=line><span class=cl>│  │                                                                                 │   │
+</span></span><span class=line><span class=cl>│  │ Person 对象状态:                                                                 │   │
+</span></span><span class=line><span class=cl>│  │   klass_   → Class&lt;Person&gt; @ 0x7a123456                                         │   │
+</span></span><span class=line><span class=cl>│  │   monitor_ = 0                                                                  │   │
+</span></span><span class=line><span class=cl>│  │   name_    → String &#34;Unknown&#34; @ 0x7c100                                         │   │
+</span></span><span class=line><span class=cl>│  │   age_     = 0                                                                  │   │
+</span></span><span class=line><span class=cl>│  └─────────────────────────────────────────────────────────────────────────────────┘   │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=10-总结>10. 总结</h1><h2 id=101-核心流程总结>10.1 核心流程总结</h2><p><code>Person obj = new Person()</code> 的完整执行过程：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                              对象分配核心流程                                            │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  1. 类解析                                                                              │
+</span></span><span class=line><span class=cl>│     └─ 符号引用 → 实际引用 (Class 对象)                                                  │
+</span></span><span class=line><span class=cl>│     └─ 确保类已加载、链接、验证、初始化                                                   │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  2. 内存分配                                                                            │
+</span></span><span class=line><span class=cl>│     └─ 从 Class 对象获取对象大小                                                         │
+</span></span><span class=line><span class=cl>│     └─ 选择合适的分配器 (TLAB)                                                           │
+</span></span><span class=line><span class=cl>│     └─ 通过指针碰撞快速分配内存                                                          │
+</span></span><span class=line><span class=cl>│     └─ 设置对象的 klass_ 指针                                                           │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  3. 构造函数调用                                                                        │
+</span></span><span class=line><span class=cl>│     └─ 调用父类构造函数                                                                  │
+</span></span><span class=line><span class=cl>│     └─ 初始化实例字段                                                                    │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>│  4. 返回引用                                                                            │
+</span></span><span class=line><span class=cl>│     └─ 将对象引用存入局部变量表                                                          │
+</span></span><span class=line><span class=cl>│                                                                                         │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=102-关键源码路径>10.2 关键源码路径</h2><table><thead><tr><th>阶段</th><th>源码位置</th><th>函数</th><th>作用</th></tr></thead><tbody><tr><td>指令执行</td><td><code>interpreter_switch_impl-inl.h:862</code></td><td><code>NEW_INSTANCE()</code></td><td>解释执行 new-instance</td></tr><tr><td>类解析</td><td><code>class_linker.cc</code></td><td><code>ResolveVerifyAndClinit()</code></td><td>解析并初始化类</td></tr><tr><td>分配入口</td><td><code>entrypoint_utils-inl.h:235</code></td><td><code>AllocObjectFromCode()</code></td><td>分配入口</td></tr><tr><td>类级分配</td><td><code>class-alloc-inl.h:50</code></td><td><code>Class::Alloc()</code></td><td>计算对象大小</td></tr><tr><td>堆分配</td><td><code>heap-inl.h:45</code></td><td><code>Heap::AllocObjectWithAllocator()</code></td><td>堆分配核心</td></tr><tr><td>TLAB 分配</td><td><code>thread.h</code></td><td><code>Thread::AllocTlab()</code></td><td>TLAB 快速分配</td></tr><tr><td>构造调用</td><td><code>interpreter_switch_impl-inl.h:1241</code></td><td><code>INVOKE_DIRECT()</code></td><td>调用构造函数</td></tr></tbody></table><h2 id=103-性能优化要点>10.3 性能优化要点</h2><ol><li><strong>TLAB 无锁分配</strong>：小对象通过 TLAB 分配，避免多线程锁竞争</li><li><strong>指针碰撞</strong>：TLAB 分配只需移动指针，效率极高</li><li><strong>对象大小预计算</strong>：类链接时计算好对象大小，分配时直接使用</li><li><strong>字段偏移预计算</strong>：字段偏移在类链接时确定，运行时直接访问</li><li><strong>DexCache 缓存</strong>：解析结果缓存在 DexCache，避免重复解析</li></ol><h2 id=104-内存布局要点>10.4 内存布局要点</h2><ol><li><strong>对象头</strong>：包含 klass_ 指针和 monitor_ 字段</li><li><strong>字段排列</strong>：引用字段在前，便于 GC 扫描</li><li><strong>内存对齐</strong>：对象大小对齐到 8 字节边界</li><li><strong>指针压缩</strong>：64 位系统可启用指针压缩，节省内存</li></ol><h2 id=105-与-jvm-的对比>10.5 与 JVM 的对比</h2><table><thead><tr><th>特性</th><th>ART</th><th>JVM (HotSpot)</th></tr></thead><tbody><tr><td>分配器</td><td>TLAB, RosAlloc, dlmalloc</td><td>TLAB, Eden</td></tr><tr><td>GC 策略</td><td>CMS, CC, SS</td><td>G1, ZGC, Shenandoah</td></tr><tr><td>对象头</td><td>klass_ + monitor_</td><td>mark word + klass pointer</td></tr><tr><td>指针压缩</td><td>支持</td><td>支持 (CompressedOops)</td></tr><tr><td>分配方式</td><td>指针碰撞 / 分层</td><td>指针碰撞 / TLAB</td></tr></tbody></table><hr><h1 id=参考资料>参考资料</h1><ol><li><strong>ART 源码</strong>：
+<a href=https://cs.android.com/android/platform/superproject/+/master:art/runtime/ target=_blank rel=noopener>AOSP - art/runtime</a></li><li><strong>DEX 文件格式</strong>：
+<a href=https://source.android.com/devices/tech/dalvik/dex-format target=_blank rel=noopener>Android DEX Format</a></li><li><strong>GC 算法</strong>：
+<a href=https://source.android.com/devices/tech/dalvik/gc target=_blank rel=noopener>ART GC Overview</a></li></ol><hr><p><em>本文基于 Android 14 (API 34) ART 源码分析，不同版本可能存在差异。</em></p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Apr 29, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026042601/ title="Android ART 虚拟机 ClassLinker 深度解析">Android ART 虚拟机 ClassLinker 深度解析</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
