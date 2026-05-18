@@ -1,0 +1,481 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Linux 设备驱动模型：总线、设备、驱动的关系</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.161.1"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>May 18, 2026
+- 7 minute read</p><h1 class=entry-title>Linux 设备驱动模型：总线、设备、驱动的关系</h1></header><div class=entry-content><h1 id=一核心思想一个红娘模型>一、核心思想：一个红娘模型</h1><p>Linux 设备驱动模型的核心可以用一句话概括：<strong>总线是红娘，负责把设备和驱动撮合到一起。</strong></p><p>想象一个场景：</p><ul><li><strong>设备</strong>说：&ldquo;我是谁谁谁，谁能来管我？&rdquo;</li><li><strong>驱动</strong>说：&ldquo;我能管什么样的设备，谁需要我？&rdquo;</li><li><strong>总线</strong>说：&ldquo;别急，我来帮你们配对。&rdquo;</li></ul><p>三者中，总线是核心枢纽。设备和驱动都必须挂载在某条总线上，由总线负责匹配（match）。匹配成功后，驱动的 <code>probe</code> 函数被调用，驱动开始真正操控设备。</p><h1 id=二三个核心结构体>二、三个核心结构体</h1><h2 id=21-struct-bus_type--总线>2.1 struct bus_type —— 总线</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// include/linux/device/bus.h:78
+</span></span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>bus_type</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=kt>char</span>      <span class=o>*</span><span class=n>name</span><span class=p>;</span>          <span class=c1>// 总线名称，如 &#34;platform&#34;、&#34;pci&#34;、&#34;usb&#34;
+</span></span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=p>(</span><span class=o>*</span><span class=n>match</span><span class=p>)(</span><span class=k>struct</span> <span class=n>device</span> <span class=o>*</span><span class=n>dev</span><span class=p>,</span> <span class=k>const</span> <span class=k>struct</span> <span class=n>device_driver</span> <span class=o>*</span><span class=n>drv</span><span class=p>);</span>  <span class=c1>// 匹配函数！核心中的核心
+</span></span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=p>(</span><span class=o>*</span><span class=n>probe</span><span class=p>)(</span><span class=k>struct</span> <span class=n>device</span> <span class=o>*</span><span class=n>dev</span><span class=p>);</span>    <span class=c1>// 总线层的 probe，会转调驱动的 probe
+</span></span></span><span class=line><span class=cl>    <span class=kt>void</span> <span class=p>(</span><span class=o>*</span><span class=n>remove</span><span class=p>)(</span><span class=k>struct</span> <span class=n>device</span> <span class=o>*</span><span class=n>dev</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=kt>void</span> <span class=p>(</span><span class=o>*</span><span class=n>shutdown</span><span class=p>)(</span><span class=k>struct</span> <span class=n>device</span> <span class=o>*</span><span class=n>dev</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=k>struct</span> <span class=n>dev_pm_ops</span> <span class=o>*</span><span class=n>pm</span><span class=p>;</span>    <span class=c1>// 电源管理操作
+</span></span></span><span class=line><span class=cl>    <span class=c1>// ... 其他字段
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>最关键的字段是 <code>match</code></strong>。每条总线必须实现 <code>match</code> 函数，它决定了"什么样的设备和什么样的驱动能配对"。</p><h2 id=22-struct-device--设备>2.2 struct device —— 设备</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// include/linux/device.h:620
+</span></span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>device</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>kobject</span>          <span class=n>kobj</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>device</span>           <span class=o>*</span><span class=n>parent</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=k>struct</span> <span class=n>bus_type</span>   <span class=o>*</span><span class=n>bus</span><span class=p>;</span>       <span class=c1>// 设备所在的总线
+</span></span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>device_driver</span>    <span class=o>*</span><span class=n>driver</span><span class=p>;</span>    <span class=c1>// 绑定到哪个驱动（匹配成功后设置）
+</span></span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>device_node</span>      <span class=o>*</span><span class=n>of_node</span><span class=p>;</span>   <span class=c1>// 设备树节点
+</span></span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>fwnode_handle</span>    <span class=o>*</span><span class=n>fwnode</span><span class=p>;</span>    <span class=c1>// 固件节点
+</span></span></span><span class=line><span class=cl>    <span class=kt>void</span>                    <span class=o>*</span><span class=n>driver_data</span><span class=p>;</span> <span class=c1>// 驱动私有数据
+</span></span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=k>struct</span> <span class=n>class</span>      <span class=o>*</span><span class=n>class</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ... 其他字段
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p>关键字段：</p><ul><li><code>bus</code>：指向设备所属的总线，匹配时要用到</li><li><code>driver</code>：匹配成功后，指向绑定的驱动</li><li><code>of_node</code>：设备树节点，用于设备树匹配</li></ul><h2 id=23-struct-device_driver--驱动>2.3 struct device_driver —— 驱动</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// include/linux/device/driver.h:96
+</span></span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>device_driver</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=kt>char</span>              <span class=o>*</span><span class=n>name</span><span class=p>;</span>              <span class=c1>// 驱动名称
+</span></span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=k>struct</span> <span class=n>bus_type</span>   <span class=o>*</span><span class=n>bus</span><span class=p>;</span>               <span class=c1>// 驱动所属的总线
+</span></span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=k>struct</span> <span class=n>of_device_id</span> <span class=o>*</span><span class=n>of_match_table</span><span class=p>;</span>  <span class=c1>// 设备树匹配表
+</span></span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=k>struct</span> <span class=n>acpi_device_id</span> <span class=o>*</span><span class=n>acpi_match_table</span><span class=p>;</span> <span class=c1>// ACPI 匹配表
+</span></span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=p>(</span><span class=o>*</span><span class=n>probe</span><span class=p>)(</span><span class=k>struct</span> <span class=n>device</span> <span class=o>*</span><span class=n>dev</span><span class=p>);</span>           <span class=c1>// 驱动的探测函数
+</span></span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=p>(</span><span class=o>*</span><span class=n>remove</span><span class=p>)(</span><span class=k>struct</span> <span class=n>device</span> <span class=o>*</span><span class=n>dev</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=kt>void</span> <span class=p>(</span><span class=o>*</span><span class=n>shutdown</span><span class=p>)(</span><span class=k>struct</span> <span class=n>device</span> <span class=o>*</span><span class=n>dev</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=k>struct</span> <span class=n>dev_pm_ops</span> <span class=o>*</span><span class=n>pm</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ... 其他字段
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p>关键字段：</p><ul><li><code>bus</code>：驱动注册到哪条总线</li><li><code>of_match_table</code>：设备树兼容性匹配表，这是最常用的匹配方式</li><li><code>probe</code>：匹配成功后被调用，初始化设备</li></ul><h1 id=三三者的关系图>三、三者的关系图</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>                    ┌──────────────────────────┐
+</span></span><span class=line><span class=cl>                    │       bus_type            │
+</span></span><span class=line><span class=cl>                    │  name = &#34;platform&#34;        │
+</span></span><span class=line><span class=cl>                    │  match = platform_match   │
+</span></span><span class=line><span class=cl>                    │  probe  = platform_probe  │
+</span></span><span class=line><span class=cl>                    └──────┬───────────┬────────┘
+</span></span><span class=line><span class=cl>                           │           │
+</span></span><span class=line><span class=cl>              维护设备链表   │           │  维护驱动链表
+</span></span><span class=line><span class=cl>                           │           │
+</span></span><span class=line><span class=cl>              ┌────────────▼──┐    ┌───▼────────────┐
+</span></span><span class=line><span class=cl>              │   device      │    │  device_driver  │
+</span></span><span class=line><span class=cl>              │  bus ─────────┼────┤  bus ───────────┤
+</span></span><span class=line><span class=cl>              │  driver ──────┼───►│                 │
+</span></span><span class=line><span class=cl>              │  of_node      │    │  of_match_table │
+</span></span><span class=line><span class=cl>              └───────────────┘    └─────────────────┘
+</span></span></code></pre></td></tr></table></div></div><ul><li>每个 <code>device</code> 通过 <code>bus</code> 字段指向所属总线</li><li>每个 <code>device_driver</code> 通过 <code>bus</code> 字段指向所属总线</li><li>匹配成功后，<code>device->driver</code> 指向绑定的驱动</li><li>总线内部维护两个链表：已注册的设备链表和已注册的驱动链表</li></ul><h1 id=四匹配过程一切从-match-开始>四、匹配过程：一切从 match 开始</h1><h2 id=41-触发匹配的两个时机>4.1 触发匹配的两个时机</h2><p><strong>时机一：注册设备时</strong>（设备找驱动）</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>device_register()
+</span></span><span class=line><span class=cl>  └─&gt; device_add()
+</span></span><span class=line><span class=cl>        └─&gt; bus_probe_device()       // 遍历该总线上所有驱动，尝试匹配
+</span></span><span class=line><span class=cl>              └─&gt; __device_attach()
+</span></span><span class=line><span class=cl>                    └─&gt; bus_for_each_drv()   // 遍历总线上的驱动链表
+</span></span><span class=line><span class=cl>                          └─&gt; __device_attach_driver()
+</span></span><span class=line><span class=cl>                                ├─&gt; driver_match_device()  // 调用 bus-&gt;match()
+</span></span><span class=line><span class=cl>                                └─&gt; driver_probe_device()  // 匹配成功则 probe
+</span></span></code></pre></td></tr></table></div></div><p><strong>时机二：注册驱动时</strong>（驱动找设备）</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>driver_register()
+</span></span><span class=line><span class=cl>  └─&gt; bus_add_driver()
+</span></span><span class=line><span class=cl>        └─&gt; driver_attach()          // 遍历该总线上所有设备，尝试匹配
+</span></span><span class=line><span class=cl>              └─&gt; bus_for_each_dev()  // 遍历总线上的设备链表
+</span></span><span class=line><span class=cl>                    └─&gt; __driver_attach()
+</span></span><span class=line><span class=cl>                          ├─&gt; driver_match_device()  // 调用 bus-&gt;match()
+</span></span><span class=line><span class=cl>                          └─&gt; driver_probe_device()  // 匹配成功则 probe
+</span></span></code></pre></td></tr></table></div></div><p>核心逻辑是对称的：谁后注册，谁就主动去对方链表里找配对。</p><h2 id=42-match-函数的调用>4.2 match 函数的调用</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// drivers/base/base.h:166
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=kr>inline</span> <span class=kt>int</span> <span class=nf>driver_match_device</span><span class=p>(</span><span class=k>const</span> <span class=k>struct</span> <span class=n>device_driver</span> <span class=o>*</span><span class=n>drv</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                                      <span class=k>struct</span> <span class=n>device</span> <span class=o>*</span><span class=n>dev</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>drv</span><span class=o>-&gt;</span><span class=n>bus</span><span class=o>-&gt;</span><span class=n>match</span> <span class=o>?</span> <span class=n>drv</span><span class=o>-&gt;</span><span class=n>bus</span><span class=o>-&gt;</span><span class=nf>match</span><span class=p>(</span><span class=n>dev</span><span class=p>,</span> <span class=n>drv</span><span class=p>)</span> <span class=o>:</span> <span class=mi>1</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>就这么简单：<strong>调用总线提供的 <code>match</code> 函数</strong>。返回值 > 0 表示匹配成功，= 0 表示不匹配。</p><h2 id=43-probe-的调用链>4.3 probe 的调用链</h2><p>匹配成功后，进入 probe 流程：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// drivers/base/dd.c:572
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=kt>int</span> <span class=nf>call_driver_probe</span><span class=p>(</span><span class=k>struct</span> <span class=n>device</span> <span class=o>*</span><span class=n>dev</span><span class=p>,</span> <span class=k>const</span> <span class=k>struct</span> <span class=n>device_driver</span> <span class=o>*</span><span class=n>drv</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>dev</span><span class=o>-&gt;</span><span class=n>bus</span><span class=o>-&gt;</span><span class=n>probe</span><span class=p>)</span>           <span class=c1>// 优先调用总线的 probe
+</span></span></span><span class=line><span class=cl>        <span class=n>ret</span> <span class=o>=</span> <span class=n>dev</span><span class=o>-&gt;</span><span class=n>bus</span><span class=o>-&gt;</span><span class=nf>probe</span><span class=p>(</span><span class=n>dev</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>drv</span><span class=o>-&gt;</span><span class=n>probe</span><span class=p>)</span>           <span class=c1>// 否则调用驱动自身的 probe
+</span></span></span><span class=line><span class=cl>        <span class=n>ret</span> <span class=o>=</span> <span class=n>drv</span><span class=o>-&gt;</span><span class=nf>probe</span><span class=p>(</span><span class=n>dev</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>ret</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>大多数总线（如 platform）会提供自己的 <code>probe</code>，在里面做类型转换等通用处理后，再转调驱动的 <code>probe</code>。</p><h1 id=五实战platform-总线的完整流程>五、实战：platform 总线的完整流程</h1><p>Platform 总线是 Linux 中最常见、最基础的总线，几乎所有嵌入式设备都挂在上面。</p><h2 id=51-platform_bus_type-的定义>5.1 platform_bus_type 的定义</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// drivers/base/platform.c:1478
+</span></span></span><span class=line><span class=cl><span class=k>const</span> <span class=k>struct</span> <span class=n>bus_type</span> <span class=n>platform_bus_type</span> <span class=o>=</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=p>.</span><span class=n>name</span>       <span class=o>=</span> <span class=s>&#34;platform&#34;</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=p>.</span><span class=n>match</span>      <span class=o>=</span> <span class=n>platform_match</span><span class=p>,</span>     <span class=c1>// 匹配函数
+</span></span></span><span class=line><span class=cl>    <span class=p>.</span><span class=n>probe</span>      <span class=o>=</span> <span class=n>platform_probe</span><span class=p>,</span>     <span class=c1>// 总线层 probe
+</span></span></span><span class=line><span class=cl>    <span class=p>.</span><span class=n>remove</span>     <span class=o>=</span> <span class=n>platform_remove</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=p>.</span><span class=n>shutdown</span>   <span class=o>=</span> <span class=n>platform_shutdown</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=p>.</span><span class=n>dma_configure</span> <span class=o>=</span> <span class=n>platform_dma_configure</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=p>.</span><span class=n>pm</span>         <span class=o>=</span> <span class=o>&amp;</span><span class=n>platform_dev_pm_ops</span><span class=p>,</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=52-platform_match--四种匹配策略>5.2 platform_match —— 四种匹配策略</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// drivers/base/platform.c:1335
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=kt>int</span> <span class=nf>platform_match</span><span class=p>(</span><span class=k>struct</span> <span class=n>device</span> <span class=o>*</span><span class=n>dev</span><span class=p>,</span> <span class=k>const</span> <span class=k>struct</span> <span class=n>device_driver</span> <span class=o>*</span><span class=n>drv</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>platform_device</span> <span class=o>*</span><span class=n>pdev</span> <span class=o>=</span> <span class=nf>to_platform_device</span><span class=p>(</span><span class=n>dev</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>platform_driver</span> <span class=o>*</span><span class=n>pdrv</span> <span class=o>=</span> <span class=nf>to_platform_driver</span><span class=p>(</span><span class=n>drv</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=cm>/* 1. driver_override：强制指定驱动（最高优先级） */</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>pdev</span><span class=o>-&gt;</span><span class=n>driver_override</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=o>!</span><span class=nf>strcmp</span><span class=p>(</span><span class=n>pdev</span><span class=o>-&gt;</span><span class=n>driver_override</span><span class=p>,</span> <span class=n>drv</span><span class=o>-&gt;</span><span class=n>name</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=cm>/* 2. 设备树（OF）匹配：最常用！ */</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=nf>of_driver_match_device</span><span class=p>(</span><span class=n>dev</span><span class=p>,</span> <span class=n>drv</span><span class=p>))</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=mi>1</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=cm>/* 3. ACPI 匹配：x86 平台常用 */</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=nf>acpi_driver_match_device</span><span class=p>(</span><span class=n>dev</span><span class=p>,</span> <span class=n>drv</span><span class=p>))</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=mi>1</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=cm>/* 4. ID 表匹配：传统方式 */</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>pdrv</span><span class=o>-&gt;</span><span class=n>id_table</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=nf>platform_match_id</span><span class=p>(</span><span class=n>pdrv</span><span class=o>-&gt;</span><span class=n>id_table</span><span class=p>,</span> <span class=n>pdev</span><span class=p>)</span> <span class=o>!=</span> <span class=nb>NULL</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=cm>/* 5. 名称匹配：最后兜底 */</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=p>(</span><span class=nf>strcmp</span><span class=p>(</span><span class=n>pdev</span><span class=o>-&gt;</span><span class=n>name</span><span class=p>,</span> <span class=n>drv</span><span class=o>-&gt;</span><span class=n>name</span><span class=p>)</span> <span class=o>==</span> <span class=mi>0</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>匹配优先级从高到低：</p><ol><li><strong>driver_override</strong>：设备强制指定驱动名</li><li><strong>设备树匹配</strong>：比较 <code>compatible</code> 属性和驱动的 <code>of_match_table</code></li><li><strong>ACPI 匹配</strong>：x86 平台使用</li><li><strong>ID 表匹配</strong>：驱动提供 <code>id_table</code>，逐项比较设备名</li><li><strong>名称匹配</strong>：设备名 == 驱动名</li></ol><h2 id=53-platform_probe--从总线-probe-到驱动-probe>5.3 platform_probe —— 从总线 probe 到驱动 probe</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// drivers/base/platform.c:1379
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=kt>int</span> <span class=nf>platform_probe</span><span class=p>(</span><span class=k>struct</span> <span class=n>device</span> <span class=o>*</span><span class=n>_dev</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>platform_driver</span> <span class=o>*</span><span class=n>drv</span> <span class=o>=</span> <span class=nf>to_platform_driver</span><span class=p>(</span><span class=n>_dev</span><span class=o>-&gt;</span><span class=n>driver</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>platform_device</span> <span class=o>*</span><span class=n>dev</span> <span class=o>=</span> <span class=nf>to_platform_device</span><span class=p>(</span><span class=n>_dev</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>ret</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=n>ret</span> <span class=o>=</span> <span class=nf>of_clk_set_defaults</span><span class=p>(</span><span class=n>_dev</span><span class=o>-&gt;</span><span class=n>of_node</span><span class=p>,</span> <span class=nb>false</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>ret</span> <span class=o>&lt;</span> <span class=mi>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=n>ret</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=n>ret</span> <span class=o>=</span> <span class=nf>dev_pm_domain_attach</span><span class=p>(</span><span class=n>_dev</span><span class=p>,</span> <span class=nb>true</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>ret</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=k>goto</span> <span class=n>out</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>drv</span><span class=o>-&gt;</span><span class=n>probe</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>ret</span> <span class=o>=</span> <span class=n>drv</span><span class=o>-&gt;</span><span class=nf>probe</span><span class=p>(</span><span class=n>dev</span><span class=p>);</span>    <span class=c1>// 转调驱动的 probe！
+</span></span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>ret</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>            <span class=nf>dev_pm_domain_detach</span><span class=p>(</span><span class=n>_dev</span><span class=p>,</span> <span class=nb>true</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ...
+</span></span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>ret</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>注意类型转换：总线层操作的是通用的 <code>struct device</code>，转调驱动时转换成具体的 <code>struct platform_device</code>。</p><h2 id=54-完整实例gpio-led-驱动>5.4 完整实例：GPIO LED 驱动</h2><p>这是一个真实的驱动，来自 <code>drivers/leds/leds-gpio.c</code>：</p><p><strong>驱动定义：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// drivers/leds/leds-gpio.c:204-322
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=cm>/* 设备树匹配表 */</span>
+</span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>const</span> <span class=k>struct</span> <span class=n>of_device_id</span> <span class=n>of_gpio_leds_match</span><span class=p>[]</span> <span class=o>=</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=p>{</span> <span class=p>.</span><span class=n>compatible</span> <span class=o>=</span> <span class=s>&#34;gpio-leds&#34;</span><span class=p>,</span> <span class=p>},</span>   <span class=c1>// 匹配设备树中 compatible = &#34;gpio-leds&#34; 的节点
+</span></span></span><span class=line><span class=cl>    <span class=p>{},</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl><span class=nf>MODULE_DEVICE_TABLE</span><span class=p>(</span><span class=n>of</span><span class=p>,</span> <span class=n>of_gpio_leds_match</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=cm>/* platform_driver 定义 */</span>
+</span></span><span class=line><span class=cl><span class=k>static</span> <span class=k>struct</span> <span class=n>platform_driver</span> <span class=n>gpio_led_driver</span> <span class=o>=</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=p>.</span><span class=n>probe</span>      <span class=o>=</span> <span class=n>gpio_led_probe</span><span class=p>,</span>       <span class=c1>// 驱动的 probe 函数
+</span></span></span><span class=line><span class=cl>    <span class=p>.</span><span class=n>shutdown</span>   <span class=o>=</span> <span class=n>gpio_led_shutdown</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=p>.</span><span class=n>driver</span>     <span class=o>=</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=p>.</span><span class=n>name</span>           <span class=o>=</span> <span class=s>&#34;leds-gpio&#34;</span><span class=p>,</span>  <span class=c1>// 驱动名称
+</span></span></span><span class=line><span class=cl>        <span class=p>.</span><span class=n>of_match_table</span> <span class=o>=</span> <span class=n>of_gpio_leds_match</span><span class=p>,</span>  <span class=c1>// 设备树匹配表
+</span></span></span><span class=line><span class=cl>    <span class=p>},</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=cm>/* 一行宏搞定注册/注销 */</span>
+</span></span><span class=line><span class=cl><span class=nf>module_platform_driver</span><span class=p>(</span><span class=n>gpio_led_driver</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>对应的设备树节点（在 DTS 文件中）：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-dts data-lang=dts><span class=line><span class=cl><span class=nf>leds</span><span class=cm> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=na>compatible</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=s>&#34;gpio-leds&#34;</span><span class=p>;</span><span class=w>     </span><span class=cm>/* 和 of_match_table 中的 &#34;gpio-leds&#34; 对应 */</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=nf>led0</span><span class=cm> </span><span class=p>{</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=na>gpios</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=o>&lt;</span><span class=nl>&amp;gpio1</span><span class=w> </span><span class=mi>7</span><span class=w> </span><span class=mi>0</span><span class=o>&gt;</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>        </span><span class=na>label</span><span class=w> </span><span class=o>=</span><span class=w> </span><span class=s>&#34;sys-led&#34;</span><span class=p>;</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=w>    </span><span class=p>};</span><span class=w>
+</span></span></span><span class=line><span class=cl><span class=p>};</span><span class=w>
+</span></span></span></code></pre></td></tr></table></div></div><p><strong>匹配过程：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>1. 内核解析设备树，为 &#34;leds&#34; 节点创建 platform_device
+</span></span><span class=line><span class=cl>   - pdev-&gt;name = &#34;leds&#34;   (来自节点名)
+</span></span><span class=line><span class=cl>   - pdev-&gt;dev.of_node 指向该设备树节点
+</span></span><span class=line><span class=cl>   - pdev-&gt;dev.bus = &amp;platform_bus_type
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>2. gpio_led_driver 通过 module_platform_driver() 注册
+</span></span><span class=line><span class=cl>   - drv-&gt;driver.bus = &amp;platform_bus_type
+</span></span><span class=line><span class=cl>   - drv-&gt;driver.of_match_table = of_gpio_leds_match
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>3. driver_register() -&gt; driver_attach() -&gt; __driver_attach()
+</span></span><span class=line><span class=cl>   -&gt; driver_match_device() -&gt; platform_match()
+</span></span><span class=line><span class=cl>   -&gt; of_driver_match_device() 匹配 &#34;gpio-leds&#34; == &#34;gpio-leds&#34; ✓
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>4. 匹配成功 -&gt; driver_probe_device() -&gt; really_probe()
+</span></span><span class=line><span class=cl>   -&gt; call_driver_probe() -&gt; platform_bus_type.probe = platform_probe()
+</span></span><span class=line><span class=cl>   -&gt; drv-&gt;probe(dev) = gpio_led_probe()
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>5. gpio_led_probe() 执行，初始化 LED 设备
+</span></span></code></pre></td></tr></table></div></div><h1 id=六面向对象的封装从通用到具体>六、面向对象的封装：从通用到具体</h1><p>Linux 内核用 C 语言实现了面向对象的继承关系：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>struct device          (基类 - 所有设备的通用描述)
+</span></span><span class=line><span class=cl>    ↑ 内嵌于
+</span></span><span class=line><span class=cl>struct platform_device (子类 - platform 总线上的设备)
+</span></span><span class=line><span class=cl>struct pci_device      (子类 - PCI 总线上的设备)
+</span></span><span class=line><span class=cl>struct usb_device      (子类 - USB 总线上的设备)
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>struct device_driver       (基类 - 所有驱动的通用描述)
+</span></span><span class=line><span class=cl>    ↑ 内嵌于
+</span></span><span class=line><span class=cl>struct platform_driver     (子类 - platform 总线上的驱动)
+</span></span><span class=line><span class=cl>struct pci_driver          (子类 - PCI 总线上的驱动)
+</span></span></code></pre></td></tr></table></div></div><p>以 platform 为例：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// include/linux/platform_device.h:23
+</span></span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>platform_device</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=kt>char</span>  <span class=o>*</span><span class=n>name</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span>         <span class=n>id</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>device</span> <span class=n>dev</span><span class=p>;</span>              <span class=c1>// 内嵌通用 device 结构！
+</span></span></span><span class=line><span class=cl>    <span class=n>u32</span>         <span class=n>num_resources</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>resource</span> <span class=o>*</span><span class=n>resource</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ...
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// include/linux/platform_device.h:236
+</span></span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>platform_driver</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span>  <span class=p>(</span><span class=o>*</span><span class=n>probe</span><span class=p>)(</span><span class=k>struct</span> <span class=n>platform_device</span> <span class=o>*</span><span class=p>);</span>    <span class=c1>// 参数是 platform_device，不是 device
+</span></span></span><span class=line><span class=cl>    <span class=kt>void</span> <span class=p>(</span><span class=o>*</span><span class=n>remove</span><span class=p>)(</span><span class=k>struct</span> <span class=n>platform_device</span> <span class=o>*</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>device_driver</span> <span class=n>driver</span><span class=p>;</span>                <span class=c1>// 内嵌通用 device_driver！
+</span></span></span><span class=line><span class=cl>    <span class=k>const</span> <span class=k>struct</span> <span class=n>platform_device_id</span> <span class=o>*</span><span class=n>id_table</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>container_of 宏</strong> 实现从基类到子类的转换：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// include/linux/platform_device.h:50
+</span></span></span><span class=line><span class=cl><span class=cp>#define to_platform_device(x) container_of((x), struct platform_device, dev)
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// include/linux/platform_device.h:255
+</span></span></span><span class=line><span class=cl><span class=cp>#define to_platform_driver(drv) container_of((drv), struct platform_driver, driver)
+</span></span></span></code></pre></td></tr></table></div></div><p>这就是为什么 <code>platform_probe</code> 能从 <code>struct device *</code> 拿到 <code>struct platform_device *</code>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>static</span> <span class=kt>int</span> <span class=nf>platform_probe</span><span class=p>(</span><span class=k>struct</span> <span class=n>device</span> <span class=o>*</span><span class=n>_dev</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>platform_device</span> <span class=o>*</span><span class=n>dev</span> <span class=o>=</span> <span class=nf>to_platform_device</span><span class=p>(</span><span class=n>_dev</span><span class=p>);</span>  <span class=c1>// 基类 → 子类
+</span></span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>platform_driver</span> <span class=o>*</span><span class=n>drv</span> <span class=o>=</span> <span class=nf>to_platform_driver</span><span class=p>(</span><span class=n>_dev</span><span class=o>-&gt;</span><span class=n>driver</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ...
+</span></span></span><span class=line><span class=cl>    <span class=n>ret</span> <span class=o>=</span> <span class=n>drv</span><span class=o>-&gt;</span><span class=nf>probe</span><span class=p>(</span><span class=n>dev</span><span class=p>);</span>  <span class=c1>// 传给驱动的是子类指针
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h1 id=七sysfs-中的体现>七、sysfs 中的体现</h1><p>注册完成后，sysfs 中可以看到三者关系：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>/sys/bus/platform/
+</span></span><span class=line><span class=cl>├── devices/              ← 该总线上所有设备（符号链接）
+</span></span><span class=line><span class=cl>│   └── leds -&gt; ../../../devices/platform/leds
+</span></span><span class=line><span class=cl>├── drivers/              ← 该总线上所有驱动
+</span></span><span class=line><span class=cl>│   └── leds-gpio/
+</span></span><span class=line><span class=cl>│       ├── bind          ← 手动绑定设备的接口
+</span></span><span class=line><span class=cl>│       ├── unbind        ← 手动解绑设备的接口
+</span></span><span class=line><span class=cl>│       └── leds -&gt; ../../../../devices/platform/leds  ← 已绑定的设备
+</span></span><span class=line><span class=cl>├── drivers_probe         ← 手动触发探测
+</span></span><span class=line><span class=cl>└── uevent
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>/sys/devices/platform/leds/
+</span></span><span class=line><span class=cl>├── driver -&gt; ../../bus/platform/drivers/leds-gpio  ← 指向绑定的驱动
+</span></span><span class=line><span class=cl>├── subsystem -&gt; ../../bus/platform                  ← 指向所属总线
+</span></span><span class=line><span class=cl>└── ...
+</span></span></code></pre></td></tr></table></div></div><h1 id=八总结>八、总结</h1><table><thead><tr><th>概念</th><th>角色</th><th>关键结构</th><th>关键操作</th></tr></thead><tbody><tr><td><strong>总线</strong></td><td>红娘/管理者</td><td><code>bus_type</code></td><td><code>match()</code> 配对，<code>probe()</code> 探测</td></tr><tr><td><strong>设备</strong></td><td>被管理者</td><td><code>device</code></td><td>注册时触发匹配</td></tr><tr><td><strong>驱动</strong></td><td>管理者</td><td><code>device_driver</code></td><td>注册时触发匹配</td></tr></tbody></table><p>核心流程一句话：<strong>设备和驱动分别注册到总线上，总线用 <code>match</code> 函数判断能否配对，配对成功则调用 <code>probe</code> 完成绑定。</strong></p><p>谁后注册，谁主动去找对方——设备后注册就遍历驱动链表，驱动后注册就遍历设备链表。这种双向查找机制确保了无论谁先到，都能找到对方。</p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>May 18, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026042901/ title="ART 虚拟机对象分配原理深度解析">ART 虚拟机对象分配原理深度解析</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>

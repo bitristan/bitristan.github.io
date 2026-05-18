@@ -1,4 +1,12 @@
-<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Posts on 学而时习之</title><link>/posts/</link><description>Recent content in Posts on 学而时习之</description><generator>Hugo</generator><language>zh-cn</language><lastBuildDate>Wed, 29 Apr 2026 16:16:10 +0800</lastBuildDate><atom:link href="/posts/index.xml" rel="self" type="application/rss+xml"/><item><title>ART 虚拟机对象分配原理深度解析</title><link>/posts/2026042901/</link><pubDate>Wed, 29 Apr 2026 16:16:10 +0800</pubDate><guid>/posts/2026042901/</guid><description>&lt;h1 id="目录"&gt;目录&lt;/h1&gt;
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Posts on 学而时习之</title><link>/posts/</link><description>Recent content in Posts on 学而时习之</description><generator>Hugo</generator><language>zh-cn</language><lastBuildDate>Mon, 18 May 2026 10:12:10 +0800</lastBuildDate><atom:link href="/posts/index.xml" rel="self" type="application/rss+xml"/><item><title>Linux 设备驱动模型：总线、设备、驱动的关系</title><link>/posts/2026051801/</link><pubDate>Mon, 18 May 2026 10:12:10 +0800</pubDate><guid>/posts/2026051801/</guid><description>&lt;h1 id="一核心思想一个红娘模型"&gt;一、核心思想：一个红娘模型&lt;/h1&gt;
+&lt;p&gt;Linux 设备驱动模型的核心可以用一句话概括：&lt;strong&gt;总线是红娘，负责把设备和驱动撮合到一起。&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;想象一个场景：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;设备&lt;/strong&gt;说：&amp;ldquo;我是谁谁谁，谁能来管我？&amp;rdquo;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;驱动&lt;/strong&gt;说：&amp;ldquo;我能管什么样的设备，谁需要我？&amp;rdquo;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;总线&lt;/strong&gt;说：&amp;ldquo;别急，我来帮你们配对。&amp;rdquo;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;三者中，总线是核心枢纽。设备和驱动都必须挂载在某条总线上，由总线负责匹配（match）。匹配成功后，驱动的 &lt;code&gt;probe&lt;/code&gt; 函数被调用，驱动开始真正操控设备。&lt;/p&gt;</description></item><item><title>ART 虚拟机对象分配原理深度解析</title><link>/posts/2026042901/</link><pubDate>Wed, 29 Apr 2026 16:16:10 +0800</pubDate><guid>/posts/2026042901/</guid><description>&lt;h1 id="目录"&gt;目录&lt;/h1&gt;
 &lt;ul&gt;
 &lt;li&gt;
 &lt;a href="#1-%e5%bc%95%e8%a8%80"&gt;1. 引言&lt;/a&gt;&lt;/li&gt;
