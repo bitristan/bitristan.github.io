@@ -1,4 +1,20 @@
-<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Posts on 学而时习之</title><link>/posts/</link><description>Recent content in Posts on 学而时习之</description><generator>Hugo</generator><language>zh-cn</language><lastBuildDate>Mon, 18 May 2026 10:12:10 +0800</lastBuildDate><atom:link href="/posts/index.xml" rel="self" type="application/rss+xml"/><item><title>Linux 设备驱动模型：总线、设备、驱动的关系</title><link>/posts/2026051801/</link><pubDate>Mon, 18 May 2026 10:12:10 +0800</pubDate><guid>/posts/2026051801/</guid><description>&lt;h1 id="一核心思想一个红娘模型"&gt;一、核心思想：一个红娘模型&lt;/h1&gt;
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Posts on 学而时习之</title><link>/posts/</link><description>Recent content in Posts on 学而时习之</description><generator>Hugo</generator><language>zh-cn</language><lastBuildDate>Sun, 24 May 2026 11:39:35 +0800</lastBuildDate><atom:link href="/posts/index.xml" rel="self" type="application/rss+xml"/><item><title>Compose Compiler Plugin 实现原理深度解析</title><link>/posts/2026052401/</link><pubDate>Sun, 24 May 2026 11:39:35 +0800</pubDate><guid>/posts/2026052401/</guid><description>&lt;h1 id="一总览compose-编译器插件做什么"&gt;一、总览：Compose 编译器插件做什么？&lt;/h1&gt;
+&lt;p&gt;Jetpack Compose 的核心魔法发生在编译期。当你写下：&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;div class="chroma"&gt;
+&lt;table class="lntable"&gt;&lt;tr&gt;&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code&gt;&lt;span class="lnt"&gt;1
+&lt;/span&gt;&lt;span class="lnt"&gt;2
+&lt;/span&gt;&lt;span class="lnt"&gt;3
+&lt;/span&gt;&lt;span class="lnt"&gt;4
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-kotlin" data-lang="kotlin"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="nd"&gt;@Composable&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="k"&gt;fun&lt;/span&gt; &lt;span class="nf"&gt;Greeting&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;String&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="n"&gt;Text&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;#34;Hello, &lt;/span&gt;&lt;span class="si"&gt;$name&lt;/span&gt;&lt;span class="s2"&gt;!&amp;#34;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;编译器插件会将这段代码彻底改写——注入 Composer 参数、插入 Group 调用、生成跳过逻辑、传播比较信息——最终变成一个与运行时深度协作的状态机。&lt;/p&gt;</description></item><item><title>Linux 设备驱动模型：总线、设备、驱动的关系</title><link>/posts/2026051801/</link><pubDate>Mon, 18 May 2026 10:12:10 +0800</pubDate><guid>/posts/2026051801/</guid><description>&lt;h1 id="一核心思想一个红娘模型"&gt;一、核心思想：一个红娘模型&lt;/h1&gt;
 &lt;p&gt;Linux 设备驱动模型的核心可以用一句话概括：&lt;strong&gt;总线是红娘，负责把设备和驱动撮合到一起。&lt;/strong&gt;&lt;/p&gt;
 &lt;p&gt;想象一个场景：&lt;/p&gt;
 &lt;ul&gt;
