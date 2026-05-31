@@ -1,4 +1,50 @@
-<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>学而时习之</title><link>/</link><description>Recent content on 学而时习之</description><generator>Hugo</generator><language>zh-cn</language><lastBuildDate>Sun, 24 May 2026 11:39:35 +0800</lastBuildDate><atom:link href="/index.xml" rel="self" type="application/rss+xml"/><item><title>Compose Compiler Plugin 实现原理深度解析</title><link>/posts/2026052401/</link><pubDate>Sun, 24 May 2026 11:39:35 +0800</pubDate><guid>/posts/2026052401/</guid><description>&lt;h1 id="一总览compose-编译器插件做什么"&gt;一、总览：Compose 编译器插件做什么？&lt;/h1&gt;
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>学而时习之</title><link>/</link><description>Recent content on 学而时习之</description><generator>Hugo</generator><language>zh-cn</language><lastBuildDate>Sun, 31 May 2026 22:29:35 +0800</lastBuildDate><atom:link href="/index.xml" rel="self" type="application/rss+xml"/><item><title>Android Handler 机制实现详解</title><link>/posts/2026053101/</link><pubDate>Sun, 31 May 2026 22:29:35 +0800</pubDate><guid>/posts/2026053101/</guid><description>&lt;h1 id="一全局架构"&gt;一、全局架构&lt;/h1&gt;
+&lt;p&gt;Handler 机制本质上是一个&lt;strong&gt;线程间消息传递系统&lt;/strong&gt;，由四个核心类协作完成：&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;div class="chroma"&gt;
+&lt;table class="lntable"&gt;&lt;tr&gt;&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code&gt;&lt;span class="lnt"&gt; 1
+&lt;/span&gt;&lt;span class="lnt"&gt; 2
+&lt;/span&gt;&lt;span class="lnt"&gt; 3
+&lt;/span&gt;&lt;span class="lnt"&gt; 4
+&lt;/span&gt;&lt;span class="lnt"&gt; 5
+&lt;/span&gt;&lt;span class="lnt"&gt; 6
+&lt;/span&gt;&lt;span class="lnt"&gt; 7
+&lt;/span&gt;&lt;span class="lnt"&gt; 8
+&lt;/span&gt;&lt;span class="lnt"&gt; 9
+&lt;/span&gt;&lt;span class="lnt"&gt;10
+&lt;/span&gt;&lt;span class="lnt"&gt;11
+&lt;/span&gt;&lt;span class="lnt"&gt;12
+&lt;/span&gt;&lt;span class="lnt"&gt;13
+&lt;/span&gt;&lt;span class="lnt"&gt;14
+&lt;/span&gt;&lt;span class="lnt"&gt;15
+&lt;/span&gt;&lt;span class="lnt"&gt;16
+&lt;/span&gt;&lt;span class="lnt"&gt;17
+&lt;/span&gt;&lt;span class="lnt"&gt;18
+&lt;/span&gt;&lt;span class="lnt"&gt;19
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;
+&lt;td class="lntd"&gt;
+&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-fallback" data-lang="fallback"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;┌─────────────────────────────────────────────────────────────────────┐
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ Looper (事件循环) │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ ┌───────────────────────────────────────────────────────────────┐ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ │ MessageQueue (消息队列) │ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ │ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ │ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ │ │ Message 1 │→ │ Message 2 │→ │ Message 3 │→ null │ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ │ └─────────────┘ └─────────────┘ └─────────────┘ │ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ │ ↑ enqueueMessage() ↑ next() → dispatchMessage │ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ └───────┼───────────────────────────┼──────────────────────────┘ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ │ │ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ ┌───────┴───────┐ ┌───────┴────────┐ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ │ Handler A │ │ Handler B │ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ │ (发送/处理) │ │ (发送/处理) │ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ └───────────────┘ └────────────────┘ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ ┌───────────────────────────────────────────────────────────────┐ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ │ Native Looper (epoll + eventfd) │ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;│ └───────────────────────────────────────────────────────────────┘ │
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;└─────────────────────────────────────────────────────────────────────┘
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;p&gt;各层职责：&lt;/p&gt;</description></item><item><title>Compose Compiler Plugin 实现原理深度解析</title><link>/posts/2026052401/</link><pubDate>Sun, 24 May 2026 11:39:35 +0800</pubDate><guid>/posts/2026052401/</guid><description>&lt;h1 id="一总览compose-编译器插件做什么"&gt;一、总览：Compose 编译器插件做什么？&lt;/h1&gt;
 &lt;p&gt;Jetpack Compose 的核心魔法发生在编译期。当你写下：&lt;/p&gt;
 &lt;div class="highlight"&gt;&lt;div class="chroma"&gt;
 &lt;table class="lntable"&gt;&lt;tr&gt;&lt;td class="lntd"&gt;
@@ -483,34 +529,34 @@
 &lt;/div&gt;
 &lt;/div&gt;&lt;h4 id="帧显示时序总结"&gt;帧显示时序总结&lt;/h4&gt;
 &lt;table&gt;
- &lt;thead&gt;
- &lt;tr&gt;
- &lt;th&gt;VSYNC 时刻&lt;/th&gt;
- &lt;th&gt;屏幕显示&lt;/th&gt;
- &lt;th&gt;SF 正在合成&lt;/th&gt;
- &lt;th&gt;Buffer 状态&lt;/th&gt;
- &lt;/tr&gt;
- &lt;/thead&gt;
- &lt;tbody&gt;
- &lt;tr&gt;
- &lt;td&gt;N&lt;/td&gt;
- &lt;td&gt;帧 N-1&lt;/td&gt;
- &lt;td&gt;帧 N&lt;/td&gt;
- &lt;td&gt;N-1: ACQUIRED, N: QUEUED&lt;/td&gt;
- &lt;/tr&gt;
- &lt;tr&gt;
- &lt;td&gt;N+1&lt;/td&gt;
- &lt;td&gt;帧 N&lt;/td&gt;
- &lt;td&gt;帧 N+1&lt;/td&gt;
- &lt;td&gt;N: ACQUIRED, N+1: QUEUED&lt;/td&gt;
- &lt;/tr&gt;
- &lt;tr&gt;
- &lt;td&gt;N+2&lt;/td&gt;
- &lt;td&gt;帧 N+1&lt;/td&gt;
- &lt;td&gt;帧 N+2&lt;/td&gt;
- &lt;td&gt;N+1: ACQUIRED, N+2: QUEUED&lt;/td&gt;
- &lt;/tr&gt;
- &lt;/tbody&gt;
+	&lt;thead&gt;
+			&lt;tr&gt;
+					&lt;th&gt;VSYNC 时刻&lt;/th&gt;
+					&lt;th&gt;屏幕显示&lt;/th&gt;
+					&lt;th&gt;SF 正在合成&lt;/th&gt;
+					&lt;th&gt;Buffer 状态&lt;/th&gt;
+			&lt;/tr&gt;
+	&lt;/thead&gt;
+	&lt;tbody&gt;
+			&lt;tr&gt;
+					&lt;td&gt;N&lt;/td&gt;
+					&lt;td&gt;帧 N-1&lt;/td&gt;
+					&lt;td&gt;帧 N&lt;/td&gt;
+					&lt;td&gt;N-1: ACQUIRED, N: QUEUED&lt;/td&gt;
+			&lt;/tr&gt;
+			&lt;tr&gt;
+					&lt;td&gt;N+1&lt;/td&gt;
+					&lt;td&gt;帧 N&lt;/td&gt;
+					&lt;td&gt;帧 N+1&lt;/td&gt;
+					&lt;td&gt;N: ACQUIRED, N+1: QUEUED&lt;/td&gt;
+			&lt;/tr&gt;
+			&lt;tr&gt;
+					&lt;td&gt;N+2&lt;/td&gt;
+					&lt;td&gt;帧 N+1&lt;/td&gt;
+					&lt;td&gt;帧 N+2&lt;/td&gt;
+					&lt;td&gt;N+1: ACQUIRED, N+2: QUEUED&lt;/td&gt;
+			&lt;/tr&gt;
+	&lt;/tbody&gt;
 &lt;/table&gt;
 &lt;p&gt;&lt;strong&gt;核心结论&lt;/strong&gt;：SF 在 VSYNC N 合成帧 N，该帧在 VSYNC N+1 时显示到屏幕上。显示延迟至少 1 帧。&lt;/p&gt;</description></item><item><title>Android Binder IPC 机制详解</title><link>/posts/2026032301/</link><pubDate>Mon, 23 Mar 2026 17:09:20 +0800</pubDate><guid>/posts/2026032301/</guid><description>&lt;h1 id="一binder-概述"&gt;一、Binder 概述&lt;/h1&gt;
 &lt;p&gt;Binder 是 Android 系统中最重要的 IPC（进程间通信）机制，几乎所有的系统服务通信都基于 Binder 实现。相比传统的 IPC 机制（管道、Socket、共享内存等），Binder 具有以下优势：&lt;/p&gt;</description></item><item><title>Android 14 进程冷启动调度机制优化解析</title><link>/posts/2026032101/</link><pubDate>Sat, 21 Mar 2026 16:54:25 +0800</pubDate><guid>/posts/2026032101/</guid><description>&lt;h1 id="一背景"&gt;一、背景&lt;/h1&gt;
