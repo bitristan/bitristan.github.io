@@ -1,0 +1,515 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>从一个 Text 组件看透 Jetpack Compose 渲染全流程</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.162.1"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Jun 5, 2026
+- 11 minute read</p><h1 class=entry-title>从一个 Text 组件看透 Jetpack Compose 渲染全流程</h1></header><div class=entry-content><h1 id=引言>引言</h1><p>Jetpack Compose 的渲染管线常被形容为"黑盒"——写一个 <code>Text("Hello")</code>，文字就出现在屏幕上，中间发生了什么？本文以一个最简场景为线索，逐层拆解从 <code>setContent</code> 调用到像素上屏的完整链路。所有分析基于 AndroidX 源码。</p><hr><h1 id=1-场景>1 场景</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-xml data-lang=xml><span class=line><span class=cl><span class=nt>&lt;LinearLayout</span> <span class=err>...</span><span class=nt>&gt;</span>
+</span></span><span class=line><span class=cl>    <span class=nt>&lt;TextView</span> <span class=na>android:text=</span><span class=s>&#34;Traditional View&#34;</span> <span class=nt>/&gt;</span>
+</span></span><span class=line><span class=cl>    <span class=nt>&lt;androidx.compose.ui.platform.ComposeView</span>
+</span></span><span class=line><span class=cl>        <span class=na>android:id=</span><span class=s>&#34;@+id/composeView&#34;</span> <span class=err>...</span> <span class=nt>/&gt;</span>
+</span></span><span class=line><span class=cl><span class=nt>&lt;/LinearLayout&gt;</span>
+</span></span></code></pre></td></tr></table></div></div><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=n>composeView</span><span class=p>.</span><span class=n>setContent</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Hello Compose&#34;</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>一个传统 <code>TextView</code>，一个 Compose <code>Text</code>，并排放在同一个 <code>LinearLayout</code> 里。我们的问题是：<strong><code>Text("Hello Compose")</code> 这行代码，究竟经历了什么才把文字画到屏幕上？</strong></p><hr><h1 id=2-全局视角五阶段管线>2 全局视角：五阶段管线</h1><p>Compose 渲染是一条五阶段管线，每一阶段的输出是下一阶段的输入：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Composition → Apply → Measure → Layout → Draw
+</span></span></code></pre></td></tr></table></div></div><table><thead><tr><th>阶段</th><th>职责</th><th>核心类</th></tr></thead><tbody><tr><td>Composition</td><td>执行 @Composable 函数，生成树变更</td><td><code>Composer</code>, <code>SlotTable</code></td></tr><tr><td>Apply</td><td>将变更应用到 LayoutNode 树</td><td><code>UiApplier</code>, <code>LayoutNode</code></td></tr><tr><td>Measure</td><td>确定每个节点尺寸</td><td><code>MeasurePolicy</code>, <code>MeasurePassDelegate</code></td></tr><tr><td>Layout</td><td>确定每个节点位置</td><td><code>MeasureAndLayoutDelegate</code></td></tr><tr><td>Draw</td><td>将内容绘制到 Canvas</td><td><code>NodeCoordinator</code>, <code>LayoutNodeDrawScope</code></td></tr></tbody></table><p>下面逐阶段展开。</p><hr><h1 id=3-阶段一composition执行-composable记录变更>3 阶段一：Composition——执行 Composable，记录变更</h1><h2 id=31-setcontent-触发组合>3.1 setContent 触发组合</h2><p><code>ComposeView.setContent()</code> 保存 content lambda 并调用 <code>createComposition()</code>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// ComposeView.android.kt
+</span></span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>setContent</span><span class=p>(</span><span class=n>content</span><span class=p>:</span> <span class=nd>@Composable</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>shouldCreateCompositionOnAttachedToWindow</span> <span class=p>=</span> <span class=k>true</span>
+</span></span><span class=line><span class=cl>    <span class=k>this</span><span class=p>.</span><span class=n>content</span><span class=p>.</span><span class=k>value</span> <span class=p>=</span> <span class=n>content</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>isAttachedToWindow</span> <span class=o>||</span> <span class=n>composeViewContext</span> <span class=o>!=</span> <span class=k>null</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>createComposition</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><code>createComposition()</code> 做两件事：</p><ol><li>创建 <code>AndroidComposeView</code>——一个真正的 <code>ViewGroup</code>，作为 Compose 与 Android View 系统的桥梁。</li><li>创建 <code>Composition</code> 对象，调用 <code>composition.setContent(content)</code>，启动组合。</li></ol><h2 id=32-composer-执行-composable-函数>3.2 Composer 执行 Composable 函数</h2><p><code>Composition.setContent()</code> 将 content lambda 交给 <code>Composer</code> 执行。Composer 是一台状态机，逐行执行 Composable 函数体，同时做三件事：</p><ul><li><strong>写入 SlotTable</strong>：将 group 信息、remember 值、节点引用等持久化到 SlotTable。SlotTable 使用 <strong>Gap Buffer</strong> 实现——一种在编辑器中广泛使用的线性数据结构，核心特点是：在当前位置（即 gap 所在位置）的插入/删除操作接近 O(1)。</li><li><strong>追踪状态读取</strong>：当 Composable 中读取 <code>State.value</code> 时，Composer 记录"当前 scope 依赖了这个 State"，为后续重组建立订阅关系。</li><li><strong>生成变更操作</strong>：对比 SlotTable 新旧状态，生成 insert / remove / move / update 等操作，存入 ChangeList。</li></ul><h2 id=33-text-的组合过程>3.3 Text 的组合过程</h2><p><code>Text("Hello Compose")</code> 的调用链大致如下：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Text() → BasicText() → Layout(modifier, measurePolicy)
+</span></span></code></pre></td></tr></table></div></div><p><code>Layout</code> 是 Compose UI 的原子布局组件，其实现核心是 <code>ReusableComposeNode</code>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// Layout.kt
+</span></span></span><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>inline</span> <span class=k>fun</span> <span class=nf>Layout</span><span class=p>(</span><span class=n>modifier</span><span class=p>:</span> <span class=n>Modifier</span><span class=p>,</span> <span class=n>measurePolicy</span><span class=p>:</span> <span class=n>MeasurePolicy</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>ReusableComposeNode</span><span class=p>&lt;</span><span class=n>ComposeUiNode</span><span class=p>,</span> <span class=n>Applier</span><span class=p>&lt;</span><span class=n>Any</span><span class=p>&gt;&gt;(</span>
+</span></span><span class=line><span class=cl>        <span class=n>factory</span> <span class=p>=</span> <span class=nc>ComposeUiNode</span><span class=p>.</span><span class=n>Constructor</span><span class=p>,</span>   <span class=c1>// 创建 LayoutNode
+</span></span></span><span class=line><span class=cl>        <span class=n>update</span> <span class=p>=</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>set</span><span class=p>(</span><span class=n>measurePolicy</span><span class=p>,</span> <span class=n>SetMeasurePolicy</span><span class=p>)</span> <span class=c1>// 设置测量策略
+</span></span></span><span class=line><span class=cl>            <span class=k>set</span><span class=p>(</span><span class=n>materialized</span><span class=p>,</span> <span class=n>SetModifier</span><span class=p>)</span>       <span class=c1>// 设置 Modifier 链
+</span></span></span><span class=line><span class=cl>            <span class=k>set</span><span class=p>(</span><span class=n>compositeKeyHash</span><span class=p>,</span> <span class=n>SetCompositeKeyHash</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><code>ReusableComposeNode</code> 执行时，Composer 记录：此处需要创建一个节点（<code>LayoutNode</code>），并设置其 measurePolicy 和 modifier。这些信息被写入 SlotTable，并在 ChangeList 中生成一条 insert 操作。</p><h2 id=34-slottablecomposition-阶段的数据结构>3.4 SlotTable：Composition 阶段的数据结构</h2><p>SlotTable 使用 <strong>Gap Buffer</strong> 实现——一个在连续位置插入/删除极快的线性数据结构：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌──┬──┬──┬──┬──┬──┬──┬──┬──┐
+</span></span><span class=line><span class=cl>│G0│G1│G2│  │  │  │  │G3│G4│   ← G = group
+</span></span><span class=line><span class=cl>└──┴──┴──┴──┴──┴──┴──┴──┴──┘
+</span></span><span class=line><span class=cl>         ↑ gap ↑
+</span></span></code></pre></td></tr></table></div></div><p>Gap Buffer 的核心优势：组合过程中大量操作集中在当前位置（即 gap 所在位置），移动 gap 的代价极低，接近 O(1)。</p><p><strong>关键区分</strong>：SlotTable 是 Composition 阶段的内部数据结构，存储的是组合状态，不是 UI 节点树。UI 节点树在下一阶段由 Applier 构建。</p><hr><h1 id=4-阶段二apply将变更应用到-layoutnode-树>4 阶段二：Apply——将变更应用到 LayoutNode 树</h1><p>Composition 阶段产出的 ChangeList 包含一系列树操作（insert / remove / move / update）。Apply 阶段逐条执行这些操作，目标对象是 <strong>LayoutNode 树</strong>。</p><h2 id=41-uiapplier>4.1 UiApplier</h2><p><code>UiApplier</code> 是 Compose UI 的 Applier 实现，负责将变更应用到 LayoutNode 树：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// UiApplier.android.kt
+</span></span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>class</span> <span class=nc>UiApplier</span><span class=p>(</span><span class=n>root</span><span class=p>:</span> <span class=n>LayoutNode</span><span class=p>)</span> <span class=p>:</span> <span class=n>AbstractApplier</span><span class=p>&lt;</span><span class=n>LayoutNode</span><span class=p>&gt;(</span><span class=n>root</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>fun</span> <span class=nf>insertTopDown</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>instance</span><span class=p>:</span> <span class=n>LayoutNode</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 忽略，使用 bottom-up 构建
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>fun</span> <span class=nf>insertBottomUp</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>instance</span><span class=p>:</span> <span class=n>LayoutNode</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>current</span><span class=p>.</span><span class=n>insertAt</span><span class=p>(</span><span class=n>index</span><span class=p>,</span> <span class=n>instance</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>fun</span> <span class=nf>remove</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>count</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>current</span><span class=p>.</span><span class=n>removeAt</span><span class=p>(</span><span class=n>index</span><span class=p>,</span> <span class=n>count</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>fun</span> <span class=nf>move</span><span class=p>(</span><span class=n>from</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>to</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>count</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>current</span><span class=p>.</span><span class=n>move</span><span class=p>(</span><span class=n>from</span><span class=p>,</span> <span class=n>to</span><span class=p>,</span> <span class=n>count</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>注意 <code>insertTopDown</code> 是空实现——Compose UI 选择 <strong>bottom-up</strong> 构建树。原因是 LayoutNode 在子节点插入时会向上通知父节点，bottom-up 构建避免了指数级的通知数量：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>假设树有 3 层，每层 3 个子节点：
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>Top-down 构建顺序：
+</span></span><span class=line><span class=cl>  插入节点 1 → 通知父节点 (1 次)
+</span></span><span class=line><span class=cl>  插入节点 1.1 → 通知节点 1 → 通知根节点 (2 次)
+</span></span><span class=line><span class=cl>  插入节点 1.1.1 → 通知节点 1.1 → 通知节点 1 → 通知根节点 (3 次)
+</span></span><span class=line><span class=cl>  ...每个节点触发向上传播，总计 O(n²) 通知
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>Bottom-up 构建顺序：
+</span></span><span class=line><span class=cl>  插入节点 1.1.1 (叶子节点，无子节点) → 无通知
+</span></span><span class=line><span class=cl>  插入节点 1.1 → 通知节点 1 (1 次)
+</span></span><span class=line><span class=cl>  插入节点 1 → 通知根节点 (1 次)
+</span></span><span class=line><span class=cl>  ...每个分支只触发一次向上通知，总计 O(n) 通知
+</span></span></code></pre></td></tr></table></div></div><p>（Applier.kt 源码注释中有详细推导）</p><h2 id=42-layoutnode-树的数据结构>4.2 LayoutNode 树的数据结构</h2><p>LayoutNode 的子节点列表使用 <code>MutableVector</code>（本质是 ArrayList），<strong>不是 Gap Buffer</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// LayoutNode.kt
+</span></span></span><span class=line><span class=cl><span class=k>private</span> <span class=k>val</span> <span class=py>_foldedChildren</span> <span class=p>=</span>
+</span></span><span class=line><span class=cl>    <span class=n>MutableVectorWithMutationTracking</span><span class=p>(</span><span class=n>mutableVectorOf</span><span class=p>&lt;</span><span class=n>LayoutNode</span><span class=p>&gt;()</span> <span class=o>..</span><span class=p>.)</span>
+</span></span></code></pre></td></tr></table></div></div><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>internal</span> <span class=k>fun</span> <span class=nf>insertAt</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>instance</span><span class=p>:</span> <span class=n>LayoutNode</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>instance</span><span class=p>.</span><span class=n>_foldedParent</span> <span class=p>=</span> <span class=k>this</span>
+</span></span><span class=line><span class=cl>    <span class=n>_foldedChildren</span><span class=p>.</span><span class=n>add</span><span class=p>(</span><span class=n>index</span><span class=p>,</span> <span class=n>instance</span><span class=p>)</span>  <span class=c1>// ArrayList 操作
+</span></span></span><span class=line><span class=cl>    <span class=c1>// ... 通知、attach 等逻辑
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>这与 SlotTable 的 Gap Buffer 形成互补：SlotTable 面向大量连续插入/删除的线性扫描场景，LayoutNode 树面向小规模子节点的随机访问和树遍历场景。</p><h2 id=43-apply-后的树结构>4.3 Apply 后的树结构</h2><p>本例中，Apply 阶段结束后形成的树：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>AndroidComposeView (ViewGroup, 实现 Owner 接口)
+</span></span><span class=line><span class=cl> └── root LayoutNode
+</span></span><span class=line><span class=cl>      └── Text LayoutNode
+</span></span><span class=line><span class=cl>           └── Modifier NodeChain (TextStringSimpleNode 等)
+</span></span></code></pre></td></tr></table></div></div><p><code>AndroidComposeView</code> 实现了 <code>Owner</code> 接口，是 Compose UI 与 Android View 系统的唯一连接点。</p><hr><h1 id=5-阶段三measure确定每个节点的尺寸>5 阶段三：Measure——确定每个节点的尺寸</h1><p>Measure 阶段由 Android View 系统的 <code>onMeasure</code> 触发，自顶向下传递约束，自底向上返回尺寸。</p><h2 id=51-触发链>5.1 触发链</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-gdscript3 data-lang=gdscript3><span class=line><span class=cl><span class=n>Android</span> <span class=n>View</span> <span class=err>系统</span>
+</span></span><span class=line><span class=cl>  <span class=err>→</span> <span class=n>ComposeView</span><span class=o>.</span><span class=n>onMeasure</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=err>→</span> <span class=n>AndroidComposeView</span><span class=o>.</span><span class=n>onMeasure</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>      <span class=err>→</span> <span class=n>measureAndLayoutDelegate</span><span class=o>.</span><span class=n>measureOnly</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>        <span class=err>→</span> <span class=n>root</span><span class=o>.</span><span class=n>measure</span><span class=p>(</span><span class=n>constraints</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>          <span class=err>→</span> <span class=n>Text</span><span class=o>.</span><span class=n>measurePolicy</span><span class=o>.</span><span class=n>measure</span><span class=p>()</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=52-androidcomposeviewonmeasure>5.2 AndroidComposeView.onMeasure()</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// AndroidComposeView.android.kt
+</span></span></span><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>onMeasure</span><span class=p>(</span><span class=n>widthMeasureSpec</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>heightMeasureSpec</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(!</span><span class=n>root</span><span class=p>.</span><span class=n>isAttached</span><span class=p>)</span> <span class=n>root</span><span class=p>.</span><span class=n>attach</span><span class=p>(</span><span class=k>this</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 1. 将 Android MeasureSpec 转换为 Compose Constraints
+</span></span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>constraints</span> <span class=p>=</span> <span class=nc>Constraints</span><span class=p>.</span><span class=n>fitPrioritizingHeight</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>        <span class=n>minWidth</span><span class=p>,</span> <span class=n>maxWidth</span><span class=p>,</span> <span class=n>minHeight</span><span class=p>,</span> <span class=n>maxHeight</span>
+</span></span><span class=line><span class=cl>    <span class=p>)</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 2. 更新 root 约束并执行测量
+</span></span></span><span class=line><span class=cl>    <span class=n>measureAndLayoutDelegate</span><span class=p>.</span><span class=n>updateRootConstraints</span><span class=p>(</span><span class=n>constraints</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>measureAndLayoutDelegate</span><span class=p>.</span><span class=n>measureOnly</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 3. 将测量结果回设给 View 系统
+</span></span></span><span class=line><span class=cl>    <span class=n>setMeasuredDimension</span><span class=p>(</span><span class=n>root</span><span class=p>.</span><span class=n>width</span><span class=p>,</span> <span class=n>root</span><span class=p>.</span><span class=n>height</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>关键步骤：Android 的 <code>MeasureSpec</code> 被转换为 Compose 的 <code>Constraints</code>，然后交给 <code>MeasureAndLayoutDelegate</code> 驱动整棵 LayoutNode 树的测量。</p><h2 id=53-text-的测量>5.3 Text 的测量</h2><p>Text 的 <code>MeasurePolicy</code> 使用 <code>TextDelegate</code> 进行文本排版：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=n>measurePolicy</span> <span class=p>=</span> <span class=p>{</span> <span class=n>measurables</span><span class=p>,</span> <span class=n>constraints</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 排版文本，得到 TextLayoutResult
+</span></span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>textLayoutResult</span> <span class=p>=</span> <span class=n>textDelegate</span><span class=p>.</span><span class=n>layout</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>        <span class=n>constraints</span><span class=p>.</span><span class=n>maxWidth</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>        <span class=n>constraints</span><span class=p>.</span><span class=n>maxHeight</span>
+</span></span><span class=line><span class=cl>    <span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 返回测量结果：宽、高，以及放置逻辑
+</span></span></span><span class=line><span class=cl>    <span class=n>layout</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>        <span class=n>width</span> <span class=p>=</span> <span class=n>textLayoutResult</span><span class=p>.</span><span class=n>size</span><span class=p>.</span><span class=n>width</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>        <span class=n>height</span> <span class=p>=</span> <span class=n>textLayoutResult</span><span class=p>.</span><span class=n>size</span><span class=p>.</span><span class=n>height</span>
+</span></span><span class=line><span class=cl>    <span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// Text 无子节点，place 空操作
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>文本排版涉及 <code>android.text.Layout</code> 或 <code>android.text.BoringLayout</code>，最终得到文字的像素尺寸。</p><hr><h1 id=6-阶段四layout确定每个节点的位置>6 阶段四：Layout——确定每个节点的位置</h1><p>Layout 阶段紧随 Measure 之后，在 <code>onLayout</code> 中执行：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// AndroidComposeView.android.kt
+</span></span></span><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>onLayout</span><span class=p>(</span><span class=n>changed</span><span class=p>:</span> <span class=n>Boolean</span><span class=p>,</span> <span class=n>l</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>t</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>r</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>b</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 执行测量 + 布局（部分节点可能需要重新测量）
+</span></span></span><span class=line><span class=cl>    <span class=n>measureAndLayoutDelegate</span><span class=p>.</span><span class=n>measureAndLayout</span><span class=p>(</span><span class=n>resendMotionEventOnLayout</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 分发 onGloballyPositioned 回调
+</span></span></span><span class=line><span class=cl>    <span class=n>updatePositionCacheAndDispatch</span><span class=p>()</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=61-layout-的基本流程>6.1 Layout 的基本流程</h2><p><code>measureAndLayout()</code> 遍历所有标记为需要重新布局的 LayoutNode，对每个节点：</p><ol><li>调用其 <code>MeasurePolicy</code> 的 <code>measure()</code> 获取 <code>MeasureResult</code>。</li><li>执行 <code>MeasureResult</code> 中的 <code>place()</code> 调用，确定子节点相对于父节点的 (x, y) 偏移。</li><li>更新 <code>LayoutNode.position</code>。</li></ol><h2 id=62-measureandlayout-的完整职责>6.2 measureAndLayout() 的完整职责</h2><p><code>measureAndLayout()</code> 并不是简单的布局，它实际上是一个完整的测量-布局循环：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// MeasureAndLayoutDelegate.kt
+</span></span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>measureAndLayout</span><span class=p>():</span> <span class=n>Boolean</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>var</span> <span class=py>remeasure</span> <span class=p>=</span> <span class=k>false</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 1. 遍历所有 dirty 节点
+</span></span></span><span class=line><span class=cl>    <span class=k>while</span> <span class=p>(</span><span class=n>measurePending</span><span class=p>.</span><span class=n>isNotEmpty</span><span class=p>()</span> <span class=o>||</span> <span class=n>layoutPending</span><span class=p>.</span><span class=n>isNotEmpty</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 2. 如果约束变化，重新测量
+</span></span></span><span class=line><span class=cl>        <span class=k>for</span> <span class=p>(</span><span class=n>node</span> <span class=k>in</span> <span class=n>measurePending</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>node</span><span class=p>.</span><span class=n>measure</span><span class=p>(</span><span class=n>node</span><span class=p>.</span><span class=n>constraints</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 3. 如果布局变化，重新放置
+</span></span></span><span class=line><span class=cl>        <span class=k>for</span> <span class=p>(</span><span class=n>node</span> <span class=k>in</span> <span class=n>layoutPending</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>node</span><span class=p>.</span><span class=n>layout</span><span class=p>(</span><span class=n>node</span><span class=p>.</span><span class=n>position</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 4. 处理因布局变化触发的级联测量
+</span></span></span><span class=line><span class=cl>        <span class=n>remeasure</span> <span class=p>=</span> <span class=n>handleRemeasures</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 5. 分发 onGloballyPositioned 回调
+</span></span></span><span class=line><span class=cl>    <span class=n>dispatchOnPositioned</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>remeasure</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>关键点：</p><ul><li><strong>测量与布局的耦合</strong>：某些布局（如 <code>Box</code>、<code>Column</code>）在测量阶段就需要知道子节点的位置，因此 measure 和 layout 可能交替执行。</li><li><strong>级联更新</strong>：子节点尺寸变化可能触发父节点重新测量，形成向上的传播链。</li><li><strong>onGloballyPositioned</strong>：所有测量布局完成后，才会分发 <code>onGloballyPositioned</code> 回调，确保回调中能拿到正确的位置信息。</li></ul><p>本例中，Text 节点被放置在 (0, 0)（相对于 root）。</p><hr><h1 id=7-阶段五draw将内容绘制到-canvas>7 阶段五：Draw——将内容绘制到 Canvas</h1><p>Draw 阶段由 Android View 系统的 <code>dispatchDraw</code> 触发。</p><h2 id=71-androidcomposeviewdispatchdraw>7.1 AndroidComposeView.dispatchDraw()</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// AndroidComposeView.android.kt
+</span></span></span><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>dispatchDraw</span><span class=p>(</span><span class=n>canvas</span><span class=p>:</span> <span class=n>android</span><span class=p>.</span><span class=n>graphics</span><span class=p>.</span><span class=n>Canvas</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>measureAndLayout</span><span class=p>()</span>  <span class=c1>// 确保测量布局已完成
+</span></span></span><span class=line><span class=cl>    <span class=nc>Snapshot</span><span class=p>.</span><span class=n>notifyObjectsInitialized</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 核心：从 root 开始绘制整棵 LayoutNode 树
+</span></span></span><span class=line><span class=cl>    <span class=n>canvasHolder</span><span class=p>.</span><span class=n>drawInto</span><span class=p>(</span><span class=n>canvas</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>root</span><span class=p>.</span><span class=n>draw</span><span class=p>(</span><span class=n>canvas</span> <span class=p>=</span> <span class=k>this</span><span class=p>,</span> <span class=n>graphicsLayer</span> <span class=p>=</span> <span class=k>null</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 更新脏图层
+</span></span></span><span class=line><span class=cl>    <span class=n>dirtyLayers</span><span class=p>.</span><span class=n>forEach</span> <span class=p>{</span> <span class=k>it</span><span class=p>.</span><span class=n>updateDisplayList</span><span class=p>()</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=72-layoutnodedraw>7.2 LayoutNode.draw()</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// LayoutNode.kt
+</span></span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>fun</span> <span class=nf>draw</span><span class=p>(</span><span class=n>canvas</span><span class=p>:</span> <span class=n>Canvas</span><span class=p>,</span> <span class=n>graphicsLayer</span><span class=p>:</span> <span class=n>GraphicsLayer</span><span class=p>?)</span> <span class=p>=</span>
+</span></span><span class=line><span class=cl>    <span class=n>withComposeStackTrace</span><span class=p>(</span><span class=k>this</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>outerCoordinator</span><span class=p>.</span><span class=n>draw</span><span class=p>(</span><span class=n>canvas</span><span class=p>,</span> <span class=n>graphicsLayer</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>绘制委托给 <code>outerCoordinator</code>——<code>NodeCoordinator</code> 负责协调 Modifier 链的绘制。</p><h2 id=73-nodecoordinatordraw>7.3 NodeCoordinator.draw()</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// NodeCoordinator.kt
+</span></span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>draw</span><span class=p>(</span><span class=n>canvas</span><span class=p>:</span> <span class=n>Canvas</span><span class=p>,</span> <span class=n>graphicsLayer</span><span class=p>:</span> <span class=n>GraphicsLayer</span><span class=p>?)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>layer</span> <span class=p>=</span> <span class=n>layer</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>layer</span> <span class=o>!=</span> <span class=k>null</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>layer</span><span class=p>.</span><span class=n>drawLayer</span><span class=p>(</span><span class=n>canvas</span><span class=p>,</span> <span class=n>graphicsLayer</span><span class=p>)</span>  <span class=c1>// 有图层，走图层绘制
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>canvas</span><span class=p>.</span><span class=n>translate</span><span class=p>(</span><span class=n>position</span><span class=p>.</span><span class=n>x</span><span class=p>.</span><span class=n>toFloat</span><span class=p>(),</span> <span class=n>position</span><span class=p>.</span><span class=n>y</span><span class=p>.</span><span class=n>toFloat</span><span class=p>())</span>
+</span></span><span class=line><span class=cl>        <span class=n>drawContainedDrawModifiers</span><span class=p>(</span><span class=n>canvas</span><span class=p>,</span> <span class=n>graphicsLayer</span><span class=p>)</span>  <span class=c1>// 绘制 Modifier 链
+</span></span></span><span class=line><span class=cl>        <span class=n>canvas</span><span class=p>.</span><span class=n>translate</span><span class=p>(-</span><span class=n>position</span><span class=p>.</span><span class=n>x</span><span class=p>.</span><span class=n>toFloat</span><span class=p>(),</span> <span class=p>-</span><span class=n>position</span><span class=p>.</span><span class=n>y</span><span class=p>.</span><span class=n>toFloat</span><span class=p>())</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=74-modifier-链的绘制>7.4 Modifier 链的绘制</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>drawContainedDrawModifiers</span><span class=p>(</span><span class=n>canvas</span><span class=p>:</span> <span class=n>Canvas</span><span class=p>,</span> <span class=n>graphicsLayer</span><span class=p>:</span> <span class=n>GraphicsLayer</span><span class=p>?)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>head</span> <span class=p>=</span> <span class=n>head</span><span class=p>(</span><span class=nc>Nodes</span><span class=p>.</span><span class=n>Draw</span><span class=p>)</span>  <span class=c1>// 取出 Draw 类型 Modifier 链的头节点
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>head</span> <span class=o>==</span> <span class=k>null</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>performDraw</span><span class=p>(</span><span class=n>canvas</span><span class=p>,</span> <span class=n>graphicsLayer</span><span class=p>)</span>  <span class=c1>// 无 Draw Modifier，直接绘制子节点
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>drawScope</span><span class=p>.</span><span class=n>draw</span><span class=p>(</span><span class=n>canvas</span><span class=p>,</span> <span class=n>size</span><span class=p>.</span><span class=n>toSize</span><span class=p>(),</span> <span class=k>this</span><span class=p>,</span> <span class=n>head</span><span class=p>,</span> <span class=n>graphicsLayer</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>对于 Text 组件，<code>TextStringSimpleNode</code>（一个 Draw Modifier Node）负责实际的文本绘制：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// TextStringSimpleNode.kt
+</span></span></span><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>ContentDrawScope</span><span class=p>.</span><span class=n>draw</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>drawText</span><span class=p>(</span><span class=n>textLayoutResult</span><span class=p>,</span> <span class=n>color</span><span class=p>,</span> <span class=o>..</span><span class=p>.)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><code>drawText</code> 最终调用 <code>android.graphics.Canvas.drawText()</code>——与传统 TextView 的底层绘制 API 完全相同。</p><hr><h1 id=8-传统-view-与-compose-的混合渲染>8 传统 View 与 Compose 的混合渲染</h1><p>回到我们的例子：<code>LinearLayout</code> 里同时放了传统 <code>TextView</code> 和 Compose <code>Text</code>。它们是如何一起渲染的？</p><h2 id=81-共享同一套渲染管线>8.1 共享同一套渲染管线</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>DecorView
+</span></span><span class=line><span class=cl>  └── LinearLayout
+</span></span><span class=line><span class=cl>       ├── TextView
+</span></span><span class=line><span class=cl>       │     └── onDraw(canvas) → canvas.drawText(&#34;Traditional View&#34;)
+</span></span><span class=line><span class=cl>       │
+</span></span><span class=line><span class=cl>       └── ComposeView
+</span></span><span class=line><span class=cl>             └── AndroidComposeView
+</span></span><span class=line><span class=cl>                   └── dispatchDraw(canvas)
+</span></span><span class=line><span class=cl>                         └── root.draw(canvas)
+</span></span><span class=line><span class=cl>                               └── Text ModifierNode.draw()
+</span></span><span class=line><span class=cl>                                     └── canvas.drawText(&#34;Hello Compose&#34;)
+</span></span></code></pre></td></tr></table></div></div><p>关键事实：</p><ul><li><strong>同一个 Canvas</strong>：Android View 系统自顶向下分发同一个 <code>android.graphics.Canvas</code>，传统 View 和 Compose 都在这个 Canvas 上绘制。</li><li><strong>同一个 HardwareRenderer</strong>：所有绘制指令统一由 Android 硬件渲染器处理。</li><li><strong>同一个 RenderThread</strong>：绘制指令在同一个渲染线程上执行。</li><li><strong>同一个 DisplayList</strong>：所有指令被缓存到 DisplayList，GPU 统一光栅化。</li></ul><p>传统 View 和 Compose 的绘制指令<strong>最终合并到同一个 DisplayList</strong>，由 GPU 一起渲染上屏。它们不是两套独立的渲染系统，而是同一套管线中的两个绘制源。</p><h2 id=82-为什么可以无缝共存>8.2 为什么可以无缝共存</h2><p><code>ComposeView</code> 和 <code>AndroidComposeView</code> 都是标准的 Android <code>View</code> / <code>ViewGroup</code>，完全遵循 Android 的 measure → layout → draw 协议。Android View 系统并不知道 ComposeView 内部用的是 Compose 渲染，它只看到一个普通的子 View，按标准流程调度即可。</p><hr><h1 id=9-重组状态变化时的增量更新>9 重组：状态变化时的增量更新</h1><p>首次渲染讲完了，那状态变化时呢？</p><h2 id=91-触发链>9.1 触发链</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>mutableState.value = newValue
+</span></span><span class=line><span class=cl>  → Snapshot 记录变更
+</span></span><span class=line><span class=cl>    → 标记读取过该 State 的 RecomposeScope 为无效
+</span></span><span class=line><span class=cl>      → Recomposer 在下一帧调度重组
+</span></span><span class=line><span class=cl>        → 重新执行对应的 @Composable 函数
+</span></span><span class=line><span class=cl>          → Composer 对比 SlotTable，生成最小变更集
+</span></span><span class=line><span class=cl>            → UiApplier 应用差异到 LayoutNode 树
+</span></span><span class=line><span class=cl>              → 触发重新 Measure / Layout / Draw
+</span></span></code></pre></td></tr></table></div></div><h2 id=92-智能重组>9.2 智能重组</h2><p>Compose 的核心优势是<strong>智能重组</strong>——只有状态真正改变的 Composable 才会重新执行。这由三层机制保证：</p><ol><li><strong>位置记忆（Positional Memoization）</strong>：Composer 根据 Composable 在源码中的调用位置（group key）判断是否可以跳过。</li><li><strong>状态订阅粒度</strong>：只有读取了变化 State 的 scope 才会被标记无效。</li><li><strong>SlotTable 差分</strong>：Composer 对比 SlotTable 新旧状态，只生成必要的变更操作。</li></ol><hr><h1 id=10-数据结构总结>10 数据结构总结</h1><table><thead><tr><th>数据结构</th><th>所在阶段</th><th>用途</th><th>特点</th><th>选择原因</th></tr></thead><tbody><tr><td>SlotTable (Gap Buffer)</td><td>Composition</td><td>存储组合状态</td><td>连续位置插入/删除极快</td><td>组合过程大量线性扫描和当前位置插入</td></tr><tr><td>ChangeList</td><td>Composition → Apply</td><td>记录树变更操作</td><td>线性表，顺序执行</td><td>Applier 按顺序逐条执行变更</td></tr><tr><td>LayoutNode 树 (MutableVector)</td><td>Apply / Measure / Layout / Draw</td><td>实际 UI 节点树</td><td>ArrayList，支持随机访问</td><td>树遍历和小规模子节点操作频繁</td></tr><tr><td>DisplayList</td><td>Draw → GPU</td><td>缓存绘制指令</td><td>硬件加速，GPU 执行</td><td>避免每帧重新录制绘制指令</td></tr></tbody></table><hr><h1 id=11-完整流程图>11 完整流程图</h1><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span><span class=lnt>49
+</span><span class=lnt>50
+</span><span class=lnt>51
+</span><span class=lnt>52
+</span><span class=lnt>53
+</span><span class=lnt>54
+</span><span class=lnt>55
+</span><span class=lnt>56
+</span><span class=lnt>57
+</span><span class=lnt>58
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>composeView.setContent { Text(&#34;Hello Compose&#34;) }
+</span></span><span class=line><span class=cl>│
+</span></span><span class=line><span class=cl>▼
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│  Composition                                        │
+</span></span><span class=line><span class=cl>│  Composer 执行 @Composable 函数                      │
+</span></span><span class=line><span class=cl>│  → 写入 SlotTable (Gap Buffer)                      │
+</span></span><span class=line><span class=cl>│  → 追踪 State 读取                                   │
+</span></span><span class=line><span class=cl>│  → 生成 ChangeList (insert/update)                   │
+</span></span><span class=line><span class=cl>│                                                     │
+</span></span><span class=line><span class=cl>│  Text() → BasicText() → Layout()                    │
+</span></span><span class=line><span class=cl>│    → ReusableComposeNode → 记录节点信息到 SlotTable   │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>│
+</span></span><span class=line><span class=cl>▼
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│  Apply                                              │
+</span></span><span class=line><span class=cl>│  UiApplier 逐条执行 ChangeList                       │
+</span></span><span class=line><span class=cl>│  → insertBottomUp: LayoutNode.insertAt()             │
+</span></span><span class=line><span class=cl>│  → 构建 LayoutNode 树 (MutableVector)                │
+</span></span><span class=line><span class=cl>│                                                     │
+</span></span><span class=line><span class=cl>│  树结构:                                             │
+</span></span><span class=line><span class=cl>│  AndroidComposeView                                 │
+</span></span><span class=line><span class=cl>│   └── root LayoutNode                               │
+</span></span><span class=line><span class=cl>│        └── Text LayoutNode                          │
+</span></span><span class=line><span class=cl>│             └── TextStringSimpleNode (Modifier)      │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>│
+</span></span><span class=line><span class=cl>▼
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│  Measure  (AndroidComposeView.onMeasure 触发)        │
+</span></span><span class=line><span class=cl>│  MeasureSpec → Constraints → 自顶向下传递            │
+</span></span><span class=line><span class=cl>│  → Text.measurePolicy.measure()                      │
+</span></span><span class=line><span class=cl>│  → TextDelegate.layout() → TextLayoutResult          │
+</span></span><span class=line><span class=cl>│  → layout(width, height)                             │
+</span></span><span class=line><span class=cl>│  → setMeasuredDimension(root.width, root.height)     │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>│
+</span></span><span class=line><span class=cl>▼
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│  Layout  (AndroidComposeView.onLayout 触发)          │
+</span></span><span class=line><span class=cl>│  measureAndLayoutDelegate.measureAndLayout()         │
+</span></span><span class=line><span class=cl>│  → Text.place(0, 0)                                 │
+</span></span><span class=line><span class=cl>│  → updatePositionCacheAndDispatch()                  │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>│
+</span></span><span class=line><span class=cl>▼
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│  Draw  (AndroidComposeView.dispatchDraw 触发)        │
+</span></span><span class=line><span class=cl>│  root.draw(canvas)                                   │
+</span></span><span class=line><span class=cl>│  → outerCoordinator.draw()                           │
+</span></span><span class=line><span class=cl>│  → canvas.translate(x, y)                            │
+</span></span><span class=line><span class=cl>│  → drawContainedDrawModifiers()                      │
+</span></span><span class=line><span class=cl>│  → TextStringSimpleNode.draw()                       │
+</span></span><span class=line><span class=cl>│  → canvas.drawText(&#34;Hello Compose&#34;)                  │
+</span></span><span class=line><span class=cl>│                                                     │
+</span></span><span class=line><span class=cl>│  绘制指令 → DisplayList → RenderThread → GPU → 屏幕  │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=12-小结>12 小结</h1><p>Compose 的渲染并非魔法，而是一条清晰的管线：</p><ol><li><strong>Composition</strong> 是声明层，用 SlotTable (Gap Buffer) 做差分，生成最小变更集。</li><li><strong>Apply</strong> 是桥接层，用 UiApplier 将变更应用到 LayoutNode 树 (ArrayList)。</li><li><strong>Measure / Layout / Draw</strong> 是执行层，完全嵌入 Android View 系统的 onMeasure / onLayout / dispatchDraw 协议。</li></ol><p>传统 View 和 Compose 共享同一个 Canvas、同一个 HardwareRenderer、同一个 RenderThread。它们不是两套渲染系统，而是同一管线中的两个绘制源。理解了这一点，混合使用时的行为就不难预测了。</p></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Jun 5, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026060201/ title="Jetpack Compose 渲染原理深度解析">Jetpack Compose 渲染原理深度解析</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
