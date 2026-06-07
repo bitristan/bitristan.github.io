@@ -1,0 +1,962 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Compose 重组机制深度解析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.162.1"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Jun 7, 2026
+- 20 minute read</p><h1 class=entry-title>Compose 重组机制深度解析</h1></header><div class=entry-content><h1 id=一引言什么是重组>一、引言：什么是重组？</h1><h2 id=11-重组的定义>1.1 重组的定义</h2><p>在 Jetpack Compose 中，<strong>重组（Recomposition）</strong> 是响应式编程模型的核心机制。当应用状态发生变化时，Compose 会重新执行相关的可组合函数（@Composable 函数），以更新 UI 树来反映最新的状态。</p><p>这是一个声明式的过程：你描述"UI 应该是什么样子"，Compose 会自动处理"如何从当前状态转换到目标状态"。</p><h2 id=12-重组的特点>1.2 重组的特点</h2><p><strong>智能性（Intelligent）</strong></p><p>Compose 只重组受影响的部分，而不是整个 UI 树。这通过以下机制实现：</p><ul><li><strong>作用域追踪</strong>：可重启的可组合函数（restartable composable）会有一个 <code>RecomposeScope</code>，记录该函数读取了哪些状态</li><li><strong>增量更新</strong>：基于现有 UI 树进行局部更新，而不是重新构建整棵树</li><li><strong>智能跳过</strong>：如果输入参数未变化，跳过重组</li></ul><p><strong>增量性（Incremental）</strong></p><p>重组是基于现有状态进行的增量更新：</p><ul><li>首次组合（Initial Composition）：从零开始构建 UI 树</li><li>重组（Recomposition）：在现有基础上更新 UI 树</li></ul><p><strong>可控性（Controllable）</strong></p><p>开发者可以通过多种方式控制重组的范围和行为：</p><ul><li><code>remember</code>：缓存值，避免在重组时重新计算</li><li><code>key</code>：标识列表项，优化列表重组</li><li><code>derivedStateOf</code>：创建派生状态，减少不必要的重组</li><li><code>@Stable</code> / <code>@Immutable</code>：标记类型稳定性，帮助编译器优化</li></ul><h2 id=13-本文重点>1.3 本文重点</h2><p>本文将深入分析以下核心问题：</p><ol><li><strong>首次组合流程</strong>：从 <code>setContent</code> 到 UI 树构建的完整过程</li><li><strong>重组触发机制</strong>：状态变化如何触发重组</li><li><strong>重组执行流程</strong>：Composer 如何执行重组并更新 SlotTable</li><li><strong>重组的输入与输出</strong>：重组需要什么？产生什么？</li><li><strong>SlotTable 的作用</strong>：核心数据结构如何支持重组</li></ol><hr><h1 id=二核心组件概览>二、核心组件概览</h1><p>在深入分析重组流程之前，我们需要先理解 Compose 运行时的核心组件及其职责。</p><h2 id=21-关键类与职责>2.1 关键类与职责</h2><table><thead><tr><th>组件</th><th>职责</th><th>所在文件</th></tr></thead><tbody><tr><td><strong>ComposeView</strong></td><td>Android View 与 Compose 的桥梁，提供 <code>setContent</code> 入口</td><td><code>ComposeView.android.kt</code></td></tr><tr><td><strong>Composition</strong></td><td>组合的抽象接口，管理组合的生命周期</td><td><code>Composition.kt</code></td></tr><tr><td><strong>Composer</strong></td><td>执行组合的运行时，调用可组合函数并更新 SlotTable</td><td><code>GapComposer.kt</code> / <code>LinkComposer.kt</code></td></tr><tr><td><strong>SlotTable</strong></td><td>存储组合信息的数据结构，使用 Gap Buffer 实现</td><td><code>SlotTable.kt</code></td></tr><tr><td><strong>Applier</strong></td><td>将组合结果应用到 UI 树的处理器</td><td><code>Applier.kt</code> / <code>UiApplier.kt</code></td></tr><tr><td><strong>Recomposer</strong></td><td>调度和执行重组的管理器</td><td><code>Recomposer.kt</code></td></tr><tr><td><strong>RecomposeScope</strong></td><td>跟踪需要重组的区域，记录状态依赖</td><td><code>RecomposeScopeImpl.kt</code></td></tr></tbody></table><h2 id=22-组件关系图>2.2 组件关系图</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                      ComposeView                             │
+</span></span><span class=line><span class=cl>│  (Android View，提供 setContent 入口)                        │
+</span></span><span class=line><span class=cl>└──────────────────────┬──────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                       │ setContent()
+</span></span><span class=line><span class=cl>                       ↓
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                   Composition (CompositionImpl)              │
+</span></span><span class=line><span class=cl>│  (管理组合生命周期，协调各个组件)                             │
+</span></span><span class=line><span class=cl>│                                                              │
+</span></span><span class=line><span class=cl>│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+</span></span><span class=line><span class=cl>│  │   Composer   │  │  SlotTable   │  │   Applier    │      │
+</span></span><span class=line><span class=cl>│  │              │←→│              │  │              │      │
+</span></span><span class=line><span class=cl>│  └──────────────┘  └──────────────┘  └──────────────┘      │
+</span></span><span class=line><span class=cl>└──────────────────────┬──────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                       │ composeContent()
+</span></span><span class=line><span class=cl>                       ↓
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│                       Recomposer                             │
+</span></span><span class=line><span class=cl>│  (调度重组，管理多个 Composition)                             │
+</span></span><span class=line><span class=cl>│                                                              │
+</span></span><span class=line><span class=cl>│  - 监听状态变化                                               │
+</span></span><span class=line><span class=cl>│  - 调度重组时机                                               │
+</span></span><span class=line><span class=cl>│  - 驱动重组循环                                               │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=23-数据流与执行流程>2.3 数据流与执行流程</h2><p><strong>首次组合流程：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>ComposeView.setContent()
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>createComposition()
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>WrappedComposition.setContent()           ← 生命周期管理、CompositionLocal 提供
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>CompositionImpl.setContent(content)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>composeInitial(content)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>Recomposer.composeInitial(composition, content)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>composition.composeContent(content)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>GapComposer.composeContent(emptyScopeMap, content, null)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>执行可组合函数 → 写入 SlotTable → 生成 Change List
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>composition.applyChanges()
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>changes.execute() → 调用 applier 方法 → 更新 UI 树
+</span></span></code></pre></td></tr></table></div></div><p><strong>重组流程：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>State 改变 (例如：mutableState.value = newValue)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>Snapshot.writeObserver 触发
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>通知 DerivedState / RecomposeScope
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>Recomposer 通过帧调度收集 invalidations
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>找到所有 invalidated 的 RecomposeScope
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>composition.recompose()
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>GapComposer.composeContent() 再次执行可组合函数
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>比较前后 SlotTable → 生成增量 Change List
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>composition.applyChanges()
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>changes.execute() → 调用 applier 方法 → 增量更新 UI 树
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=三首次组合流程initial-composition>三、首次组合流程（Initial Composition）</h1><h2 id=31-入口composeviewsetcontent>3.1 入口：ComposeView.setContent</h2><p>首次组合从 <code>ComposeView.setContent()</code> 方法开始。这是一个扩展函数，允许在 Android View 中使用 Compose。</p><p><strong>源码分析：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// ComposeView.android.kt:628
+</span></span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>setContent</span><span class=p>(</span><span class=n>content</span><span class=p>:</span> <span class=nd>@Composable</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>shouldCreateCompositionOnAttachedToWindow</span> <span class=p>=</span> <span class=k>true</span>
+</span></span><span class=line><span class=cl>    <span class=k>this</span><span class=p>.</span><span class=n>content</span><span class=p>.</span><span class=k>value</span> <span class=p>=</span> <span class=n>content</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>isAttachedToWindow</span> <span class=o>||</span> <span class=n>composeViewContext</span> <span class=o>!=</span> <span class=k>null</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>createComposition</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>关键步骤：</strong></p><ol><li><strong>设置 content lambda</strong>：将传入的可组合函数保存到 <code>this.content.value</code></li><li><strong>检查 attach 状态</strong>：如果 View 已经 attach 到 window，立即创建 composition</li><li><strong>延迟创建</strong>：如果尚未 attach，等待 <code>onAttachedToWindow()</code> 时创建</li></ol><p><strong>时序图：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>View attach 到 window
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>ComposeView.onAttachedToWindow()
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>ensureCompositionCreated()
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>创建 Composition
+</span></span></code></pre></td></tr></table></div></div><h2 id=32-创建-composition>3.2 创建 Composition</h2><p><code>ensureCompositionCreated()</code> 方法负责创建 Composition 及其相关组件。</p><p><strong>源码分析：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// ComposeView.android.kt:303
+</span></span></span><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>ensureCompositionCreated</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>composition</span> <span class=o>==</span> <span class=k>null</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>try</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>creatingComposition</span> <span class=p>=</span> <span class=k>true</span>
+</span></span><span class=line><span class=cl>            <span class=n>trace</span><span class=p>(</span><span class=s2>&#34;Compose:initializeView&#34;</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                <span class=k>val</span> <span class=py>composeViewContext</span> <span class=p>=</span> <span class=k>this</span><span class=p>.</span><span class=n>composeViewContext</span> <span class=o>?:</span> <span class=n>resolveComposeViewContext</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>                <span class=n>composition</span> <span class=p>=</span> <span class=n>setContent</span><span class=p>(</span><span class=n>composeViewContext</span><span class=p>)</span> <span class=p>{</span> <span class=n>Content</span><span class=p>()</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>            <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span> <span class=k>finally</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>creatingComposition</span> <span class=p>=</span> <span class=k>false</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>创建的关键组件：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// Wrapper.android.kt:53
+</span></span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>fun</span> <span class=nf>AbstractComposeView</span><span class=p>.</span><span class=n>setContent</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>composeViewContext</span><span class=p>:</span> <span class=n>ComposeViewContext</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>content</span><span class=p>:</span> <span class=nd>@Composable</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>,</span>
+</span></span><span class=line><span class=cl><span class=p>):</span> <span class=n>Composition</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nc>GlobalSnapshotManager</span><span class=p>.</span><span class=n>ensureStarted</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 创建或复用 AndroidComposeView
+</span></span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>composeView</span> <span class=p>=</span> <span class=k>if</span> <span class=p>(</span><span class=n>childCount</span> <span class=p>&gt;</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=p>(</span><span class=n>getChildAt</span><span class=p>(</span><span class=mi>0</span><span class=p>)</span> <span class=k>as</span><span class=p>?</span> <span class=n>AndroidComposeView</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>removeAllViews</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>        <span class=k>null</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=o>?:</span> <span class=n>AndroidComposeView</span><span class=p>(</span><span class=n>context</span><span class=p>,</span> <span class=n>composeViewContext</span><span class=p>).</span><span class=n>also</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>addView</span><span class=p>(</span><span class=k>it</span><span class=p>.</span><span class=n>view</span><span class=p>,</span> <span class=n>DefaultLayoutParams</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 创建 WrappedComposition
+</span></span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>wrapped</span> <span class=p>=</span> <span class=n>composeView</span><span class=p>.</span><span class=n>getTag</span><span class=p>(</span><span class=nc>R</span><span class=p>.</span><span class=n>id</span><span class=p>.</span><span class=n>wrapped_composition_tag</span><span class=p>)</span> <span class=k>as</span><span class=p>?</span> <span class=n>WrappedComposition</span>
+</span></span><span class=line><span class=cl>        <span class=o>?:</span> <span class=n>WrappedComposition</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>            <span class=n>composeView</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>            <span class=n>Composition</span><span class=p>(</span><span class=n>UiApplier</span><span class=p>(</span><span class=n>composeView</span><span class=p>.</span><span class=n>root</span><span class=p>),</span> <span class=n>composeViewContext</span><span class=p>.</span><span class=n>compositionContext</span><span class=p>),</span>
+</span></span><span class=line><span class=cl>        <span class=p>).</span><span class=n>also</span> <span class=p>{</span> <span class=n>composeView</span><span class=p>.</span><span class=n>setTag</span><span class=p>(</span><span class=nc>R</span><span class=p>.</span><span class=n>id</span><span class=p>.</span><span class=n>wrapped_composition_tag</span><span class=p>,</span> <span class=k>it</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=n>wrapped</span><span class=p>.</span><span class=n>setContent</span><span class=p>(</span><span class=n>content</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>wrapped</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>WrappedComposition 的作用：</strong></p><p><code>WrappedComposition</code> 是一个包装类，它实现了以下功能：</p><ol><li><strong>生命周期管理</strong>：监听 <code>Lifecycle.Event.ON_CREATE</code> 和 <code>ON_DESTROY</code></li><li><strong>延迟初始化</strong>：确保在 <code>ON_CREATE</code> 事件后才真正执行组合</li><li><strong>CompositionLocal 提供</strong>：自动提供必要的 CompositionLocal（如 <code>LocalLifecycleOwner</code>）</li></ol><h2 id=33-执行组合从-setcontent-到-composer>3.3 执行组合：从 setContent 到 Composer</h2><p>创建 Composition 后，开始执行首次组合。</p><p><strong>调用链分析：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// 1. WrappedComposition.setContent()
+</span></span></span><span class=line><span class=cl><span class=c1>// Wrapper.android.kt:104
+</span></span></span><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>setContent</span><span class=p>(</span><span class=n>content</span><span class=p>:</span> <span class=nd>@Composable</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>owner</span><span class=p>.</span><span class=n>setOnReadyForComposition</span> <span class=p>{</span> <span class=n>composeViewContext</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(!</span><span class=n>disposed</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>val</span> <span class=py>lifecycle</span> <span class=p>=</span> <span class=n>composeViewContext</span><span class=p>.</span><span class=n>lifecycleOwner</span><span class=p>.</span><span class=n>lifecycle</span>
+</span></span><span class=line><span class=cl>            <span class=n>lastContent</span> <span class=p>=</span> <span class=n>content</span>
+</span></span><span class=line><span class=cl>            <span class=k>if</span> <span class=p>(</span><span class=n>addedToLifecycle</span> <span class=o>==</span> <span class=k>null</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                <span class=c1>// 添加生命周期观察者
+</span></span></span><span class=line><span class=cl>                <span class=n>addedToLifecycle</span> <span class=p>=</span> <span class=n>lifecycle</span>
+</span></span><span class=line><span class=cl>                <span class=n>lifecycle</span><span class=p>.</span><span class=n>addObserver</span><span class=p>(</span><span class=k>this</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>            <span class=p>}</span> <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>lifecycle</span><span class=p>.</span><span class=n>currentState</span><span class=p>.</span><span class=n>isAtLeast</span><span class=p>(</span><span class=nc>Lifecycle</span><span class=p>.</span><span class=nc>State</span><span class=p>.</span><span class=n>CREATED</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                <span class=c1>// 真正执行组合
+</span></span></span><span class=line><span class=cl>                <span class=n>original</span><span class=p>.</span><span class=n>setContent</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                    <span class=n>composeViewContext</span><span class=p>.</span><span class=n>ProvideCompositionLocals</span><span class=p>(</span><span class=n>owner</span><span class=p>,</span> <span class=n>content</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>                <span class=p>}</span>
+</span></span><span class=line><span class=cl>            <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 2. CompositionImpl.setContent()
+</span></span></span><span class=line><span class=cl><span class=c1>// Composition.kt:692
+</span></span></span><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>setContent</span><span class=p>(</span><span class=n>content</span><span class=p>:</span> <span class=nd>@Composable</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>wasDeactivated</span> <span class=p>=</span> <span class=n>clearDeactivated</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=n>ensureRunning</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>wasDeactivated</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>composeInitialWithReuse</span><span class=p>(</span><span class=n>content</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>composeInitial</span><span class=p>(</span><span class=n>content</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 3. CompositionImpl.composeInitial()
+</span></span></span><span class=line><span class=cl><span class=c1>// Composition.kt:726
+</span></span></span><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>composeInitial</span><span class=p>(</span><span class=n>content</span><span class=p>:</span> <span class=nd>@Composable</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>this</span><span class=p>.</span><span class=n>composable</span> <span class=p>=</span> <span class=n>content</span>
+</span></span><span class=line><span class=cl>    <span class=n>parent</span><span class=p>.</span><span class=n>composeInitial</span><span class=p>(</span><span class=k>this</span><span class=p>,</span> <span class=n>composable</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>parent 是什么？</strong></p><p><code>parent</code> 是 <code>CompositionContext</code>，对于根 composition 来说，它是一个 <code>Recomposer</code> 实例。<code>Recomposer</code> 负责管理所有注册到它的 composition，并在状态变化时调度重组。</p><h2 id=34-recomposercomposeinitial协调首次组合>3.4 Recomposer.composeInitial()：协调首次组合</h2><p><strong>源码分析：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span><span class=lnt>47
+</span><span class=lnt>48
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// Recomposer.kt:1158
+</span></span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>override</span> <span class=k>fun</span> <span class=nf>composeInitial</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>composition</span><span class=p>:</span> <span class=n>ControlledComposition</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>content</span><span class=p>:</span> <span class=nd>@Composable</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>,</span>
+</span></span><span class=line><span class=cl><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>composerWasComposing</span> <span class=p>=</span> <span class=n>composition</span><span class=p>.</span><span class=n>isComposing</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 1. 注册 composition
+</span></span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>newComposition</span> <span class=p>=</span> <span class=n>synchronized</span><span class=p>(</span><span class=n>stateLock</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>_state</span><span class=p>.</span><span class=k>value</span> <span class=p>&gt;</span> <span class=nc>State</span><span class=p>.</span><span class=n>ShuttingDown</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>val</span> <span class=py>new</span> <span class=p>=</span> <span class=n>composition</span> <span class=o>!in</span> <span class=n>knownCompositionsLocked</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>            <span class=k>if</span> <span class=p>(</span><span class=n>new</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                <span class=n>registerCompositionLocked</span><span class=p>(</span><span class=n>composition</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>            <span class=p>}</span>
+</span></span><span class=line><span class=cl>            <span class=n>new</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>true</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>try</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 2. 执行组合
+</span></span></span><span class=line><span class=cl>        <span class=n>composing</span><span class=p>(</span><span class=n>composition</span><span class=p>,</span> <span class=k>null</span><span class=p>)</span> <span class=p>{</span> <span class=n>composition</span><span class=p>.</span><span class=n>composeContent</span><span class=p>(</span><span class=n>content</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>catch</span> <span class=p>(</span><span class=n>e</span><span class=p>:</span> <span class=n>Throwable</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>newComposition</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>synchronized</span><span class=p>(</span><span class=n>stateLock</span><span class=p>)</span> <span class=p>{</span> <span class=n>unregisterCompositionLocked</span><span class=p>(</span><span class=n>composition</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=n>processCompositionError</span><span class=p>(</span><span class=n>e</span><span class=p>,</span> <span class=n>composition</span><span class=p>,</span> <span class=n>recoverable</span> <span class=p>=</span> <span class=k>true</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 3. 处理 movable content
+</span></span></span><span class=line><span class=cl>    <span class=k>try</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>performInitialMovableContentInserts</span><span class=p>(</span><span class=n>composition</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>catch</span> <span class=p>(</span><span class=n>e</span><span class=p>:</span> <span class=n>Throwable</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>processCompositionError</span><span class=p>(</span><span class=n>e</span><span class=p>,</span> <span class=n>composition</span><span class=p>,</span> <span class=n>recoverable</span> <span class=p>=</span> <span class=k>true</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 4. 应用变更
+</span></span></span><span class=line><span class=cl>    <span class=k>try</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>composition</span><span class=p>.</span><span class=n>applyChanges</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>        <span class=n>composition</span><span class=p>.</span><span class=n>applyLateChanges</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>catch</span> <span class=p>(</span><span class=n>e</span><span class=p>:</span> <span class=n>Throwable</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>processCompositionError</span><span class=p>(</span><span class=n>e</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>关键步骤详解：</strong></p><p><strong>步骤 1：注册 composition</strong></p><p>将 composition 添加到 Recomposer 管理的列表中，这样当状态变化时，Recomposer 可以通知它进行重组。</p><p><strong>步骤 2：执行组合</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=n>composing</span><span class=p>(</span><span class=n>composition</span><span class=p>,</span> <span class=k>null</span><span class=p>)</span> <span class=p>{</span> <span class=n>composition</span><span class=p>.</span><span class=n>composeContent</span><span class=p>(</span><span class=n>content</span><span class=p>)</span> <span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>这会调用 <code>CompositionImpl.composeContent()</code>，最终调用 <code>GapComposer.composeContent()</code>。</p><p><strong>步骤 3：处理 movable content</strong></p><p>如果组合中有 <code>movableContentOf</code>，需要在新位置插入内容。</p><p><strong>步骤 4：应用变更</strong></p><p>将生成的变更应用到 UI 树。</p><h2 id=35-composer-如何执行组合函数>3.5 Composer 如何执行组合函数</h2><p>现在我们深入到 <code>GapComposer</code> 内部，看它如何执行可组合函数。</p><p><strong>源码分析：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// GapComposer.kt (简化版)
+</span></span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>class</span> <span class=nc>GapComposer</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>applier</span><span class=p>:</span> <span class=n>Applier</span><span class=p>&lt;*&gt;,</span>
+</span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>parentContext</span><span class=p>:</span> <span class=n>CompositionContext</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>slotTable</span><span class=p>:</span> <span class=n>SlotTable</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>abandonSet</span><span class=p>:</span> <span class=n>MutableSet</span><span class=p>&lt;</span><span class=n>RememberObserver</span><span class=p>&gt;,</span>
+</span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>changes</span><span class=p>:</span> <span class=n>Changes</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>lateChanges</span><span class=p>:</span> <span class=n>Changes</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>composition</span><span class=p>:</span> <span class=n>CompositionImpl</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>observerHolder</span><span class=p>:</span> <span class=n>CompositionObserverHolder</span><span class=p>,</span>
+</span></span><span class=line><span class=cl><span class=p>)</span> <span class=p>:</span> <span class=n>InternalComposer</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>fun</span> <span class=nf>composeContent</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>        <span class=n>invalidationsRequested</span><span class=p>:</span> <span class=n>ScopeMap</span><span class=p>&lt;</span><span class=n>RecomposeScopeImpl</span><span class=p>,</span> <span class=n>Any</span><span class=p>&gt;,</span>
+</span></span><span class=line><span class=cl>        <span class=n>content</span><span class=p>:</span> <span class=nd>@Composable</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>        <span class=n>shouldPause</span><span class=p>:</span> <span class=n>ShouldPauseCallback</span><span class=p>?</span>
+</span></span><span class=line><span class=cl>    <span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>runtimeCheck</span><span class=p>(</span><span class=n>changes</span><span class=p>.</span><span class=n>isEmpty</span><span class=p>())</span> <span class=p>{</span> <span class=s2>&#34;Expected applyChanges() to have been called&#34;</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=k>this</span><span class=p>.</span><span class=n>shouldPauseCallback</span> <span class=p>=</span> <span class=n>shouldPause</span>
+</span></span><span class=line><span class=cl>        <span class=k>try</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=c1>// 核心逻辑委托给 doCompose() 执行
+</span></span></span><span class=line><span class=cl>            <span class=n>doCompose</span><span class=p>(</span><span class=n>invalidationsRequested</span><span class=p>,</span> <span class=n>content</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span> <span class=k>finally</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>this</span><span class=p>.</span><span class=n>shouldPauseCallback</span> <span class=p>=</span> <span class=k>null</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>doCompose() 方法内部流程：</strong></p><p><code>doCompose()</code> 是组合执行的核心方法，它负责：</p><ol><li>更新失效信息（<code>updateComposerInvalidations</code>）</li><li>启动根组合（<code>startRoot</code>）</li><li>执行可组合函数</li><li>结束组合（<code>endRoot</code>）</li></ol><p><strong>可组合函数的执行过程：</strong></p><p>每个可重启的 <code>@Composable</code> 函数在编译时会被插入 <code>startRestartGroup()</code> 和 <code>endRestartGroup()</code> 调用：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// 原始代码
+</span></span></span><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>MyComposable</span><span class=p>(</span><span class=n>text</span><span class=p>:</span> <span class=n>String</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>Text</span><span class=p>(</span><span class=n>text</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 编译后的代码（简化）
+</span></span></span><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>MyComposable</span><span class=p>(</span><span class=n>text</span><span class=p>:</span> <span class=n>String</span><span class=p>,</span> <span class=err>$</span><span class=n>composer</span><span class=p>:</span> <span class=n>Composer</span><span class=p>,</span> <span class=err>$</span><span class=n>changed</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// startRestartGroup 创建一个可重启的 scope
+</span></span></span><span class=line><span class=cl>    <span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>startRestartGroup</span><span class=p>(</span><span class=n>key</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// $changed 是位掩码，用于追踪哪些参数发生了变化
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 编译器会生成参数比较逻辑，如果参数未变化则跳过重组
+</span></span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=err>$</span><span class=n>changed</span> <span class=n>and</span> <span class=mb>0b0001</span> <span class=o>!=</span> <span class=mi>0</span> <span class=o>||</span> <span class=p>!</span><span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>skipping</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 参数变化或强制重组时执行
+</span></span></span><span class=line><span class=cl>        <span class=n>Text</span><span class=p>(</span><span class=n>text</span><span class=p>,</span> <span class=err>$</span><span class=n>composer</span><span class=p>,</span> <span class=mi>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 跳过重组
+</span></span></span><span class=line><span class=cl>        <span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>skipToGroupEnd</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// endRestartGroup 返回 ScopeUpdateScope，用于更新重组回调
+</span></span></span><span class=line><span class=cl>    <span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>endRestartGroup</span><span class=p>()</span><span class=o>?.</span><span class=n>updateScope</span> <span class=p>{</span> <span class=n>next</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>        <span class=n>MyComposable</span><span class=p>(</span><span class=n>text</span><span class=p>,</span> <span class=n>next</span><span class=p>,</span> <span class=err>$</span><span class=n>changed</span> <span class=n>or</span> <span class=mb>0b0001</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>$changed 参数的作用：</strong></p><p><code>$changed</code> 是一个位掩码（bitmask），用于追踪参数的变化状态：</p><ul><li>每个参数占用 2 个 bit：一个表示"是否可能变化"，一个表示"是否确实变化"</li><li>编译器通过比较当前值和缓存的值来确定参数是否变化</li><li>如果所有参数都未变化且没有强制 invalidation，则跳过重组</li></ul><p><strong>Group 的作用：</strong></p><ul><li><strong>标识</strong>：每个 group 有一个唯一的 key，标识对应的可组合函数</li><li><strong>层级</strong>：group 可以嵌套，形成树结构，对应 UI 树的层级</li><li><strong>状态存储</strong>：group 的 slots 可以存储 remember 的值、节点引用等</li></ul><h2 id=36-slottable-如何记录组合信息>3.6 SlotTable 如何记录组合信息</h2><p>SlotTable 是 Compose 运行时的核心数据结构，它存储了组合的所有信息。</p><p><strong>数据结构概览：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>SlotTable = {
+</span></span><span class=line><span class=cl>    groups: IntArray,      // 存储 group 的元数据
+</span></span><span class=line><span class=cl>    slots: Array&lt;Any?&gt;,    // 存储 group 的数据槽位
+</span></span><span class=line><span class=cl>}
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>// Anchor 通过 anchor(index) 方法创建，提供稳定的位置引用
+</span></span><span class=line><span class=cl>// 即使 SlotTable 发生插入/删除，Anchor 仍能准确定位到对应的 group
+</span></span></code></pre></td></tr></table></div></div><p><strong>Group 的存储结构：</strong></p><p>每个 group 在 <code>groups</code> 数组中占用固定数量的槽位（5 个）：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>groups 数组结构（每个 group 占 5 个 int）：
+</span></span><span class=line><span class=cl>[ key, groupInfo, parentAnchor, size, dataAnchor, ... ]
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>字段说明：
+</span></span><span class=line><span class=cl>- key: group 的标识 key
+</span></span><span class=line><span class=cl>- groupInfo: 位域，包含 node bit、mark bit、node count 等信息
+</span></span><span class=line><span class=cl>- parentAnchor: 父 group 的 anchor 引用
+</span></span><span class=line><span class=cl>- size: group 的总大小（包括自身和所有子 group）
+</span></span><span class=line><span class=cl>- dataAnchor: 数据槽位的 anchor 引用
+</span></span></code></pre></td></tr></table></div></div><p><strong>示例：一个简单的组合函数如何映射到 SlotTable</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>Example</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Hello&#34;</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>Button</span><span class=p>(</span><span class=n>onClick</span> <span class=p>=</span> <span class=p>{})</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Click me&#34;</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>生成的 SlotTable 结构：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>groups:
+</span></span><span class=line><span class=cl>┌────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ Group 0: key=100, node=null             │  ← Example 函数
+</span></span><span class=line><span class=cl>│   Group 1: key=101, node=TextComponent  │  ← Text(&#34;Hello&#34;)
+</span></span><span class=line><span class=cl>│   Group 2: key=102, node=ButtonComponent│  ← Button
+</span></span><span class=line><span class=cl>│     Group 3: key=103, node=TextComponent│  ← Text(&#34;Click me&#34;)
+</span></span><span class=line><span class=cl>└────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>slots:
+</span></span><span class=line><span class=cl>┌────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ Group 0 slots: []                       │
+</span></span><span class=line><span class=cl>│ Group 1 slots: [&#34;Hello&#34;]                │
+</span></span><span class=line><span class=cl>│ Group 2 slots: [onClick lambda]         │
+</span></span><span class=line><span class=cl>│ Group 3 slots: [&#34;Click me&#34;]             │
+</span></span><span class=line><span class=cl>└────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><p><strong>Gap Buffer 的作用：</strong></p><p>SlotTable 使用 Gap Buffer 实现，这使得：</p><ul><li><strong>高效插入</strong>：在当前位置附近插入 group 时，只需移动 Gap</li><li><strong>高效删除</strong>：删除 group 时，只需扩展 Gap</li><li><strong>批量操作</strong>：连续的插入/删除操作性能接近 O(1)</li></ul><p>关于 Gap Buffer 和 Anchor 的详细机制，请参考
+<a href=./Compose_Group_Anchor_Index_Mechanism.md>Compose Group Anchor Index Mechanism</a>。</p><h2 id=37-应用变更到-ui-树>3.7 应用变更到 UI 树</h2><p>组合完成后，需要将变更应用到实际的 UI 树。</p><p><strong>源码分析：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// Composition.kt:1078
+</span></span></span><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>applyChanges</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>guardChanges</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>synchronized</span><span class=p>(</span><span class=n>lock</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>if</span> <span class=p>(</span><span class=n>changes</span><span class=p>.</span><span class=n>isNotEmpty</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                <span class=c1>// 执行变更
+</span></span></span><span class=line><span class=cl>                <span class=n>changes</span><span class=p>.</span><span class=n>execute</span><span class=p>(</span><span class=n>slotStorage</span><span class=p>,</span> <span class=n>applier</span><span class=p>,</span> <span class=n>rememberManager</span><span class=p>,</span> <span class=n>composer</span><span class=p>.</span><span class=n>errorContext</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>                <span class=n>changes</span><span class=p>.</span><span class=n>clear</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>            <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>Changes 是什么？</strong></p><p>在组合过程中，Composer 会生成一个变更列表（Change List），包含对 UI 树的各种操作：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// Change 类型示例
+</span></span></span><span class=line><span class=cl><span class=k>typealias</span> <span class=n>Change</span> <span class=p>=</span> <span class=p>(</span><span class=n>applier</span><span class=p>:</span> <span class=n>Applier</span><span class=p>&lt;*&gt;,</span> <span class=n>slots</span><span class=p>:</span> <span class=n>SlotWriter</span><span class=p>,</span> <span class=n>rememberManager</span><span class=p>:</span> <span class=n>RememberManager</span><span class=p>)</span> <span class=o>-&gt;</span> <span class=n>Unit</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 常见的 Change 操作：
+</span></span></span><span class=line><span class=cl><span class=c1>// - insertTopDown(node): 从上到下插入节点
+</span></span></span><span class=line><span class=cl><span class=c1>// - insertBottomUp(node): 从下到上插入节点
+</span></span></span><span class=line><span class=cl><span class=c1>// - remove(node): 移除节点
+</span></span></span><span class=line><span class=cl><span class=c1>// - move(from, to): 移动节点
+</span></span></span><span class=line><span class=cl><span class=c1>// - update(node): 更新节点属性
+</span></span></span></code></pre></td></tr></table></div></div><p><strong>Applier 的作用：</strong></p><p><code>Applier</code> 接口定义了如何将变更应用到 UI 树：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// Applier.kt
+</span></span></span><span class=line><span class=cl><span class=k>interface</span> <span class=nc>Applier</span><span class=p>&lt;</span><span class=n>T</span><span class=p>&gt;</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>current</span><span class=p>:</span> <span class=n>T</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>onBeginChanges</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>onEndChanges</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>insertTopDown</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>instance</span><span class=p>:</span> <span class=n>T</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>insertBottomUp</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>instance</span><span class=p>:</span> <span class=n>T</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>remove</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>count</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>move</span><span class=p>(</span><span class=n>from</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>to</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>count</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>down</span><span class=p>(</span><span class=n>node</span><span class=p>:</span> <span class=n>T</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>up</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>clear</span><span class=p>()</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>UiApplier 的实现：</strong></p><p><code>UiApplier</code> 是针对 Compose UI 的实现，它操作 <code>LayoutNode</code> 树：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// UiApplier.android.kt
+</span></span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>class</span> <span class=nc>UiApplier</span><span class=p>(</span><span class=n>root</span><span class=p>:</span> <span class=n>LayoutNode</span><span class=p>)</span> <span class=p>:</span> <span class=n>AbstractApplier</span><span class=p>&lt;</span><span class=n>LayoutNode</span><span class=p>&gt;(</span><span class=n>root</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>fun</span> <span class=nf>insertTopDown</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>instance</span><span class=p>:</span> <span class=n>LayoutNode</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 忽略。实际的插入在 insertBottomUp 中执行
+</span></span></span><span class=line><span class=cl>        <span class=c1>// 这样可以避免子节点进入树时收到重复通知
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>fun</span> <span class=nf>insertBottomUp</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>instance</span><span class=p>:</span> <span class=n>LayoutNode</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 从下到上插入节点（子节点先于父节点被插入）
+</span></span></span><span class=line><span class=cl>        <span class=n>current</span><span class=p>.</span><span class=n>insertAt</span><span class=p>(</span><span class=n>index</span><span class=p>,</span> <span class=n>instance</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>fun</span> <span class=nf>remove</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>count</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 移除节点
+</span></span></span><span class=line><span class=cl>        <span class=n>current</span><span class=p>.</span><span class=n>removeAt</span><span class=p>(</span><span class=n>index</span><span class=p>,</span> <span class=n>count</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>fun</span> <span class=nf>move</span><span class=p>(</span><span class=n>from</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>to</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>count</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 移动节点
+</span></span></span><span class=line><span class=cl>        <span class=n>current</span><span class=p>.</span><span class=n>move</span><span class=p>(</span><span class=n>from</span><span class=p>,</span> <span class=n>to</span><span class=p>,</span> <span class=n>count</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>insertTopDown 与 insertBottomUp 的使用场景差异：</strong></p><ul><li><strong>insertTopDown</strong>：父节点先于子节点被插入。适用于大多数情况，特别是当父节点不需要知道子节点信息就能完成初始化时。</li><li><strong>insertBottomUp</strong>：子节点先于父节点被插入。适用于父节点需要依赖子节点信息的场景，例如某些布局需要先测量子节点才能确定自身尺寸。</li></ul><p><strong>UiApplier 选择 BottomUp 策略的原因：</strong></p><p>在 <code>UiApplier</code> 中，<code>insertTopDown</code> 是空实现，实际插入只在 <code>insertBottomUp</code> 中执行。这样做是为了避免子节点进入树时收到重复通知——如果使用 top-down 策略，父节点先插入会触发通知，然后每个子节点插入时又会向上传播通知，导致指数级的通知数量。使用 bottom-up 策略，通知数量与节点数量成线性关系。</p><p><strong>从 SlotTable 到 LayoutNode 树的转换：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>组合完成后的 SlotTable:
+</span></span><span class=line><span class=cl>┌────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ Group 0: Example                       │
+</span></span><span class=line><span class=cl>│   Group 1: Text(&#34;Hello&#34;)               │
+</span></span><span class=line><span class=cl>│   Group 2: Button                      │
+</span></span><span class=line><span class=cl>│     Group 3: Text(&#34;Click me&#34;)          │
+</span></span><span class=line><span class=cl>└────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>生成的 Changes:
+</span></span><span class=line><span class=cl>1. insertBottomUp(LayoutNode: Text(&#34;Hello&#34;))
+</span></span><span class=line><span class=cl>2. insertBottomUp(LayoutNode: Text(&#34;Click me&#34;))
+</span></span><span class=line><span class=cl>3. insertBottomUp(LayoutNode: Button)
+</span></span><span class=line><span class=cl>4. insertBottomUp(LayoutNode: Example)
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>应用后的 LayoutNode 树:
+</span></span><span class=line><span class=cl>┌────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ LayoutNode: Example (Box/Column/...)   │
+</span></span><span class=line><span class=cl>│   ├─ LayoutNode: Text(&#34;Hello&#34;)         │
+</span></span><span class=line><span class=cl>│   └─ LayoutNode: Button                │
+</span></span><span class=line><span class=cl>│       └─ LayoutNode: Text(&#34;Click me&#34;)  │
+</span></span><span class=line><span class=cl>└────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=四重组的触发机制>四、重组的触发机制</h1><p>重组的触发是 Compose 响应式编程模型的核心。当状态发生变化时，Compose 需要精确地知道哪些可组合函数需要重新执行。这个过程涉及多个组件的协作。</p><h2 id=41-state-与-snapshot-系统>4.1 State 与 Snapshot 系统</h2><p><strong>MutableState 的实现原理</strong></p><p><code>MutableState</code> 是 Compose 中最常用的状态类型。它的实现基于 Snapshot 系统，涉及以下类的协作：</p><ul><li><strong><code>StateObject</code></strong>：接口，定义了 <code>firstStateRecord</code> 属性，用于管理状态记录链表</li><li><strong><code>StateObjectImpl</code></strong>：抽象类，实现 <code>StateObject</code>，提供读取者类型追踪功能</li><li><strong><code>SnapshotMutableStateImpl</code></strong>：具体实现类，继承 <code>StateObjectImpl</code>，提供 <code>value</code> 的 getter/setter</li></ul><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// Snapshot.kt - StateObject 接口
+</span></span></span><span class=line><span class=cl><span class=k>public</span> <span class=k>interface</span> <span class=nc>StateObject</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 状态记录链表的头部
+</span></span></span><span class=line><span class=cl>    <span class=k>public</span> <span class=k>val</span> <span class=py>firstStateRecord</span><span class=p>:</span> <span class=n>StateRecord</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>public</span> <span class=k>fun</span> <span class=nf>prependStateRecord</span><span class=p>(</span><span class=k>value</span><span class=p>:</span> <span class=n>StateRecord</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// StateObjectImpl.kt - 抽象基类，提供读取者追踪
+</span></span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>abstract</span> <span class=k>class</span> <span class=nc>StateObjectImpl</span> <span class=k>internal</span> <span class=k>constructor</span><span class=p>()</span> <span class=p>:</span> <span class=n>StateObject</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 追踪在 Composition 或 SnapshotStateObserver 中被读取
+</span></span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>readerKind</span> <span class=p>=</span> <span class=n>AtomicInt</span><span class=p>(</span><span class=mi>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// SnapshotState.kt - MutableState 的具体实现
+</span></span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>open</span> <span class=k>class</span> <span class=nc>SnapshotMutableStateImpl</span><span class=p>&lt;</span><span class=n>T</span><span class=p>&gt;(</span>
+</span></span><span class=line><span class=cl>    <span class=k>value</span><span class=p>:</span> <span class=n>T</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>val</span> <span class=py>policy</span><span class=p>:</span> <span class=n>SnapshotMutationPolicy</span><span class=p>&lt;</span><span class=n>T</span><span class=p>&gt;,</span>
+</span></span><span class=line><span class=cl><span class=p>)</span> <span class=p>:</span> <span class=n>StateObjectImpl</span><span class=p>(),</span> <span class=n>SnapshotMutableState</span><span class=p>&lt;</span><span class=n>T</span><span class=p>&gt;</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 内部维护的状态记录链表头
+</span></span></span><span class=line><span class=cl>    <span class=c1>// StateStateRecord 存储 (snapshotId, value) 对
+</span></span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>var</span> <span class=py>next</span><span class=p>:</span> <span class=n>StateStateRecord</span><span class=p>&lt;</span><span class=n>T</span><span class=p>&gt;</span> <span class=p>=</span> <span class=n>StateStateRecord</span><span class=p>(</span><span class=n>currentSnapshot</span><span class=p>().</span><span class=n>snapshotId</span><span class=p>,</span> <span class=k>value</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// firstStateRecord 是一个 getter，返回链表头
+</span></span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>val</span> <span class=py>firstStateRecord</span><span class=p>:</span> <span class=n>StateRecord</span>
+</span></span><span class=line><span class=cl>        <span class=k>get</span><span class=p>()</span> <span class=p>=</span> <span class=n>next</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=nd>@Suppress</span><span class=p>(</span><span class=s2>&#34;UNCHECKED_CAST&#34;</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>var</span> <span class=py>value</span><span class=p>:</span> <span class=n>T</span>
+</span></span><span class=line><span class=cl>        <span class=k>get</span><span class=p>()</span> <span class=p>=</span> <span class=n>next</span><span class=p>.</span><span class=n>readable</span><span class=p>(</span><span class=k>this</span><span class=p>).</span><span class=k>value</span>
+</span></span><span class=line><span class=cl>        <span class=k>set</span><span class=p>(</span><span class=k>value</span><span class=p>)</span> <span class=p>=</span> <span class=n>next</span><span class=p>.</span><span class=n>withCurrent</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>if</span> <span class=p>(!</span><span class=n>policy</span><span class=p>.</span><span class=n>equivalent</span><span class=p>(</span><span class=k>it</span><span class=p>.</span><span class=k>value</span><span class=p>,</span> <span class=k>value</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                <span class=n>next</span><span class=p>.</span><span class=n>overwritable</span><span class=p>(</span><span class=k>this</span><span class=p>,</span> <span class=k>it</span><span class=p>)</span> <span class=p>{</span> <span class=k>this</span><span class=p>.</span><span class=k>value</span> <span class=p>=</span> <span class=k>value</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>            <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>StateRecord 的作用</strong></p><p>每个 <code>MutableState</code> 内部维护一个 <code>StateRecord</code>，它记录了：</p><ul><li>当前值</li><li>所属的 Snapshot ID</li><li>版本信息</li></ul><p><strong>Snapshot 的读写跟踪机制</strong></p><p>Snapshot 系统是 Compose 状态管理的基础。当读取或修改状态时，Snapshot 系统会记录这些操作，并在合适的时机触发重组。</p><p>当读取 <code>state.value</code> 时，Snapshot 系统会记录"在当前 snapshot 中读取了 state"，并返回对应 snapshot 版本的值。</p><p>当修改 <code>state.value = newValue</code> 时，Snapshot 系统会创建新的 StateRecord，记录"在当前 snapshot 中修改了 state"，并标记相关的 RecomposeScope 为 invalid。</p><h2 id=42-如何记录依赖关系>4.2 如何记录依赖关系</h2><p>在组合过程中，当读取状态时，Composer 会记录这个依赖关系。<code>CompositionImpl</code> 维护了一个 <code>observations</code> 映射表，记录了<strong>哪些 RecomposeScope 读取了哪些状态</strong>。</p><p><strong>依赖建立的流程：</strong></p><ol><li>Composer 执行到某个 composable 函数</li><li>函数内部读取 state.value</li><li>Snapshot 系统检测到状态读取</li><li>调用 composer.recordReadOf(state)</li><li>更新 observations: observations[state] += currentRecomposeScope</li></ol><h2 id=43-recomposescope-的作用>4.3 RecomposeScope 的作用</h2><p>可重启的可组合函数（restartable composable）会有一个 <code>RecomposeScope</code>，它跟踪该函数需要重组的条件。</p><p><strong>什么是可重启的 Composable？</strong></p><p>编译器会为符合以下条件的 composable 函数生成 <code>startRestartGroup()</code> 和 <code>endRestartGroup()</code> 调用：</p><ul><li>函数体直接使用了状态（读取 <code>state.value</code>）</li><li>函数有参数，且参数类型不是全不可变的</li></ul><p>内联的 composable lambda 或某些特殊情况下不会创建 scope。</p><p><strong>Scope 记录的信息：</strong></p><ul><li><strong>anchor</strong>：指向 SlotTable 中的 group，重组时从这里开始</li><li><strong>block</strong>：重组时需要执行的代码（编译器生成）</li><li><strong>trackedInstances</strong>：该 scope 读取的所有状态实例</li><li><strong>owner</strong>：负责管理这个 scope 的 Composition</li></ul><p><strong>RecomposeScope 的生命周期：</strong></p><ul><li><strong>首次组合</strong>：startRestartGroup() 创建 RecomposeScope → 执行 composable 函数并记录状态依赖 → endRestartGroup() 返回 scope</li><li><strong>状态变化</strong>：state.value 被修改 → scope.invalidate() 被调用 → 标记为需要重组</li><li><strong>重组</strong>：recompose() 通过 anchor 定位到 group → 执行 scope.block() 重新执行 composable 函数</li></ul><h2 id=44-状态变化如何触发重组>4.4 状态变化如何触发重组</h2><p>现在我们来看完整的状态变化触发重组的流程。</p><p><strong>完整流程：</strong></p><ol><li><strong>修改 state.value</strong>：用户代码修改状态，调用 <code>SnapshotMutableStateImpl</code> 的 setter</li><li><strong>Snapshot 写入观察者触发</strong>：setter 通过 <code>next.overwritable()</code> 写入新值，触发 <code>Snapshot.writeObserver</code></li><li><strong>通知状态观察者</strong>：Snapshot 系统通知所有观察该状态的组件（DerivedState、RecomposeScope）</li><li><strong>标记 RecomposeScope 为 invalid</strong>：查找到读取该状态的所有 scope，调用 <code>scope.invalidate()</code></li><li><strong>Recomposer 收集 invalidations</strong>：将需要重组的 scope 收集起来</li><li><strong>帧调度重组</strong>：Recomposer 在下一帧执行重组（与屏幕刷新对齐）</li><li><strong>执行重组</strong>：调用 <code>recompose()</code>，通过 anchor 定位并重新执行对应的 composable 函数</li></ol><hr><h1 id=五重组执行流程recomposition>五、重组执行流程（Recomposition）</h1><p>当状态变化被检测到，相关的 RecomposeScope 被标记为 invalid 后，Recomposer 会在合适的时机执行重组。</p><h2 id=51-recomposer-的调度机制>5.1 Recomposer 的调度机制</h2><p><strong>重组循环</strong></p><p>Recomposer 维护一个协程驱动的重组循环，不断地等待状态变化，然后执行重组。</p><p><strong>帧调度</strong></p><p>Compose 的重组与屏幕刷新帧对齐。这样做的好处：</p><ul><li><strong>性能优化</strong>：避免在单帧内多次重组</li><li><strong>一致性</strong>：重组结果与屏幕刷新同步</li><li><strong>节流</strong>：多次状态修改只触发一次重组</li></ul><h2 id=52-识别需要重组的-scopes>5.2 识别需要重组的 Scopes</h2><p>在执行重组前，需要先收集所有被标记为 invalid 的 scopes。对于 <code>DerivedState</code>，采用条件性 invalidation，只有在派生值真正变化时才触发重组。</p><h2 id=53-执行重组composer-的角色>5.3 执行重组：Composer 的角色</h2><p><strong>与首次组合的区别</strong></p><table><thead><tr><th>方面</th><th>首次组合</th><th>重组</th></tr></thead><tbody><tr><td>SlotTable</td><td>空的</td><td>已有数据</td></tr><tr><td>执行范围</td><td>所有 composable</td><td>只执行 invalid scopes</td></tr><tr><td>性能优化</td><td>无</td><td>可以跳过未变化的 group</td></tr><tr><td>Anchor</td><td>需要创建</td><td>已存在，用于定位</td></tr></tbody></table><p><strong>Composer 的智能跳过</strong></p><p>在重组时，Composer 会智能地跳过不需要重组的部分。只有当一个 scope 在 invalidations 列表中时，才会重新执行，否则直接跳过。</p><h2 id=54-智能重组如何避免不必要的工作>5.4 智能重组：如何避免不必要的工作</h2><p><strong>比较机制</strong></p><p>Composer 使用多种机制来判断是否需要重组：</p><ol><li><strong>Key 比较</strong>：每个 group 都有一个 key，如果 key 不匹配，说明组合结构发生了变化</li><li><strong>$changed 位掩码</strong>：编译器生成的参数变化追踪，用于判断参数是否需要重新比较</li><li><strong>Invalidation 标记</strong>：scope 是否被标记为 invalid（状态变化触发）</li></ol><p><strong>何时跳过重组，何时执行重组</strong></p><p>跳过重组的条件（全部满足）：</p><ol><li>group key 匹配</li><li>参数未变化</li><li>没有强制 invalidation</li><li>没有父 scope invalidation</li></ol><p>执行重组的条件（任一满足）：</p><ol><li>group key 不匹配（结构变化）</li><li>参数发生变化</li><li>scope 被 invalidation</li><li>父 scope 需要重组</li></ol><h2 id=55-增量更新-slottable>5.5 增量更新 SlotTable</h2><p>重组时，SlotTable 需要增量更新，而不是完全重建。</p><ul><li><strong>更新现有的 group</strong>：直接修改 slots 中的值</li><li><strong>插入新的 group</strong>：使用 beginInsert/endInsert 批量操作</li><li><strong>删除不再需要的 group</strong>：使用 removeGroup</li></ul><p>在插入和删除过程中，Anchor 自动维护其指向的位置。</p><h2 id=56-应用重组结果>5.6 应用重组结果</h2><p>重组完成后，需要将变更应用到 UI 树。</p><ul><li><strong>applyChanges()</strong>：应用主要变更</li><li><strong>applyLateChanges()</strong>：应用延迟变更（如 MovableContent）</li></ul><hr><h1 id=六重组的输入与输出>六、重组的输入与输出</h1><h2 id=61-重组的输入>6.1 重组的输入</h2><p>重组需要以下输入：</p><p><strong>状态（State）</strong></p><ul><li>MutableState.value 的当前值</li><li>CompositionLocal 的值</li><li>环境值（如 LocalContext）</li></ul><p><strong>组合函数</strong></p><ul><li>@Composable 函数的代码逻辑</li><li>参数值</li><li>$changed 标记（参数是否变化）</li></ul><p><strong>上下文环境</strong></p><ul><li>父 composition 的状态</li><li>SlotTable 的现有数据（重组时）</li><li>RecomposeScope 信息</li></ul><h2 id=62-重组的输出>6.2 重组的输出</h2><p>重组产生以下输出：</p><p><strong>SlotTable</strong></p><ul><li>更新后的 group 树</li><li>新的 anchor 引用</li><li>remember 的值</li></ul><p><strong>Change List</strong></p><ul><li>对 UI 树的操作指令</li><li>insert/remove/move 等</li></ul><p><strong>副作用（Side Effects）</strong></p><ul><li>LaunchedEffect：启动协程</li><li>DisposableEffect：管理生命周期</li><li>SideEffect：在组合完成后执行</li></ul><h2 id=63-数据流向图>6.3 数据流向图</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>输入                          处理                          输出
+</span></span><span class=line><span class=cl>┌─────────┐                ┌──────────┐                ┌──────────┐
+</span></span><span class=line><span class=cl>│ State   │ ──────────────&gt;│          │──────────────&gt;│SlotTable │
+</span></span><span class=line><span class=cl>│         │                │          │                │          │
+</span></span><span class=line><span class=cl>│Composable│ ──────────────&gt;│ Composer │──────────────&gt;│Changes   │
+</span></span><span class=line><span class=cl>│         │                │          │                │          │
+</span></span><span class=line><span class=cl>│SlotTable │ ──────────────&gt;│          │──────────────&gt;│Side FX   │
+</span></span><span class=line><span class=cl>└─────────┘                └──────────┘                └──────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=七其他关键概念>七、其他关键概念</h1><h2 id=71-compositioncontext>7.1 CompositionContext</h2><p><code>CompositionContext</code> 是连接 Composition 与 Recomposer 的桥梁。</p><p><strong>核心职责：</strong></p><ul><li><strong>组合上下文传递</strong>：为子 composition 提供父 composition 信息</li><li><strong>重组协调</strong>：管理 composition 的重组调度</li><li><strong>副作用管理</strong>：协调 LaunchedEffect、DisposableEffect 等副作用的生命周期</li></ul><p><strong>典型实现：</strong> <code>Recomposer</code> 类实现了 <code>CompositionContext</code> 接口，作为根 composition 的上下文。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// 创建子 composition 时需要父 context
+</span></span></span><span class=line><span class=cl><span class=k>val</span> <span class=py>childComposition</span> <span class=p>=</span> <span class=n>Composition</span><span class=p>(</span><span class=n>applier</span><span class=p>,</span> <span class=n>parentCompositionContext</span><span class=p>)</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=72-globalsnapshotmanager>7.2 GlobalSnapshotManager</h2><p><code>GlobalSnapshotManager</code> 管理全局 Snapshot 系统，是 Compose 响应式模型的基础设施。</p><p><strong>核心功能：</strong></p><ul><li><strong>监听状态变化</strong>：通过 <code>registerApplyObserver</code> 监听所有 snapshot 的 apply 操作</li><li><strong>触发重组</strong>：当状态变化时，通知 Recomposer 调度重组</li><li><strong>线程安全</strong>：确保在多线程环境下正确处理状态变化</li></ul><p><strong>工作流程：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>MutableState.value 修改
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>Snapshot apply
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>GlobalSnapshotManager 检测变化
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>通知 Recomposer.invalidate(scope)
+</span></span><span class=line><span class=cl>    ↓
+</span></span><span class=line><span class=cl>调度重组
+</span></span></code></pre></td></tr></table></div></div><h2 id=73-derivedstate-与条件重组>7.3 DerivedState 与条件重组</h2><p><code>derivedStateOf</code> 创建派生状态，实现高效的"条件性重组"。</p><p><strong>使用场景：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>val</span> <span class=py>items</span> <span class=k>by</span> <span class=n>remember</span> <span class=p>{</span> <span class=n>mutableStateOf</span><span class=p>(</span><span class=n>listOf</span><span class=p>(</span><span class=mi>1</span><span class=p>,</span> <span class=mi>2</span><span class=p>,</span> <span class=mi>3</span><span class=p>,</span> <span class=mi>4</span><span class=p>,</span> <span class=mi>5</span><span class=p>))</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=k>val</span> <span class=py>hasManyItems</span> <span class=k>by</span> <span class=n>remember</span> <span class=p>{</span> <span class=n>derivedStateOf</span> <span class=p>{</span> <span class=n>items</span><span class=p>.</span><span class=n>size</span> <span class=p>&gt;</span> <span class=mi>3</span> <span class=p>}</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 只有当 items.size 跨越 3 的阈值时，才会触发重组
+</span></span></span><span class=line><span class=cl><span class=c1>// 而不是每次 items 变化都触发重组
+</span></span></span></code></pre></td></tr></table></div></div><p><strong>实现原理：</strong></p><ul><li>内部维护一个"依赖快照"，记录计算结果</li><li>只有当依赖的状态变化导致计算结果真正改变时，才触发 invalidation</li><li>这是一种"选择性订阅"机制，减少不必要的重组</li></ul><h2 id=74-movablecontent>7.4 MovableContent</h2><p><code>MovableContent</code> 允许内容在 composition tree 中移动，同时保留其内部状态。</p><p><strong>典型使用场景：</strong></p><ul><li>列表项重新排序时保留状态</li><li>条件渲染导致的位置变化</li><li>动画过程中的内容移动</li></ul><p><strong>实现机制：</strong></p><ul><li>使用 <code>movableContentOf</code> 或 <code>movableContentWithReceiverOf</code> 创建</li><li>Compose 在 apply 阶段特殊处理移动操作</li><li>使用 <code>applyLateChanges()</code> 延迟应用移动相关的变更</li></ul><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>val</span> <span class=py>content</span> <span class=p>=</span> <span class=n>movableContentOf</span> <span class=p>{</span> <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Movable&#34;</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>if</span> <span class=p>(</span><span class=n>condition</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>Box</span> <span class=p>{</span> <span class=n>content</span><span class=p>()</span> <span class=p>}</span>  <span class=c1>// 内容在这里
+</span></span></span><span class=line><span class=cl><span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>Row</span> <span class=p>{</span> <span class=n>content</span><span class=p>()</span> <span class=p>}</span>  <span class=c1>// 内容移动到这里，状态保留
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=75-applier-的作用>7.5 Applier 的作用</h2><p><code>Applier</code> 定义了如何将组合产生的变更应用到实际的 UI 树。</p><p><strong>接口定义：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>interface</span> <span class=nc>Applier</span><span class=p>&lt;</span><span class=n>N</span><span class=p>&gt;</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>current</span><span class=p>:</span> <span class=n>N</span>  <span class=c1>// 当前节点
+</span></span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>onBeginChanges</span><span class=p>()</span>  <span class=c1>// 开始批量变更
+</span></span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>onEndChanges</span><span class=p>()</span>    <span class=c1>// 结束批量变更
+</span></span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>insertTopDown</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>instance</span><span class=p>:</span> <span class=n>N</span><span class=p>)</span>   <span class=c1>// 自顶向下插入
+</span></span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>insertBottomUp</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>instance</span><span class=p>:</span> <span class=n>N</span><span class=p>)</span>  <span class=c1>// 自底向上插入
+</span></span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>remove</span><span class=p>(</span><span class=n>index</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>count</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span>  <span class=c1>// 移除节点
+</span></span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>move</span><span class=p>(</span><span class=n>from</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>to</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=n>count</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span>  <span class=c1>// 移动节点
+</span></span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>up</span><span class=p>()</span>  <span class=c1>// 移动到父节点
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>UiApplier 特性：</strong></p><ul><li>操作 <code>LayoutNode</code> 树，对应 Compose UI 的渲染树</li><li><code>insertTopDown</code>：父节点先创建，适用于大多数场景</li><li><code>insertBottomUp</code>：子节点先创建，适用于需要测量子节点的布局</li></ul><h2 id=76-remember-机制>7.6 Remember 机制</h2><p><code>remember</code> 是 Compose 状态持久化的基础 API。</p><p><strong>核心变体：</strong></p><ul><li><strong><code>remember</code></strong>：在重组过程中保持值不变</li><li><strong><code>rememberSaveable</code></strong>：额外支持配置更改（屏幕旋转、进程重建）后恢复</li><li><strong><code>remember { mutableStateOf() }</code></strong>：创建带持久化的状态</li></ul><p><strong>工作原理：</strong></p><ul><li>值存储在 SlotTable 的 slots 数组中</li><li>通过 group 的 anchor 定位，重组时能找回之前的值</li><li><code>rememberSaveable</code> 使用 <code>SavedStateRegistry</code> 保存到 Bundle</li></ul><h2 id=77-sideeffect-与-launchedeffect>7.7 SideEffect 与 LaunchedEffect</h2><p>副作用 API 用于处理组合之外的"副作用"操作。</p><p><strong>SideEffect：</strong></p><ul><li>在组合成功完成后执行</li><li>用于同步状态给非 Compose 代码</li><li>每次重组都会执行</li></ul><p><strong>LaunchedEffect：</strong></p><ul><li>在组合时启动协程</li><li>当 key 变化时取消并重新启动</li><li>离开 composition 时自动取消</li></ul><p><strong>DisposableEffect：</strong></p><ul><li>需要手动管理生命周期</li><li>提供 <code>onDispose</code> 回调用于清理资源</li><li>适用于注册/取消注册监听器等场景</li></ul><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=n>DisposableEffect</span><span class=p>(</span><span class=n>lifecycle</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>observer</span> <span class=p>=</span> <span class=n>LifecycleEventObserver</span> <span class=p>{</span> <span class=n>_</span><span class=p>,</span> <span class=n>event</span> <span class=o>-&gt;</span> <span class=o>..</span><span class=p>.</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=n>lifecycle</span><span class=p>.</span><span class=n>addObserver</span><span class=p>(</span><span class=n>observer</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>onDispose</span> <span class=p>{</span> <span class=n>lifecycle</span><span class=p>.</span><span class=n>removeObserver</span><span class=p>(</span><span class=n>observer</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=78-compositionlocal>7.8 CompositionLocal</h2><p><code>CompositionLocal</code> 提供"隐式数据传递"机制，避免参数逐层传递。</p><p><strong>核心类型：</strong></p><ul><li><strong><code>ProvidedValue</code></strong>：显式提供的值</li><li><strong><code>DynamicProvidedValue</code></strong>：可动态更新的值</li><li><strong><code>StaticProvidedValue</code></strong>：静态值（优化路径）</li></ul><p><strong>使用方式：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// 定义
+</span></span></span><span class=line><span class=cl><span class=k>val</span> <span class=py>LocalTheme</span> <span class=p>=</span> <span class=n>compositionLocalOf</span> <span class=p>{</span> <span class=n>LightTheme</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 提供值
+</span></span></span><span class=line><span class=cl><span class=n>CompositionLocalProvider</span><span class=p>(</span><span class=n>LocalTheme</span> <span class=n>provides</span> <span class=n>DarkTheme</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 子树中可访问 DarkTheme
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 访问值
+</span></span></span><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>SomeComponent</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>theme</span> <span class=p>=</span> <span class=nc>LocalTheme</span><span class=p>.</span><span class=n>current</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>与重组的关系：</strong></p><ul><li><code>CompositionLocal</code> 值变化会触发订阅该值的所有 RecomposeScope 重组</li><li>编译器会追踪哪些 composable 读取了哪些 <code>CompositionLocal</code></li></ul><hr><h1 id=八总结与最佳实践>八、总结与最佳实践</h1><h2 id=81-重组机制总结>8.1 重组机制总结</h2><p><strong>输入 → 处理 → 输出</strong></p><ul><li><strong>输入</strong>：State + Composable + SlotTable</li><li><strong>处理</strong>：Composer 执行组合，生成变更</li><li><strong>输出</strong>：更新后的 SlotTable + Changes + Side Effects</li></ul><p><strong>流程</strong></p><ol><li>State 变化</li><li>Scope invalidate</li><li>Recomposer 调度</li><li>Composer 执行</li><li>Applier 应用</li></ol><h2 id=82-性能优化建议>8.2 性能优化建议</h2><ol><li><strong>合理使用 remember</strong>：缓存计算结果和对象</li><li><strong>避免不必要的重组</strong>：使用 <code>derivedStateOf</code>、<code>key</code> 等优化</li><li><strong>使用 key 优化列表</strong>：为列表项提供稳定的 key</li><li><strong>稳定性的重要性</strong>：标记 <code>@Stable</code> 或 <code>@Immutable</code> 帮助编译器优化</li></ol><h2 id=83-调试技巧>8.3 调试技巧</h2><ol><li><strong>查看重组次数</strong>：使用 Layout Inspector</li><li><strong>日志跟踪</strong>：添加日志观察重组频率</li><li><strong>性能分析</strong>：使用 Profiler 分析性能瓶颈</li></ol><hr><h1 id=九参考资料>九、参考资料</h1><ul><li>Compose Runtime 源码：<code>androidx/compose/runtime/</code></li><li><a href=./Compose_Group_Anchor_Index_Mechanism.md>Compose Group Anchor Index Mechanism</a></li><li>Gap Buffer 算法</li><li>Snapshot 系统</li></ul></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Jun 7, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026060701/ title="Compose 框架中的 Group Anchor 索引机制详解">Compose 框架中的 Group Anchor 索引机制详解</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
