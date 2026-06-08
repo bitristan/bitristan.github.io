@@ -1,0 +1,633 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Compose 核心概念：Group 与 Scope 详解</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.162.1"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Jun 8, 2026
+- 10 minute read</p><h1 class=entry-title>Compose 核心概念：Group 与 Scope 详解</h1></header><div class=entry-content><h1 id=概述>概述</h1><p>在 Jetpack Compose 的运行时实现中，<strong>Group</strong> 和 <strong>Scope</strong> 是两个核心概念。它们是 Compose 实现增量更新和智能重组的基础。本文将深入讲解这两个概念的工作原理。</p><h1 id=一groupslottable-的基本单元>一、Group：SlotTable 的基本单元</h1><h2 id=11-什么是-group>1.1 什么是 Group？</h2><p>Group 是 SlotTable 中存储 Composable 执行位置信息的基本单元。每个 Group 在 SlotTable 的 <code>groups</code> 数组中占用 <strong>5 个 Int</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>// SlotTable.kt:3892-3896
+</span></span><span class=line><span class=cl>//  0             | 1             | 2             | 3             | 4             |
+</span></span><span class=line><span class=cl>//  Key           | Group info    | Parent anchor | Size          | Data anchor   |
+</span></span></code></pre></td></tr></table></div></div><table><thead><tr><th>字段</th><th>说明</th></tr></thead><tbody><tr><td><strong>Key</strong></td><td>编译器生成的位置标识（基于源码位置）</td></tr><tr><td><strong>Group info</strong></td><td>位域：存储 isNode/hasObjectKey/hasAux 等标志 + nodeCount</td></tr><tr><td><strong>Parent anchor</strong></td><td>父 Group 的索引</td></tr><tr><td><strong>Size</strong></td><td>该 Group 占用的子 Group 数量</td></tr><tr><td><strong>Data anchor</strong></td><td>指向 slots 数组中的数据位置</td></tr></tbody></table><h2 id=12-group-的类型>1.2 Group 的类型</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// GroupKind.kt:26-36
+</span></span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>value</span> <span class=k>class</span> <span class=nc>GroupKind</span> <span class=k>private</span> <span class=k>constructor</span><span class=p>(</span><span class=k>val</span> <span class=py>value</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>companion</span> <span class=k>object</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>Group</span> <span class=p>=</span> <span class=n>GroupKind</span><span class=p>(</span><span class=mi>0</span><span class=p>)</span>         <span class=c1>// 普通分组
+</span></span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>Node</span> <span class=p>=</span> <span class=n>GroupKind</span><span class=p>(</span><span class=mi>1</span><span class=p>)</span>          <span class=c1>// UI 节点
+</span></span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>ReusableNode</span> <span class=p>=</span> <span class=n>GroupKind</span><span class=p>(</span><span class=mi>2</span><span class=p>)</span>  <span class=c1>// 可复用节点
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>编译器根据不同的代码结构生成不同类型的 Group：</p><table><thead><tr><th>Group 类型</th><th>API</th><th>使用场景</th><th>特点</th></tr></thead><tbody><tr><td><strong>RestartGroup</strong></td><td><code>startRestartGroup</code></td><td>可重组的 Composable 函数</td><td>创建 RecomposeScope，支持独立重组</td></tr><tr><td><strong>ReplaceGroup</strong></td><td><code>startReplaceGroup</code></td><td><code>if</code>/<code>when</code> 等条件分支</td><td>只能插入/删除/替换，不能移动</td></tr><tr><td><strong>MovableGroup</strong></td><td><code>startMovableGroup</code></td><td><code>key()</code> 包裹的循环内容</td><td>可以在兄弟节点间移动，保留状态</td></tr><tr><td><strong>Node Group</strong></td><td><code>startNode</code></td><td><code>ComposeNode</code>（如 <code>Text</code>）</td><td>对应一个 UI 节点</td></tr></tbody></table><h2 id=13-restartgroup可重组函数的包装>1.3 RestartGroup：可重组函数的包装</h2><p>每个可重组的 Composable 函数都会生成 RestartGroup：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// 用户代码
+</span></span></span><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>Counter</span><span class=p>(</span><span class=n>count</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Count: </span><span class=si>$count</span><span class=s2>&#34;</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>编译后生成：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>Counter</span><span class=p>(</span><span class=n>count</span><span class=p>:</span> <span class=n>Int</span><span class=p>,</span> <span class=err>$</span><span class=n>composer</span><span class=p>:</span> <span class=n>Composer</span><span class=p>,</span> <span class=err>$</span><span class=n>changed</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 1. 开始 RestartGroup
+</span></span></span><span class=line><span class=cl>    <span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>startRestartGroup</span><span class=p>(</span><span class=n>key</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 2. 检查是否可以跳过
+</span></span></span><span class=line><span class=cl>    <span class=k>var</span> <span class=py>dirty</span> <span class=p>=</span> <span class=err>$</span><span class=n>changed</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>changed</span><span class=p>(</span><span class=n>count</span><span class=p>))</span> <span class=n>dirty</span> <span class=p>=</span> <span class=n>dirty</span> <span class=n>or</span> <span class=mb>0b1</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>dirty</span> <span class=o>==</span> <span class=mi>0</span> <span class=o>&amp;&amp;</span> <span class=p>!</span><span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>skipping</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>skipToGroupEnd</span><span class=p>()</span>  <span class=c1>// 跳过执行
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Count: </span><span class=si>$count</span><span class=s2>&#34;</span><span class=p>,</span> <span class=err>$</span><span class=n>composer</span><span class=p>,</span> <span class=mi>0</span><span class=p>)</span>  <span class=c1>// 执行函数体
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// 3. 结束 RestartGroup，注册重组 lambda
+</span></span></span><span class=line><span class=cl>    <span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>endRestartGroup</span><span class=p>()</span><span class=o>?.</span><span class=n>updateScope</span> <span class=p>{</span> <span class=n>composer</span><span class=p>,</span> <span class=n>_</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>        <span class=n>Counter</span><span class=p>(</span><span class=n>count</span><span class=p>,</span> <span class=n>composer</span><span class=p>,</span> <span class=mb>0b1</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>关键源码：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// GapComposer.kt:2096-2105
+</span></span></span><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>startRestartGroup</span><span class=p>(</span><span class=n>key</span><span class=p>:</span> <span class=n>Int</span><span class=p>):</span> <span class=n>Composer</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>startReplaceGroup</span><span class=p>(</span><span class=n>key</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>addRecomposeScope</span><span class=p>()</span>  <span class=c1>// 创建 RecomposeScope
+</span></span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=k>this</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=14-replacegroup条件分支的处理>1.4 ReplaceGroup：条件分支的处理</h2><p><code>if</code>/<code>when</code> 等条件表达式会生成 ReplaceGroup：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// 用户代码
+</span></span></span><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>ConditionalExample</span><span class=p>(</span><span class=n>showText</span><span class=p>:</span> <span class=n>Boolean</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>showText</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Visible&#34;</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>编译后生成：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>ConditionalExample</span><span class=p>(</span><span class=n>showText</span><span class=p>:</span> <span class=n>Boolean</span><span class=p>,</span> <span class=err>$</span><span class=n>composer</span><span class=p>:</span> <span class=n>Composer</span><span class=p>,</span> <span class=err>$</span><span class=n>changed</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>startRestartGroup</span><span class=p>(</span><span class=n>key</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=c1>// if 分支开始
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>showText</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>startReplaceGroup</span><span class=p>(</span><span class=n>ifKey</span><span class=p>)</span>  <span class=c1>// ← ReplaceGroup
+</span></span></span><span class=line><span class=cl>        <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Visible&#34;</span><span class=p>,</span> <span class=err>$</span><span class=n>composer</span><span class=p>,</span> <span class=mi>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>endReplaceGroup</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>endRestartGroup</span><span class=p>()</span><span class=o>?.</span><span class=n>updateScope</span> <span class=p>{</span> <span class=o>..</span><span class=p>.</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>为什么条件分支需要 Group？</strong></p><p>当 <code>showText</code> 从 <code>true</code> 变为 <code>false</code> 时，Composer 需要知道：</p><ul><li>之前有一个 Group（Text 节点）</li><li>现在没有了</li><li>需要删除这个 Group 及其关联的节点</li></ul><p>ReplaceGroup 标记了这段代码的边界，使得 Composer 可以正确处理内容的添加和删除。</p><h2 id=15-movablegroup保留状态的移动>1.5 MovableGroup：保留状态的移动</h2><p><code>key()</code> 函数会生成 MovableGroup，用于在列表重排时保留状态：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// 用户代码
+</span></span></span><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>ItemList</span><span class=p>(</span><span class=n>items</span><span class=p>:</span> <span class=n>List</span><span class=p>&lt;</span><span class=n>String</span><span class=p>&gt;)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>items</span><span class=p>.</span><span class=n>forEach</span> <span class=p>{</span> <span class=n>item</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>        <span class=n>key</span><span class=p>(</span><span class=n>item</span><span class=p>)</span> <span class=p>{</span>  <span class=c1>// ← 创建 MovableGroup
+</span></span></span><span class=line><span class=cl>            <span class=n>Item</span><span class=p>(</span><span class=n>item</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>编译后生成：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=n>items</span><span class=p>.</span><span class=n>forEach</span> <span class=p>{</span> <span class=n>item</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>    <span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>startMovableGroup</span><span class=p>(</span><span class=n>loopKey</span><span class=p>,</span> <span class=n>item</span><span class=p>)</span>  <span class=c1>// ← MovableGroup，dataKey = item
+</span></span></span><span class=line><span class=cl>    <span class=n>Item</span><span class=p>(</span><span class=n>item</span><span class=p>,</span> <span class=err>$</span><span class=n>composer</span><span class=p>,</span> <span class=mi>0</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=err>$</span><span class=n>composer</span><span class=p>.</span><span class=n>endMovableGroup</span><span class=p>()</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>MovableGroup 的价值：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>假设 items 从 [&#34;A&#34;, &#34;B&#34;, &#34;C&#34;] 变成 [&#34;C&#34;, &#34;B&#34;, &#34;A&#34;]
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>使用 ReplaceGroup：
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ 删除 [A] → 剩余 [B, C]                       │
+</span></span><span class=line><span class=cl>│ 在末尾插入 [A] → [B, C, A]                  │
+</span></span><span class=line><span class=cl>│ 结果：A 的 remember 状态丢失！               │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>使用 MovableGroup（key = item）：
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ 根据 dataKey 识别每个 item                   │
+</span></span><span class=line><span class=cl>│ [A] 移动到最后 → [B, C, A]                  │
+</span></span><span class=line><span class=cl>│ 结果：A 的 remember 状态保留！               │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=16-node-groupui-节点的表示>1.6 Node Group：UI 节点的表示</h2><p>每个 <code>ComposeNode</code> 会生成 Node Group：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// 用户代码
+</span></span></span><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>TextExample</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Hello&#34;</span><span class=p>)</span>  <span class=c1>// 内部调用 ComposeNode
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>ComposeNode 的实现：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// Composables.kt
+</span></span></span><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>inline</span> <span class=k>fun</span> <span class=p>&lt;</span><span class=nc>T</span> <span class=p>:</span> <span class=nc>Any</span><span class=p>,</span> <span class=k>reified</span> <span class=nc>E</span> <span class=p>:</span> <span class=nc>Applier</span><span class=p>&lt;</span><span class=nc>T</span><span class=p>&gt;&gt;</span> <span class=nf>ComposeNode</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=k>noinline</span> <span class=n>factory</span><span class=p>:</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>T</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ...
+</span></span></span><span class=line><span class=cl><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>currentComposer</span><span class=p>.</span><span class=n>startNode</span><span class=p>()</span>  <span class=c1>// ← Node Group
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>currentComposer</span><span class=p>.</span><span class=n>inserting</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>currentComposer</span><span class=p>.</span><span class=n>createNode</span><span class=p>(</span><span class=n>factory</span><span class=p>)</span>  <span class=c1>// 首次：创建节点
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>currentComposer</span><span class=p>.</span><span class=n>useNode</span><span class=p>()</span>  <span class=c1>// 重组：复用节点
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ... 更新节点属性
+</span></span></span><span class=line><span class=cl>    <span class=n>currentComposer</span><span class=p>.</span><span class=n>endNode</span><span class=p>()</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>Node Group 与普通 Group 的区别是 <code>GroupInfo</code> 中的 <code>isNode</code> 位被设置，且 <code>DataAnchor</code> 指向 slots 数组中存储的 LayoutNode 对象。</p><hr><h1 id=二scope独立重组的最小单元>二、Scope：独立重组的最小单元</h1><h2 id=21-什么是-scope>2.1 什么是 Scope？</h2><p>Scope（RecomposeScope）是 Compose 中可以独立重组的最小单元。每个可重组的 Composable 函数都会创建一个 Scope，用于：</p><ol><li>记录该函数内读取了哪些状态</li><li>存储如何重新执行该函数的 lambda</li><li>管理该函数的失效/重组状态</li></ol><h2 id=22-scope-的数据结构>2.2 Scope 的数据结构</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// RecomposeScopeImpl.kt
+</span></span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>class</span> <span class=nc>RecomposeScopeImpl</span><span class=p>(</span><span class=k>internal</span> <span class=k>var</span> <span class=py>owner</span><span class=p>:</span> <span class=n>RecomposeScopeOwner</span><span class=p>?)</span> <span class=p>:</span>
+</span></span><span class=line><span class=cl>    <span class=n>ScopeUpdateScope</span><span class=p>,</span> <span class=n>RecomposeScope</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=cm>/** 指向 SlotTable 中的位置 */</span>
+</span></span><span class=line><span class=cl>    <span class=k>var</span> <span class=py>anchor</span><span class=p>:</span> <span class=n>Anchor</span><span class=p>?</span> <span class=p>=</span> <span class=k>null</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=cm>/** 重组时要执行的 lambda */</span>
+</span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>var</span> <span class=py>block</span><span class=p>:</span> <span class=p>((</span><span class=n>Composer</span><span class=p>,</span> <span class=n>Int</span><span class=p>)</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>)?</span> <span class=p>=</span> <span class=k>null</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=cm>/** 是否使用了状态（读取了 mutableState） */</span>
+</span></span><span class=line><span class=cl>    <span class=k>var</span> <span class=py>used</span><span class=p>:</span> <span class=n>Boolean</span> <span class=p>=</span> <span class=k>false</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=cm>/** 是否需要重组 */</span>
+</span></span><span class=line><span class=cl>    <span class=k>var</span> <span class=py>requiresRecompose</span><span class=p>:</span> <span class=n>Boolean</span> <span class=p>=</span> <span class=k>false</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=cm>/** 记录读取过的状态实例 */</span>
+</span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>var</span> <span class=py>trackedInstances</span><span class=p>:</span> <span class=n>MutableObjectIntMap</span><span class=p>&lt;</span><span class=n>Any</span><span class=p>&gt;?</span> <span class=p>=</span> <span class=k>null</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=cm>/** 执行重组 */</span>
+</span></span><span class=line><span class=cl>    <span class=k>fun</span> <span class=nf>compose</span><span class=p>(</span><span class=n>composer</span><span class=p>:</span> <span class=n>Composer</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>block</span><span class=o>?.</span><span class=n>invoke</span><span class=p>(</span><span class=n>composer</span><span class=p>,</span> <span class=mi>1</span><span class=p>)</span> <span class=o>?:</span> <span class=n>error</span><span class=p>(</span><span class=s2>&#34;Invalid restart scope&#34;</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=cm>/** 使 scope 失效，触发重组 */</span>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>fun</span> <span class=nf>invalidate</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>owner</span><span class=o>?.</span><span class=n>invalidate</span><span class=p>(</span><span class=k>this</span><span class=p>,</span> <span class=k>null</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=cm>/** 更新重组 lambda */</span>
+</span></span><span class=line><span class=cl>    <span class=k>override</span> <span class=k>fun</span> <span class=nf>updateScope</span><span class=p>(</span><span class=n>block</span><span class=p>:</span> <span class=p>(</span><span class=n>Composer</span><span class=p>,</span> <span class=n>Int</span><span class=p>)</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>this</span><span class=p>.</span><span class=n>block</span> <span class=p>=</span> <span class=n>block</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=23-scope-的创建时机>2.3 Scope 的创建时机</h2><p>Scope 在 <code>startRestartGroup</code> 时创建，在 <code>endRestartGroup</code> 时完成注册：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// GapComposer.kt:2102-2144
+</span></span></span><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>startRestartGroup</span><span class=p>(</span><span class=n>key</span><span class=p>:</span> <span class=n>Int</span><span class=p>):</span> <span class=n>Composer</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>startReplaceGroup</span><span class=p>(</span><span class=n>key</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>addRecomposeScope</span><span class=p>()</span>  <span class=c1>// 创建 Scope
+</span></span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=k>this</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>addRecomposeScope</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>inserting</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 首次 composition：创建新的 Scope
+</span></span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>scope</span> <span class=p>=</span> <span class=n>RecomposeScopeImpl</span><span class=p>(</span><span class=n>composition</span> <span class=k>as</span> <span class=n>CompositionImpl</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=n>invalidateStack</span><span class=p>.</span><span class=n>push</span><span class=p>(</span><span class=n>scope</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=n>updateValue</span><span class=p>(</span><span class=n>scope</span><span class=p>)</span>  <span class=c1>// 存入 SlotTable 的 slots 数组
+</span></span></span><span class=line><span class=cl>        <span class=n>enterRecomposeScope</span><span class=p>(</span><span class=n>scope</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 重组：从 SlotTable 读取已有的 Scope
+</span></span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>slot</span> <span class=p>=</span> <span class=n>reader</span><span class=p>.</span><span class=n>next</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>scope</span> <span class=p>=</span> <span class=n>slot</span> <span class=k>as</span> <span class=n>RecomposeScopeImpl</span>
+</span></span><span class=line><span class=cl>        <span class=n>invalidateStack</span><span class=p>.</span><span class=n>push</span><span class=p>(</span><span class=n>scope</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=n>enterRecomposeScope</span><span class=p>(</span><span class=n>scope</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h2 id=24-scope-与状态订阅>2.4 Scope 与状态订阅</h2><p><strong>示例代码：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>Example</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>count</span> <span class=k>by</span> <span class=n>remember</span> <span class=p>{</span> <span class=n>mutableStateOf</span><span class=p>(</span><span class=mi>0</span><span class=p>)</span> <span class=p>}</span>      <span class=c1>// State A
+</span></span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>name</span> <span class=k>by</span> <span class=n>remember</span> <span class=p>{</span> <span class=n>mutableStateOf</span><span class=p>(</span><span class=s2>&#34;Tom&#34;</span><span class=p>)</span> <span class=p>}</span>   <span class=c1>// State B
+</span></span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Count: </span><span class=si>$count</span><span class=s2>&#34;</span><span class=p>)</span>   <span class=c1>// 只读取 count
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>执行流程：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│  startRestartGroup(key)                                     │
+</span></span><span class=line><span class=cl>│      └─ 创建 RecomposeScope@1                               │
+</span></span><span class=line><span class=cl>│          └─ currentRecomposeScope = RecomposeScope@1        │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                           ↓
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│  Text(&#34;Count: $count&#34;)                                      │
+</span></span><span class=line><span class=cl>│      └─ 读取 count.value                                    │
+</span></span><span class=line><span class=cl>│          └─ SnapshotMutableStateImpl.value getter           │
+</span></span><span class=line><span class=cl>│              └─ snapshot.readObserver?.invoke(state)        │
+</span></span><span class=line><span class=cl>│                  └─ recordReadOf(state)                     │
+</span></span><span class=line><span class=cl>│                      └─ scope.recordRead(state)             │
+</span></span><span class=line><span class=cl>│                      └─ observations.add(state, scope)      │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  建立 mapping：MutableState@A (count) → RecomposeScope@1     │
+</span></span><span class=line><span class=cl>│                                                             │
+</span></span><span class=line><span class=cl>│  scope.used = true  // 标记这个 scope 使用了状态             │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                           ↓
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│  endRestartGroup()                                          │
+</span></span><span class=line><span class=cl>│      └─ 返回 ScopeUpdateScope (因为 scope.used = true)      │
+</span></span><span class=line><span class=cl>│      └─ updateScope { Example(composer, ...) }              │
+</span></span><span class=line><span class=cl>│          └─ scope.block = { Example(composer, ...) }        │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><p><strong>observations 映射表：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>observations (在 CompositionImpl 中) = {
+</span></span><span class=line><span class=cl>    MutableState@A (count) → [RecomposeScope@1],
+</span></span><span class=line><span class=cl>    MutableState@B (name)  → [RecomposeScope@2],  // 如果其他函数读取了 name
+</span></span><span class=line><span class=cl>}
+</span></span></code></pre></td></tr></table></div></div><h2 id=25-scope-触发重组>2.5 Scope 触发重组</h2><p>当状态变化时，Recomposer 通过 observations 映射找到订阅了该状态的 Scope，使其失效并触发重组：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│  count.value++                                              │
+</span></span><span class=line><span class=cl>│      └─ writeObserver(state)                                │
+</span></span><span class=line><span class=cl>│      └─ Snapshot.apply()                                    │
+</span></span><span class=line><span class=cl>│      └─ applyObserver { changed, _ -&gt;                       │
+</span></span><span class=line><span class=cl>│          snapshotInvalidations.add(changed)                 │
+</span></span><span class=line><span class=cl>│      }                                                      │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                           ↓
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│  Recomposer.recordComposerModifications()                   │
+</span></span><span class=line><span class=cl>│      └─ composition.recordModificationsOf({state})          │
+</span></span><span class=line><span class=cl>│          └─ observations.forEachScopeOf(state) { scope -&gt;   │
+</span></span><span class=line><span class=cl>│              scope.invalidate()                             │
+</span></span><span class=line><span class=cl>│          }                                                  │
+</span></span><span class=line><span class=cl>│          └─ RecomposeScope@1.invalidate()                   │
+</span></span><span class=line><span class=cl>│              └─ invalidations.add(RecomposeScope@1)         │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span><span class=line><span class=cl>                           ↓
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│  Recomposer.runRecomposeAndApplyChanges()                   │
+</span></span><span class=line><span class=cl>│      └─ composition.recompose()                             │
+</span></span><span class=line><span class=cl>│          └─ RecomposeScope@1.compose(composer)              │
+</span></span><span class=line><span class=cl>│              └─ scope.block?.invoke(composer, 1)            │
+</span></span><span class=line><span class=cl>│                  └─ Example(composer, ...)                  │
+</span></span><span class=line><span class=cl>│                      └─ 重新执行 Example 函数                │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><h2 id=26-scope-的粒度控制>2.6 Scope 的粒度控制</h2><p>不同函数 = 不同 Scope，实现精确的重组范围控制：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>Parent</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>count</span> <span class=k>by</span> <span class=n>remember</span> <span class=p>{</span> <span class=n>mutableStateOf</span><span class=p>(</span><span class=mi>0</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=n>Child1</span><span class=p>(</span><span class=n>count</span><span class=p>)</span>   <span class=c1>// Scope@1
+</span></span></span><span class=line><span class=cl>    <span class=n>Child2</span><span class=p>()</span>        <span class=c1>// Scope@2
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>Child1</span><span class=p>(</span><span class=n>count</span><span class=p>:</span> <span class=n>Int</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Count: </span><span class=si>$count</span><span class=s2>&#34;</span><span class=p>)</span>  <span class=c1>// Scope@1 订阅 count
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>Child2</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>name</span> <span class=k>by</span> <span class=n>remember</span> <span class=p>{</span> <span class=n>mutableStateOf</span><span class=p>(</span><span class=s2>&#34;Tom&#34;</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Name: </span><span class=si>$name</span><span class=s2>&#34;</span><span class=p>)</span>    <span class=c1>// Scope@2 订阅 name
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>Scope 树结构：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Parent Scope (root)
+</span></span><span class=line><span class=cl>├── Child1 Scope@1 (订阅 count)
+</span></span><span class=line><span class=cl>└── Child2 Scope@2 (订阅 name)
+</span></span></code></pre></td></tr></table></div></div><p><strong>当 count 变化时：</strong></p><ul><li>只有 Child1 Scope@1 重组</li><li>Child2 Scope@2 不受影响</li></ul><hr><h1 id=三group-与-scope-的关系>三、Group 与 Scope 的关系</h1><h2 id=31-restartgroup-包含-scope>3.1 RestartGroup 包含 Scope</h2><p><strong>不是所有 Group 都有 Scope，只有 RestartGroup 才会创建 Scope。</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Group 类型          是否创建 Scope
+</span></span><span class=line><span class=cl>─────────────────────────────────
+</span></span><span class=line><span class=cl>RestartGroup              ✅
+</span></span><span class=line><span class=cl>ReplaceGroup              ❌
+</span></span><span class=line><span class=cl>MovableGroup              ❌
+</span></span><span class=line><span class=cl>Node Group                ❌
+</span></span></code></pre></td></tr></table></div></div><h2 id=32-scope-存储在-group-的-slots-中>3.2 Scope 存储在 Group 的 slots 中</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// GapComposer.kt:2111-2113
+</span></span></span><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>addRecomposeScope</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>inserting</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>scope</span> <span class=p>=</span> <span class=n>RecomposeScopeImpl</span><span class=p>(</span><span class=n>composition</span> <span class=k>as</span> <span class=n>CompositionImpl</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=n>updateValue</span><span class=p>(</span><span class=n>scope</span><span class=p>)</span>  <span class=c1>// 存入当前 Group 的第一个 slot
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>SlotTable 结构：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>groups 数组:
+</span></span><span class=line><span class=cl>[0] RestartGroup(Example)
+</span></span><span class=line><span class=cl>    Key=123 | GroupInfo=... | Parent=0 | Size=... | DataAnchor=0
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>slots 数组:
+</span></span><span class=line><span class=cl>[0] RecomposeScope@1  ← Scope 存储在 Group 的第一个 slot
+</span></span><span class=line><span class=cl>[1] MutableState@A
+</span></span><span class=line><span class=cl>[2] LayoutNode@X
+</span></span></code></pre></td></tr></table></div></div><h2 id=33-完整示例>3.3 完整示例</h2><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=nd>@Composable</span>
+</span></span><span class=line><span class=cl><span class=k>fun</span> <span class=nf>Example</span><span class=p>(</span><span class=n>items</span><span class=p>:</span> <span class=n>List</span><span class=p>&lt;</span><span class=n>String</span><span class=p>&gt;)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>count</span> <span class=k>by</span> <span class=n>remember</span> <span class=p>{</span> <span class=n>mutableStateOf</span><span class=p>(</span><span class=mi>0</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>count</span> <span class=p>&gt;</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>Text</span><span class=p>(</span><span class=s2>&#34;Count: </span><span class=si>$count</span><span class=s2>&#34;</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=n>items</span><span class=p>.</span><span class=n>forEach</span> <span class=p>{</span> <span class=n>item</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>        <span class=n>key</span><span class=p>(</span><span class=n>item</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>Item</span><span class=p>(</span><span class=n>item</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>SlotTable 结构：</strong></p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>groups 数组 (每行 5 个 Int)
+</span></span><span class=line><span class=cl>┌─────────────────────────────────────────────────────────────────────────┐
+</span></span><span class=line><span class=cl>│ [0]  RestartGroup(Example)                                               │
+</span></span><span class=line><span class=cl>│      Key=123 | GroupInfo=0b000... | Parent=0 | Size=动态 | DataAnchor=0 │
+</span></span><span class=line><span class=cl>│      slots[0] = RecomposeScope@1  ← Scope                               │
+</span></span><span class=line><span class=cl>│      slots[1] = MutableState@A (count)                                  │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│ [1]  ReplaceGroup(if 分支)                                               │
+</span></span><span class=line><span class=cl>│      Key=456 | GroupInfo=0b000... | Parent=0 | Size=动态 | DataAnchor=2 │
+</span></span><span class=line><span class=cl>│      (当 count &gt; 0 时存在)                                               │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│ [2]  NodeGroup(Text)                                                     │
+</span></span><span class=line><span class=cl>│      Key=789 | GroupInfo=0b010... | Parent=1 | Size=1 | DataAnchor=3    │
+</span></span><span class=line><span class=cl>│      slots[3] = LayoutNode@X                                            │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│ [3]  MovableGroup(key(item))                                             │
+</span></span><span class=line><span class=cl>│      Key=abc | GroupInfo=0b001... | Parent=0 | Size=动态 | DataAnchor=4 │
+</span></span><span class=line><span class=cl>│      ObjectKey = &#34;item1&#34;                                                │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│ [4]  RestartGroup(Item)                                                  │
+</span></span><span class=line><span class=cl>│      Key=def | GroupInfo=0b000... | Parent=3 | Size=... | DataAnchor=5  │
+</span></span><span class=line><span class=cl>│      slots[5] = RecomposeScope@2  ← Scope                               │
+</span></span><span class=line><span class=cl>├─────────────────────────────────────────────────────────────────────────┤
+</span></span><span class=line><span class=cl>│ [5]  NodeGroup(Item 内部节点)                                            │
+</span></span><span class=line><span class=cl>│      Key=ghi | GroupInfo=0b010... | Parent=4 | Size=1 | DataAnchor=6    │
+</span></span><span class=line><span class=cl>│      slots[6] = LayoutNode@Y                                            │
+</span></span><span class=line><span class=cl>└─────────────────────────────────────────────────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><hr><h1 id=四总结>四、总结</h1><h2 id=group-与-scope-的对比>Group 与 Scope 的对比</h2><table><thead><tr><th>概念</th><th>Group</th><th>Scope</th></tr></thead><tbody><tr><td><strong>定义</strong></td><td>SlotTable 的基本存储单元</td><td>可独立重组的最小单元</td></tr><tr><td><strong>创建时机</strong></td><td>每个 <code>startXxxGroup()</code></td><td>仅 <code>startRestartGroup()</code></td></tr><tr><td><strong>数量关系</strong></td><td>多个 Group 可能对应一个 Scope</td><td>每个 Scope 对应一个 RestartGroup</td></tr><tr><td><strong>主要作用</strong></td><td>标记代码执行位置，组织数据</td><td>管理重组范围，记录状态订阅</td></tr><tr><td><strong>存储位置</strong></td><td>groups 数组（5 个 Int）</td><td>slots 数组（第一个 slot）</td></tr></tbody></table><h2 id=group-的本质>Group 的本质</h2><ol><li><strong>位置标识</strong>：在 SlotTable 中标记代码执行位置</li><li><strong>状态分组</strong>：将相关的 remember、状态等数据组织在一起</li><li><strong>增量更新</strong>：通过对比 Group key 决定复用/删除/插入</li><li><strong>生命周期管理</strong>：Group 创建时初始化，删除时清理</li></ol><h2 id=scope-的本质>Scope 的本质</h2><ol><li><strong>重组边界</strong>：定义可以独立重组的代码范围</li><li><strong>状态追踪</strong>：记录该范围内读取的所有状态</li><li><strong>重组触发</strong>：当订阅的状态变化时，精确触发对应的 Scope 重组</li><li><strong>性能优化</strong>：避免全局重组，只更新受影响的部分</li></ol><h2 id=不是每个-composable-都生成-group>不是每个 @Composable 都生成 Group</h2><table><thead><tr><th>情况</th><th>是否生成 Group</th><th>生成什么 Group</th></tr></thead><tbody><tr><td><strong>可重组函数</strong></td><td>✅</td><td>RestartGroup</td></tr><tr><td><strong>inline 函数</strong></td><td>❌</td><td>无（被内联展开）</td></tr><tr><td><strong>条件表达式</strong></td><td>✅</td><td>ReplaceGroup</td></tr><tr><td><strong>key() 循环</strong></td><td>✅</td><td>MovableGroup</td></tr><tr><td><strong>ComposeNode</strong></td><td>✅</td><td>Node Group</td></tr></tbody></table><hr><h1 id=参考资料>参考资料</h1><ul><li><p><strong>源码位置</strong>：</p><ul><li>Group 定义：<code>SlotTable.kt:3888-3938</code></li><li>GroupKind：<code>GroupKind.kt</code></li><li>Group API：<code>Composer.kt:255-370</code></li><li>Scope 实现：<code>RecomposeScopeImpl.kt</code></li><li>Scope 创建：<code>GapComposer.kt:2096-2144</code></li></ul></li><li><p><strong>关键概念</strong>：</p><ul><li>SlotTable 双数组结构：groups (IntArray) + slots (Array&lt;Any?>)</li><li>GroupInfo 位域：isNode/hasObjectKey/hasAux/nodeCount</li><li>observations 映射：StateObject → RecomposeScope</li></ul></li></ul></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Jun 8, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026060702/ title="Compose 重组机制深度解析">Compose 重组机制深度解析</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
