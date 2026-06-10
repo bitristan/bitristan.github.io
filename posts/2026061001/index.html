@@ -1,0 +1,695 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Jetpack Compose Snapshot 系统：架构设计与实现原理深度解析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.163.0"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Jun 10, 2026
+- 15 minute read</p><h1 class=entry-title>Jetpack Compose Snapshot 系统：架构设计与实现原理深度解析</h1></header><div class=entry-content><h2 id=jetpack-compose-snapshot-系统架构设计与实现原理深度解析>Jetpack Compose Snapshot 系统：架构设计与实现原理深度解析</h2><p>Jetpack Compose 的声明式 UI 模型建立在一个精巧的状态管理基础设施之上 —— Snapshot（快照）系统。它借鉴了数据库领域成熟的 MVCC（多版本并发控制）思想，在不依赖显式锁的前提下，为 Compose 的重组机制提供了线程安全的状态读写、精确的变更追踪以及高效的失效通知能力。</p><p>本文将从源码层面深入剖析 Snapshot 系统的核心数据结构、MVCC 实现细节、快照生命周期、冲突检测与解决机制，以及它如何与 Composition 和 SnapshotStateObserver 协作完成从"状态变更"到"UI 重组"的完整闭环。</p><hr><h3 id=一为什么需要-snapshot>一、为什么需要 Snapshot？</h3><p>在传统的 Android View 体系中，状态与 UI 的同步通常依赖手动调用 <code>invalidate()</code> 或 <code>notifyDataSetChanged()</code>。Compose 采用了声明式模型：UI 是状态的函数，状态变化时框架自动重新计算差异并更新视图树。这要求运行时解决三个核心问题：</p><p><strong>状态隔离</strong> —— 多个 Composable 函数可能在同一帧内并发读取和修改状态，需要保证每个 Composable 看到的是一致性的状态视图，而非被其他并发操作中途修改的"脏"数据。</p><p><strong>变更追踪</strong> —— 运行时必须精确知道哪些状态被哪些 Composable 读取了，才能在状态变化时只重新执行受影响的作用域，而非整棵组合树。</p><p><strong>线程安全</strong> —— Compose 允许从任意线程修改状态（例如网络回调更新 <code>mutableStateOf</code>），但组合和布局通常在主线程执行，两者之间需要无锁协调。</p><p>Snapshot 系统用一个统一的抽象同时解决了这三个问题。它的核心思想是：每次对状态的读写都发生在一个"快照"上下文中，快照看到的是一致性的状态快照（类似数据库事务的快照隔离），写操作被缓冲在当前快照中直到显式提交，提交时通过三方合并检测冲突。</p><hr><h3 id=二核心数据结构>二、核心数据结构</h3><h4 id=21-staterecord-链表--多版本的物理存储>2.1 StateRecord 链表 —— 多版本的物理存储</h4><p>Snapshot 系统的基石是 <code>StateRecord</code> 链表。每个 <code>StateObject</code>（例如 <code>MutableState&lt;T></code> 的内部实现）维护一条由 <code>StateRecord</code> 节点组成的链表，每个节点代表该状态对象在某个快照版本中的值。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// Snapshot.kt
+</span></span></span><span class=line><span class=cl><span class=k>public</span> <span class=k>abstract</span> <span class=k>class</span> <span class=nc>StateRecord</span><span class=p>(</span><span class=k>internal</span> <span class=k>var</span> <span class=py>snapshotId</span><span class=p>:</span> <span class=n>SnapshotId</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>internal</span> <span class=k>var</span> <span class=py>next</span><span class=p>:</span> <span class=n>StateRecord</span><span class=p>?</span> <span class=p>=</span> <span class=k>null</span>
+</span></span><span class=line><span class=cl>    <span class=k>public</span> <span class=k>abstract</span> <span class=k>fun</span> <span class=nf>assign</span><span class=p>(</span><span class=k>value</span><span class=p>:</span> <span class=n>StateRecord</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>public</span> <span class=k>abstract</span> <span class=k>fun</span> <span class=nf>create</span><span class=p>():</span> <span class=n>StateRecord</span>
+</span></span><span class=line><span class=cl>    <span class=k>public</span> <span class=k>open</span> <span class=k>fun</span> <span class=nf>create</span><span class=p>(</span><span class=n>snapshotId</span><span class=p>:</span> <span class=n>SnapshotId</span><span class=p>):</span> <span class=n>StateRecord</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>这是一个典型的 MVCC 版本链：新版本被插入链表头部，旧版本保留在链表中供仍然打开的旧快照读取。不同快照根据各自的 <code>snapshotId</code> 和 <code>invalid</code> 集合，在链表中找到对自己"可见"的那个版本。</p><h4 id=22-snapshotid-与-snapshotidset>2.2 SnapshotId 与 SnapshotIdSet</h4><p>每个快照在创建时被分配一个全局单调递增的 <code>SnapshotId</code>（实际上就是一个 <code>Int</code>）。<code>SnapshotIdSet</code> 是一个不可变的位集合，用于记录"哪些快照 ID 当前是无效的（未提交的）"：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// SnapshotIdSet.kt
+</span></span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>class</span> <span class=nc>SnapshotIdSet</span>
+</span></span><span class=line><span class=cl><span class=k>private</span> <span class=k>constructor</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>upperSet</span><span class=p>:</span> <span class=n>Long</span><span class=p>,</span>     <span class=c1>// bits [lowerBound+64, lowerBound+127]
+</span></span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>lowerSet</span><span class=p>:</span> <span class=n>Long</span><span class=p>,</span>     <span class=c1>// bits [lowerBound, lowerBound+63]
+</span></span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>lowerBound</span><span class=p>:</span> <span class=n>SnapshotId</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=k>private</span> <span class=k>val</span> <span class=py>belowBound</span><span class=p>:</span> <span class=n>SnapshotIdArray</span><span class=p>?,</span>
+</span></span><span class=line><span class=cl><span class=p>)</span>
+</span></span></code></pre></td></tr></table></div></div><p>它对最近的 128 个 ID 做了位运算优化（O(1) 查询），更早的 ID 退化为有序数组查找。所有修改操作都返回新实例，保证了不可变性和线程安全。</p><h4 id=23-snapshot-类层次>2.3 Snapshot 类层次</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>Snapshot (sealed)
+</span></span><span class=line><span class=cl>├── MutableSnapshot (open)
+</span></span><span class=line><span class=cl>│   ├── GlobalSnapshot         // 全局单例，代表全局状态
+</span></span><span class=line><span class=cl>│   ├── NestedMutableSnapshot  // 嵌套的可变子快照
+</span></span><span class=line><span class=cl>│   └── TransparentObserverMutableSnapshot  // 透明观察者（不引入隔离，仅增加 observer）
+</span></span><span class=line><span class=cl>├── ReadonlySnapshot
+</span></span><span class=line><span class=cl>├── NestedReadonlySnapshot
+</span></span><span class=line><span class=cl>└── TransparentObserverSnapshot
+</span></span></code></pre></td></tr></table></div></div><p>每个 <code>Snapshot</code> 实例携带四个关键字段：<code>snapshotId</code>（唯一标识）、<code>invalid</code>（该快照认为"不可见"的 ID 集合）、<code>readObserver</code>（读操作回调）和 <code>writeObserver</code>（写操作回调）。</p><p><code>GlobalSnapshot</code> 是一个特殊的 <code>MutableSnapshot</code> 单例，代表全局已提交的状态。它不能被直接 <code>apply()</code>，而是通过 <code>advanceGlobalSnapshot()</code> 函数在全局锁内被"推进"。</p><hr><h3 id=三mvcc-读写机制>三、MVCC 读写机制</h3><h4 id=31-可见性判定--valid-函数>3.1 可见性判定 —— <code>valid()</code> 函数</h4><p>一个 <code>StateRecord</code> 对某个快照是否"可见"，由三条规则决定：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>valid</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>currentSnapshot</span><span class=p>:</span> <span class=n>SnapshotId</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>candidateSnapshot</span><span class=p>:</span> <span class=n>SnapshotId</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>invalid</span><span class=p>:</span> <span class=n>SnapshotIdSet</span><span class=p>,</span>
+</span></span><span class=line><span class=cl><span class=p>):</span> <span class=n>Boolean</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>candidateSnapshot</span> <span class=o>!=</span> <span class=n>INVALID_SNAPSHOT</span> <span class=o>&amp;&amp;</span>     <span class=c1>// 不是哨兵值 0
+</span></span></span><span class=line><span class=cl>        <span class=n>candidateSnapshot</span> <span class=o>&lt;=</span> <span class=n>currentSnapshot</span> <span class=o>&amp;&amp;</span>          <span class=c1>// 不能读&#34;未来&#34;的版本
+</span></span></span><span class=line><span class=cl>        <span class=o>!in</span><span class=n>valid</span><span class=p>.</span><span class=k>get</span><span class=p>(</span><span class=n>candidateSnapshot</span><span class=p>)</span>                  <span class=c1>// 不在无效集合中
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>直觉上：一个快照只能看到在它创建之前已经提交的版本，看不到其他尚未提交的并发快照写入的版本。</p><h4 id=32-读操作--readable-与读观察者>3.2 读操作 —— <code>readable()</code> 与读观察者</h4><p><code>readable()</code> 遍历 <code>StateRecord</code> 链表，找到对当前快照可见的、<code>snapshotId</code> 最大的那个节点：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=p>&lt;</span><span class=nc>T</span> <span class=p>:</span> <span class=nc>StateRecord</span><span class=p>&gt;</span> <span class=nf>readable</span><span class=p>(</span><span class=n>r</span><span class=p>:</span> <span class=n>T</span><span class=p>,</span> <span class=n>id</span><span class=p>:</span> <span class=n>SnapshotId</span><span class=p>,</span> <span class=n>invalid</span><span class=p>:</span> <span class=n>SnapshotIdSet</span><span class=p>):</span> <span class=n>T</span><span class=p>?</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>var</span> <span class=py>current</span><span class=p>:</span> <span class=n>StateRecord</span><span class=p>?</span> <span class=p>=</span> <span class=n>r</span>
+</span></span><span class=line><span class=cl>    <span class=k>var</span> <span class=py>candidate</span><span class=p>:</span> <span class=n>StateRecord</span><span class=p>?</span> <span class=p>=</span> <span class=k>null</span>
+</span></span><span class=line><span class=cl>    <span class=k>while</span> <span class=p>(</span><span class=n>current</span> <span class=o>!=</span> <span class=k>null</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>valid</span><span class=p>(</span><span class=n>current</span><span class=p>,</span> <span class=n>id</span><span class=p>,</span> <span class=n>invalid</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>candidate</span> <span class=p>=</span>
+</span></span><span class=line><span class=cl>                <span class=k>if</span> <span class=p>(</span><span class=n>candidate</span> <span class=o>==</span> <span class=k>null</span><span class=p>)</span> <span class=n>current</span>
+</span></span><span class=line><span class=cl>                <span class=k>else</span> <span class=k>if</span> <span class=p>(</span><span class=n>candidate</span><span class=p>.</span><span class=n>snapshotId</span> <span class=p>&lt;</span> <span class=n>current</span><span class=p>.</span><span class=n>snapshotId</span><span class=p>)</span> <span class=n>current</span> <span class=k>else</span> <span class=n>candidate</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=n>current</span> <span class=p>=</span> <span class=n>current</span><span class=p>.</span><span class=n>next</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>candidate</span> <span class=k>as</span> <span class=n>T</span><span class=p>?</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>公开的扩展函数在查找前触发 <code>readObserver</code>，这是变更追踪的起点：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>public</span> <span class=k>fun</span> <span class=p>&lt;</span><span class=nc>T</span> <span class=p>:</span> <span class=nc>StateRecord</span><span class=p>&gt;</span> <span class=nf>T</span><span class=p>.</span><span class=n>readable</span><span class=p>(</span><span class=n>state</span><span class=p>:</span> <span class=n>StateObject</span><span class=p>):</span> <span class=n>T</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>snapshot</span> <span class=p>=</span> <span class=nc>Snapshot</span><span class=p>.</span><span class=n>current</span>
+</span></span><span class=line><span class=cl>    <span class=n>snapshot</span><span class=p>.</span><span class=n>readObserver</span><span class=o>?.</span><span class=n>invoke</span><span class=p>(</span><span class=n>state</span><span class=p>)</span>       <span class=c1>// 通知观察者：某个状态被读取了
+</span></span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>readable</span><span class=p>(</span><span class=k>this</span><span class=p>,</span> <span class=n>snapshot</span><span class=p>.</span><span class=n>snapshotId</span><span class=p>,</span> <span class=n>snapshot</span><span class=p>.</span><span class=n>invalid</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=o>?:</span> <span class=n>sync</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>val</span> <span class=py>syncSnapshot</span> <span class=p>=</span> <span class=nc>Snapshot</span><span class=p>.</span><span class=n>current</span>
+</span></span><span class=line><span class=cl>            <span class=n>readable</span><span class=p>(</span><span class=n>state</span><span class=p>.</span><span class=n>firstStateRecord</span> <span class=k>as</span> <span class=n>T</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                     <span class=n>syncSnapshot</span><span class=p>.</span><span class=n>snapshotId</span><span class=p>,</span> <span class=n>syncSnapshot</span><span class=p>.</span><span class=n>invalid</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>                <span class=o>?:</span> <span class=n>readError</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>注意 fallback 路径：如果在无锁状态下找不到可见记录（可能是因为并发写入导致链表正在被修改），代码会在全局锁内重试一次。</p><h4 id=33-写操作--copy-on-write-策略>3.3 写操作 —— Copy-on-Write 策略</h4><p>写操作遵循写时复制（Copy-on-Write）原则。<code>writableRecord()</code> 的逻辑如下：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>internal</span> <span class=k>fun</span> <span class=p>&lt;</span><span class=nc>T</span> <span class=p>:</span> <span class=nc>StateRecord</span><span class=p>&gt;</span> <span class=nf>T</span><span class=p>.</span><span class=n>writableRecord</span><span class=p>(</span><span class=n>state</span><span class=p>:</span> <span class=n>StateObject</span><span class=p>,</span> <span class=n>snapshot</span><span class=p>:</span> <span class=n>Snapshot</span><span class=p>):</span> <span class=n>T</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>id</span> <span class=p>=</span> <span class=n>snapshot</span><span class=p>.</span><span class=n>snapshotId</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>readData</span> <span class=p>=</span> <span class=n>readable</span><span class=p>(</span><span class=k>this</span><span class=p>,</span> <span class=n>id</span><span class=p>,</span> <span class=n>snapshot</span><span class=p>.</span><span class=n>invalid</span><span class=p>)</span> <span class=o>?:</span> <span class=n>sync</span> <span class=p>{</span> <span class=cm>/* fallback */</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 如果可读记录就是当前快照创建的，直接可写
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>readData</span><span class=p>.</span><span class=n>snapshotId</span> <span class=o>==</span> <span class=n>snapshot</span><span class=p>.</span><span class=n>snapshotId</span><span class=p>)</span> <span class=k>return</span> <span class=n>readData</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 否则，创建一个新的副本，挂到链表头部
+</span></span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>newData</span> <span class=p>=</span> <span class=n>sync</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>newReadData</span> <span class=p>=</span> <span class=n>readable</span><span class=p>(</span><span class=n>state</span><span class=p>.</span><span class=n>firstStateRecord</span><span class=p>,</span> <span class=n>id</span><span class=p>,</span> <span class=n>snapshot</span><span class=p>.</span><span class=n>invalid</span><span class=p>)</span> <span class=o>?:</span> <span class=n>readError</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>newReadData</span><span class=p>.</span><span class=n>snapshotId</span> <span class=o>==</span> <span class=n>id</span><span class=p>)</span> <span class=n>newReadData</span>
+</span></span><span class=line><span class=cl>        <span class=k>else</span> <span class=n>newReadData</span><span class=p>.</span><span class=n>newWritableRecordLocked</span><span class=p>(</span><span class=n>state</span><span class=p>,</span> <span class=n>snapshot</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>as</span> <span class=n>T</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 仅当记录不属于预存快照时才标记为已修改
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>readData</span><span class=p>.</span><span class=n>snapshotId</span> <span class=o>!=</span> <span class=nc>Snapshot</span><span class=p>.</span><span class=nc>PreexistingSnapshotId</span><span class=p>.</span><span class=n>toSnapshotId</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>snapshot</span><span class=p>.</span><span class=n>recordModified</span><span class=p>(</span><span class=n>state</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>newData</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>关键设计：如果当前快照已经拥有该状态的最新版本（即之前已经写过），那么可以直接原地修改；否则创建一个新的 <code>StateRecord</code> 副本，<code>snapshotId</code> 设为当前快照的 ID，插入链表头部。被修改的状态对象被记录到快照的 <code>modified</code> 集合中，等待 <code>apply()</code> 时统一提交。注意这里有一个保护条件：如果可读记录属于 <code>PreexistingSnapshotId</code>（快照系统初始化之前就存在的状态记录），则不标记为"已修改"，避免将历史遗留状态误报给 <code>applyObserver</code>。</p><p>写操作完成后触发 <code>writeObserver</code>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>internal</span> <span class=k>fun</span> <span class=nf>notifyWrite</span><span class=p>(</span><span class=n>snapshot</span><span class=p>:</span> <span class=n>Snapshot</span><span class=p>,</span> <span class=n>state</span><span class=p>:</span> <span class=n>StateObject</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>snapshot</span><span class=p>.</span><span class=n>writeCount</span> <span class=o>+=</span> <span class=mi>1</span>
+</span></span><span class=line><span class=cl>    <span class=n>snapshot</span><span class=p>.</span><span class=n>writeObserver</span><span class=o>?.</span><span class=n>invoke</span><span class=p>(</span><span class=n>state</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h4 id=34-记录复用--防止内存无限增长>3.4 记录复用 —— 防止内存无限增长</h4><p>版本链不能无限增长。<code>usedLocked()</code> 函数负责识别已经没有任何打开的快照能够看到的旧版本，将其标记为可复用：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>usedLocked</span><span class=p>(</span><span class=n>state</span><span class=p>:</span> <span class=n>StateObject</span><span class=p>):</span> <span class=n>StateRecord</span><span class=p>?</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>reuseLimit</span> <span class=p>=</span> <span class=n>pinningTable</span><span class=p>.</span><span class=n>lowestOrDefault</span><span class=p>(</span><span class=n>nextSnapshotId</span><span class=p>)</span> <span class=p>-</span> <span class=mi>1</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 找到 snapshotId &lt; reuseLimit 且被更新的版本遮蔽的记录
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 这样的记录可以被安全覆写
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><code>pinningTable</code>（<code>SnapshotDoubleIndexHeap</code> 类型）追踪当前所有仍在使用的快照 ID。只有当一条记录对所有打开的快照都不可见时，它才会被回收。</p><hr><h3 id=四快照生命周期>四、快照生命周期</h3><h4 id=41-创建>4.1 创建</h4><p>通过 <code>Snapshot.takeMutableSnapshot()</code> 创建一个新的可变快照：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>public</span> <span class=k>fun</span> <span class=nf>takeMutableSnapshot</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>readObserver</span><span class=p>:</span> <span class=p>((</span><span class=n>Any</span><span class=p>)</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>)?</span> <span class=p>=</span> <span class=k>null</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>writeObserver</span><span class=p>:</span> <span class=p>((</span><span class=n>Any</span><span class=p>)</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>)?</span> <span class=p>=</span> <span class=k>null</span><span class=p>,</span>
+</span></span><span class=line><span class=cl><span class=p>):</span> <span class=n>MutableSnapshot</span> <span class=p>=</span>
+</span></span><span class=line><span class=cl>    <span class=p>(</span><span class=n>currentSnapshot</span><span class=p>()</span> <span class=k>as</span><span class=p>?</span> <span class=n>MutableSnapshot</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=o>?.</span><span class=n>takeNestedMutableSnapshot</span><span class=p>(</span><span class=n>readObserver</span><span class=p>,</span> <span class=n>writeObserver</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=o>?:</span> <span class=n>error</span><span class=p>(</span><span class=s2>&#34;Cannot create a mutable snapshot of a read-only snapshot&#34;</span><span class=p>)</span>
+</span></span></code></pre></td></tr></table></div></div><p>创建过程首先推进全局快照（刷新待处理的变更），然后分配新的 <code>snapshotId</code>，将当前所有打开的快照 ID 集合作为新快照的 <code>invalid</code> 集合。这意味着新快照看不到任何与它并发的、尚未提交的写入。</p><p>对于嵌套的可变快照，子快照的 <code>invalid</code> 集合被设置为从父快照 ID + 1 到新 ID 的区间，确保子快照看不到在父快照和自身之间创建的任何快照。</p><h4 id=42-进入与执行>4.2 进入与执行</h4><p><code>snapshot.enter {}</code> 将快照设为当前线程的"活跃快照"：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>public</span> <span class=k>inline</span> <span class=k>fun</span> <span class=p>&lt;</span><span class=nc>T</span><span class=p>&gt;</span> <span class=nf>enter</span><span class=p>(</span><span class=n>block</span><span class=p>:</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>T</span><span class=p>):</span> <span class=n>T</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>previous</span> <span class=p>=</span> <span class=n>makeCurrent</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=k>try</span> <span class=p>{</span> <span class=k>return</span> <span class=n>block</span><span class=p>()</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>finally</span> <span class=p>{</span> <span class=n>restoreCurrent</span><span class=p>(</span><span class=n>previous</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>open</span> <span class=k>fun</span> <span class=nf>makeCurrent</span><span class=p>():</span> <span class=n>Snapshot</span><span class=p>?</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>previous</span> <span class=p>=</span> <span class=n>threadSnapshot</span><span class=p>.</span><span class=k>get</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=n>threadSnapshot</span><span class=p>.</span><span class=k>set</span><span class=p>(</span><span class=k>this</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>previous</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><code>threadSnapshot</code> 是一个 <code>SnapshotThreadLocal</code>，保证每个线程在同一时刻只有一个活跃快照。在 <code>enter</code> 块内执行的所有状态读写都会通过 <code>Snapshot.current</code> 获取到正确的快照上下文。</p><h4 id=43-提交--三方合并与冲突检测>4.3 提交 —— 三方合并与冲突检测</h4><p><code>MutableSnapshot.apply()</code> 是提交阶段的核心。它执行一个与 Git 的三方合并（three-way merge）概念完全相同的算法。</p><p><strong>第一步：乐观预计算</strong>（在锁外执行，减少临界区）：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>val</span> <span class=py>optimisticMerges</span> <span class=p>=</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>modified</span> <span class=o>!=</span> <span class=k>null</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>optimisticMerges</span><span class=p>(</span><span class=n>globalSnapshot</span><span class=p>.</span><span class=n>snapshotId</span><span class=p>,</span> <span class=k>this</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                         <span class=n>openSnapshots</span><span class=p>.</span><span class=n>clear</span><span class=p>(</span><span class=n>globalSnapshot</span><span class=p>.</span><span class=n>snapshotId</span><span class=p>))</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=k>null</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>第二步：全局锁内执行内部提交</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>internal</span> <span class=k>fun</span> <span class=nf>innerApplyLocked</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>nextId</span><span class=p>:</span> <span class=n>SnapshotId</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>modified</span><span class=p>:</span> <span class=n>MutableScatterSet</span><span class=p>&lt;</span><span class=n>StateObject</span><span class=p>&gt;,</span>
+</span></span><span class=line><span class=cl>    <span class=n>optimisticMerges</span><span class=p>:</span> <span class=n>Map</span><span class=p>&lt;</span><span class=n>StateRecord</span><span class=p>,</span> <span class=n>StateRecord</span><span class=p>&gt;?,</span>
+</span></span><span class=line><span class=cl>    <span class=n>invalidSnapshots</span><span class=p>:</span> <span class=n>SnapshotIdSet</span><span class=p>,</span>
+</span></span><span class=line><span class=cl><span class=p>):</span> <span class=n>SnapshotApplyResult</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 对每个被修改的状态对象，找到三条记录：
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 1. current  = readable(first, nextId, invalidSnapshots)
+</span></span></span><span class=line><span class=cl>    <span class=c1>//             —— 全局当前看到的值（&#34;theirs&#34;）
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 2. previous = readable(first, this.snapshotId, start)
+</span></span></span><span class=line><span class=cl>    <span class=c1>//             —— 本快照创建时看到的值（&#34;common ancestor&#34;）
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 3. applied  = readable(first, this.snapshotId, this.invalid)
+</span></span></span><span class=line><span class=cl>    <span class=c1>//             —— 本快照写入的值（&#34;ours&#34;）
+</span></span></span><span class=line><span class=cl>    <span class=c1>//
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 冲突条件：current != previous 且 applied != previous
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 解决方案：调用 state.mergeRecords(previous, current, applied)
+</span></span></span><span class=line><span class=cl>    <span class=c1>//           如果返回 null，则提交失败（SnapshotApplyResult.Failure）
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>如果全局状态在本快照执行期间没有被其他快照修改过（<code>current == previous</code>），则直接接受本快照的写入，没有冲突。如果全局状态确实被修改了，则调用 <code>SnapshotMutationPolicy.merge()</code> 尝试解决冲突。</p><p><strong>第三步：通知观察者</strong>（在锁外执行）：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>if</span> <span class=p>(</span><span class=n>globalModified</span> <span class=o>!=</span> <span class=k>null</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>observers</span><span class=p>.</span><span class=n>fastForEach</span> <span class=p>{</span> <span class=k>it</span><span class=p>(</span><span class=n>nonNullGlobalModified</span><span class=p>,</span> <span class=k>this</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=k>if</span> <span class=p>(</span><span class=n>modified</span> <span class=o>!=</span> <span class=k>null</span> <span class=o>&amp;&amp;</span> <span class=n>modified</span><span class=p>.</span><span class=n>isNotEmpty</span><span class=p>())</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>observers</span><span class=p>.</span><span class=n>fastForEach</span> <span class=p>{</span> <span class=k>it</span><span class=p>(</span><span class=n>modifiedSet</span><span class=p>,</span> <span class=k>this</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h4 id=44-释放>4.4 释放</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=n>snapshot</span><span class=p>.</span><span class=n>dispose</span><span class=p>()</span>
+</span></span></code></pre></td></tr></table></div></div><p>将快照标记为 <code>disposed = true</code>，释放其在 <code>pinningTable</code> 中的 pin 记录，使得该快照创建的 <code>StateRecord</code> 可以被后续复用。</p><hr><h3 id=五冲突解决--snapshotmutationpolicy>五、冲突解决 —— SnapshotMutationPolicy</h3><p><code>SnapshotMutationPolicy</code> 定义了状态值的相等性判断和冲突合并策略：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>public</span> <span class=k>interface</span> <span class=nc>SnapshotMutationPolicy</span><span class=p>&lt;</span><span class=n>T</span><span class=p>&gt;</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>public</span> <span class=k>fun</span> <span class=nf>equivalent</span><span class=p>(</span><span class=n>a</span><span class=p>:</span> <span class=n>T</span><span class=p>,</span> <span class=n>b</span><span class=p>:</span> <span class=n>T</span><span class=p>):</span> <span class=n>Boolean</span>
+</span></span><span class=line><span class=cl>    <span class=k>public</span> <span class=k>fun</span> <span class=nf>merge</span><span class=p>(</span><span class=n>previous</span><span class=p>:</span> <span class=n>T</span><span class=p>,</span> <span class=n>current</span><span class=p>:</span> <span class=n>T</span><span class=p>,</span> <span class=n>applied</span><span class=p>:</span> <span class=n>T</span><span class=p>):</span> <span class=n>T</span><span class=p>?</span> <span class=p>=</span> <span class=k>null</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>Compose 提供了三种内置策略：</p><p><code>structuralEqualityPolicy()</code> 使用 <code>==</code>（结构相等）判断，是 <code>mutableStateOf</code> 的默认策略。当新值与旧值 <code>equals()</code> 为 true 时，认为状态没有变化，不触发重组。</p><p><code>referentialEqualityPolicy()</code> 使用 <code>===</code>（引用相等）判断，适用于需要区分相同值的不同实例的场景。</p><p><code>neverEqualPolicy()</code> 始终返回 <code>false</code>，意味着每次赋值都视为状态变化。</p><p><code>merge()</code> 方法默认返回 <code>null</code>（表示冲突无法解决，<code>apply()</code> 失败）。但开发者可以实现自定义的合并逻辑，实现类似 CRDT（无冲突复制数据类型）的效果 —— 例如一个计数器状态可以将并发增量相加而非覆盖。</p><p>在 <code>SnapshotMutableStateImpl</code> 中，三方合并的具体实现如下：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>mergeRecords</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>previous</span><span class=p>:</span> <span class=n>StateRecord</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>current</span><span class=p>:</span> <span class=n>StateRecord</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>applied</span><span class=p>:</span> <span class=n>StateRecord</span><span class=p>,</span>
+</span></span><span class=line><span class=cl><span class=p>):</span> <span class=n>StateRecord</span><span class=p>?</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>previousRecord</span> <span class=p>=</span> <span class=n>previous</span> <span class=k>as</span> <span class=n>StateStateRecord</span><span class=p>&lt;</span><span class=n>T</span><span class=p>&gt;</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>currentRecord</span> <span class=p>=</span> <span class=n>current</span> <span class=k>as</span> <span class=n>StateStateRecord</span><span class=p>&lt;</span><span class=n>T</span><span class=p>&gt;</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>appliedRecord</span> <span class=p>=</span> <span class=n>applied</span> <span class=k>as</span> <span class=n>StateStateRecord</span><span class=p>&lt;</span><span class=n>T</span><span class=p>&gt;</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=k>if</span> <span class=p>(</span><span class=n>policy</span><span class=p>.</span><span class=n>equivalent</span><span class=p>(</span><span class=n>currentRecord</span><span class=p>.</span><span class=k>value</span><span class=p>,</span> <span class=n>appliedRecord</span><span class=p>.</span><span class=k>value</span><span class=p>))</span> <span class=n>current</span>
+</span></span><span class=line><span class=cl>    <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>merged</span> <span class=p>=</span> <span class=n>policy</span><span class=p>.</span><span class=n>merge</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>            <span class=n>previousRecord</span><span class=p>.</span><span class=k>value</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>            <span class=n>currentRecord</span><span class=p>.</span><span class=k>value</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>            <span class=n>appliedRecord</span><span class=p>.</span><span class=k>value</span>
+</span></span><span class=line><span class=cl>        <span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>merged</span> <span class=o>!=</span> <span class=k>null</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>appliedRecord</span><span class=p>.</span><span class=n>create</span><span class=p>(</span><span class=n>appliedRecord</span><span class=p>.</span><span class=n>snapshotId</span><span class=p>).</span><span class=n>also</span> <span class=p>{</span> <span class=k>it</span><span class=p>.</span><span class=k>value</span> <span class=p>=</span> <span class=n>merged</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span> <span class=k>else</span> <span class=k>null</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h3 id=六线程安全机制>六、线程安全机制</h3><p>Snapshot 系统使用了多层线程安全策略的组合：</p><p><strong>全局互斥锁</strong> —— 所有共享的元数据（<code>openSnapshots</code>、<code>nextSnapshotId</code>、<code>applyObservers</code>、<code>pinningTable</code> 等）由一个单一的 <code>SynchronizedObject</code> 保护：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=nd>@PublishedApi</span> <span class=k>internal</span> <span class=k>val</span> <span class=py>lock</span><span class=p>:</span> <span class=n>SynchronizedObject</span> <span class=p>=</span> <span class=n>makeSynchronizedObject</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=nd>@PublishedApi</span>
+</span></span><span class=line><span class=cl><span class=k>internal</span> <span class=k>inline</span> <span class=k>fun</span> <span class=p>&lt;</span><span class=nc>T</span><span class=p>&gt;</span> <span class=nf>sync</span><span class=p>(</span><span class=n>block</span><span class=p>:</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>T</span><span class=p>):</span> <span class=n>T</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>contract</span> <span class=p>{</span> <span class=n>callsInPlace</span><span class=p>(</span><span class=n>block</span><span class=p>,</span> <span class=nc>InvocationKind</span><span class=p>.</span><span class=n>EXACTLY_ONCE</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>synchronized</span><span class=p>(</span><span class=n>lock</span><span class=p>,</span> <span class=n>block</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>线程本地快照</strong> —— <code>SnapshotThreadLocal&lt;Snapshot></code> 确保每个线程独立持有自己的当前快照引用，读写操作无需跨线程竞争。</p><p><strong>不可变数据结构</strong> —— <code>SnapshotIdSet</code> 的所有修改操作返回新实例，不存在共享可变状态。</p><p><strong>乐观锁优化</strong> —— <code>apply()</code> 的三方合并预计算在锁外执行（<code>optimisticMerges</code>），只在最终验证和写入时短暂持有锁，显著减小了临界区。</p><p><strong>原子引用</strong> —— <code>SnapshotStateObserver</code> 的变更队列使用 <code>AtomicReference</code> + CAS 循环实现无锁入队。</p><hr><h3 id=七snapshotstateobserver--从快照到-ui-失效的桥梁>七、SnapshotStateObserver —— 从快照到 UI 失效的桥梁</h3><p><code>SnapshotStateObserver</code> 是将快照系统的状态变更通知转化为组合/布局/绘制层级失效事件的关键组件。它独立于 Recomposer 的全局 <code>applyObserver</code>，服务于布局和绘制阶段的细粒度失效追踪。</p><h4 id=71-完整的事件管道>7.1 完整的事件管道</h4><p>从状态写入到失效通知的完整路径如下：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>状态写入 state.value = X
+</span></span><span class=line><span class=cl>  → MutableSnapshot.apply() / advanceGlobalSnapshot()
+</span></span><span class=line><span class=cl>    → applyObservers 被通知
+</span></span><span class=line><span class=cl>      → SnapshotStateObserver.applyObserver 回调
+</span></span><span class=line><span class=cl>        → addChanges(applied)           // 无锁入队
+</span></span><span class=line><span class=cl>          → drainChanges()              // 排空队列
+</span></span><span class=line><span class=cl>            → ObservedScopeMap.recordInvalidation(notifications)
+</span></span><span class=line><span class=cl>          → sendNotifications()
+</span></span><span class=line><span class=cl>            → onChangedExecutor {
+</span></span><span class=line><span class=cl>                ObservedScopeMap.notifyInvalidatedScopes()
+</span></span><span class=line><span class=cl>                  → onChanged(scope)    // 触发具体的布局/绘制失效
+</span></span><span class=line><span class=cl>              }
+</span></span></code></pre></td></tr></table></div></div><h4 id=72-无锁变更队列>7.2 无锁变更队列</h4><p><code>addChanges()</code> 使用 <code>AtomicReference</code> 的 CAS 操作实现多线程安全的变更入队：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>addChanges</span><span class=p>(</span><span class=k>set</span><span class=p>:</span> <span class=n>Set</span><span class=p>&lt;</span><span class=n>Any</span><span class=p>&gt;)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>while</span> <span class=p>(</span><span class=k>true</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>old</span> <span class=p>=</span> <span class=n>pendingChanges</span><span class=p>.</span><span class=k>get</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>        <span class=k>val</span> <span class=py>new</span> <span class=p>=</span> <span class=k>when</span> <span class=p>(</span><span class=n>old</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>null</span> <span class=o>-&gt;</span> <span class=k>set</span>                     <span class=c1>// 0 → 1: 直接存储
+</span></span></span><span class=line><span class=cl>            <span class=k>is</span> <span class=n>Set</span><span class=p>&lt;*&gt;</span> <span class=o>-&gt;</span> <span class=n>listOf</span><span class=p>(</span><span class=n>old</span><span class=p>,</span> <span class=k>set</span><span class=p>)</span>   <span class=c1>// 1 → 2: 包装为列表
+</span></span></span><span class=line><span class=cl>            <span class=k>is</span> <span class=n>List</span><span class=p>&lt;*&gt;</span> <span class=o>-&gt;</span> <span class=n>old</span> <span class=p>+</span> <span class=n>listOf</span><span class=p>(</span><span class=k>set</span><span class=p>)</span> <span class=c1>// N → N+1: 追加
+</span></span></span><span class=line><span class=cl>            <span class=k>else</span> <span class=o>-&gt;</span> <span class=n>report</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>pendingChanges</span><span class=p>.</span><span class=n>compareAndSet</span><span class=p>(</span><span class=n>old</span><span class=p>,</span> <span class=n>new</span><span class=p>))</span> <span class=k>break</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>这种渐进式的数据结构升级（null → Set → List）在低并发场景下避免了不必要的集合分配。</p><h4 id=73-作用域失效记录>7.3 作用域失效记录</h4><p><code>ObservedScopeMap.recordInvalidation()</code> 对每个变更的状态对象查找依赖它的重组作用域：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>fun</span> <span class=nf>recordInvalidation</span><span class=p>(</span><span class=n>changes</span><span class=p>:</span> <span class=n>Set</span><span class=p>&lt;</span><span class=n>Any</span><span class=p>&gt;):</span> <span class=n>Boolean</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>changes</span><span class=p>.</span><span class=n>fastForEach</span> <span class=p>{</span> <span class=k>value</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 跳过从未在 SnapshotStateObserver 中读取过的状态对象
+</span></span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=k>value</span> <span class=k>is</span> <span class=n>StateObjectImpl</span> <span class=o>&amp;&amp;</span> <span class=p>!</span><span class=k>value</span><span class=p>.</span><span class=n>isReadIn</span><span class=p>(</span><span class=nc>ReaderKind</span><span class=p>.</span><span class=n>SnapshotStateObserver</span><span class=p>))</span>
+</span></span><span class=line><span class=cl>            <span class=k>return</span><span class=nd>@fastForEach</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>        <span class=c1>// 检查是否影响 DerivedState
+</span></span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(!</span><span class=n>readingDerivedStates</span> <span class=o>&amp;&amp;</span> <span class=k>value</span> <span class=k>in</span> <span class=n>dependencyToDerivedStates</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>dependencyToDerivedStates</span><span class=p>.</span><span class=n>forEachScopeOf</span><span class=p>(</span><span class=k>value</span><span class=p>)</span> <span class=p>{</span> <span class=n>derivedState</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>                <span class=k>val</span> <span class=py>previousValue</span> <span class=p>=</span> <span class=n>recordedDerivedStateValues</span><span class=p>[</span><span class=n>derivedState</span><span class=p>]</span>
+</span></span><span class=line><span class=cl>                <span class=k>val</span> <span class=py>policy</span> <span class=p>=</span> <span class=n>derivedState</span><span class=p>.</span><span class=n>policy</span> <span class=o>?:</span> <span class=n>structuralEqualityPolicy</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>                <span class=k>if</span> <span class=p>(!</span><span class=n>policy</span><span class=p>.</span><span class=n>equivalent</span><span class=p>(</span><span class=n>derivedState</span><span class=p>.</span><span class=n>currentRecord</span><span class=p>.</span><span class=n>currentValue</span><span class=p>,</span> <span class=n>previousValue</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                    <span class=c1>// DerivedState 的值确实变了 → 使其读者也失效
+</span></span></span><span class=line><span class=cl>                    <span class=n>valueToScopes</span><span class=p>.</span><span class=n>forEachScopeOf</span><span class=p>(</span><span class=n>derivedState</span><span class=p>)</span> <span class=p>{</span> <span class=n>scope</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>                        <span class=n>invalidated</span><span class=p>.</span><span class=n>add</span><span class=p>(</span><span class=n>scope</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>                    <span class=p>}</span>
+</span></span><span class=line><span class=cl>                <span class=p>}</span>
+</span></span><span class=line><span class=cl>            <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>        <span class=c1>// 直接失效
+</span></span></span><span class=line><span class=cl>        <span class=n>valueToScopes</span><span class=p>.</span><span class=n>forEachScopeOf</span><span class=p>(</span><span class=k>value</span><span class=p>)</span> <span class=p>{</span> <span class=n>scope</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>            <span class=n>invalidated</span><span class=p>.</span><span class=n>add</span><span class=p>(</span><span class=n>scope</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>hasValues</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>这里有一个精妙的优化：<code>DerivedState</code> 的依赖会被递归展开。如果一个底层状态变化了，但它所派生的 <code>DerivedState</code> 值实际上没有变（由 <code>SnapshotMutationPolicy.equivalent()</code> 判断），那么读取该 <code>DerivedState</code> 的作用域不会被失效。这避免了大量不必要的重组。</p><h4 id=74-读观察--observereads>7.4 读观察 —— observeReads</h4><p><code>observeReads()</code> 在一个命名作用域内追踪所有状态读取：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>public</span> <span class=k>fun</span> <span class=p>&lt;</span><span class=nc>T</span> <span class=p>:</span> <span class=nc>Any</span><span class=p>&gt;</span> <span class=nf>observeReads</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>scope</span><span class=p>:</span> <span class=n>T</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>onValueChangedForScope</span><span class=p>:</span> <span class=p>(</span><span class=n>T</span><span class=p>)</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>block</span><span class=p>:</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>,</span>
+</span></span><span class=line><span class=cl><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>scopeMap</span> <span class=p>=</span> <span class=n>ensureMap</span><span class=p>(</span><span class=n>onValueChangedForScope</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>scopeMap</span><span class=p>.</span><span class=n>observe</span><span class=p>(</span><span class=n>scope</span><span class=p>,</span> <span class=n>readObserver</span><span class=p>,</span> <span class=n>block</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>在 <code>block</code> 执行期间发生的每一次状态读取都会通过内部的 <code>readObserver</code> 被记录到 <code>ScopeMap</code> 中，建立"状态对象 → 依赖它的作用域集合"的多值映射。</p><hr><h3 id=八与-recomposer-的集成>八、与 Recomposer 的集成</h3><p>Snapshot 系统与 Compose 重组循环的集成发生在两个层面。</p><h4 id=81-组合级别的读追踪>8.1 组合级别的读追踪</h4><p><code>Recomposer</code> 在每次执行重组时创建一个新的可变快照，并注入 <code>readObserver</code> 和 <code>writeObserver</code>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>private</span> <span class=k>inline</span> <span class=k>fun</span> <span class=p>&lt;</span><span class=nc>T</span><span class=p>&gt;</span> <span class=nf>composing</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>    <span class=n>composition</span><span class=p>:</span> <span class=n>ControlledComposition</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=n>modifiedValues</span><span class=p>:</span> <span class=n>MutableScatterSet</span><span class=p>&lt;</span><span class=n>Any</span><span class=p>&gt;?,</span>
+</span></span><span class=line><span class=cl>    <span class=n>block</span><span class=p>:</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>T</span><span class=p>,</span>
+</span></span><span class=line><span class=cl><span class=p>):</span> <span class=n>T</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>val</span> <span class=py>snapshot</span> <span class=p>=</span> <span class=nc>Snapshot</span><span class=p>.</span><span class=n>takeMutableSnapshot</span><span class=p>(</span>
+</span></span><span class=line><span class=cl>        <span class=n>readObserverOf</span><span class=p>(</span><span class=n>composition</span><span class=p>),</span>
+</span></span><span class=line><span class=cl>        <span class=n>writeObserverOf</span><span class=p>(</span><span class=n>composition</span><span class=p>,</span> <span class=n>modifiedValues</span><span class=p>),</span>
+</span></span><span class=line><span class=cl>    <span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>try</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=n>snapshot</span><span class=p>.</span><span class=n>enter</span><span class=p>(</span><span class=n>block</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>finally</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>applyAndCheck</span><span class=p>(</span><span class=n>snapshot</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>其中 <code>readObserverOf</code> 将每次状态读取路由到 <code>composition.recordReadOf(value)</code>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>recordReadOf</span><span class=p>(</span><span class=k>value</span><span class=p>:</span> <span class=n>Any</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(!</span><span class=n>areChildrenComposing</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>composer</span><span class=p>.</span><span class=n>currentRecomposeScope</span><span class=o>?.</span><span class=n>let</span> <span class=p>{</span> <span class=n>scope</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>            <span class=n>scope</span><span class=p>.</span><span class=n>used</span> <span class=p>=</span> <span class=k>true</span>
+</span></span><span class=line><span class=cl>            <span class=k>val</span> <span class=py>alreadyRead</span> <span class=p>=</span> <span class=n>scope</span><span class=p>.</span><span class=n>recordRead</span><span class=p>(</span><span class=k>value</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>            <span class=k>if</span> <span class=p>(!</span><span class=n>alreadyRead</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                <span class=k>if</span> <span class=p>(</span><span class=k>value</span> <span class=k>is</span> <span class=n>StateObjectImpl</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                    <span class=k>value</span><span class=p>.</span><span class=n>recordReadIn</span><span class=p>(</span><span class=nc>ReaderKind</span><span class=p>.</span><span class=n>Composition</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>                <span class=p>}</span>
+</span></span><span class=line><span class=cl>                <span class=n>observations</span><span class=p>.</span><span class=n>add</span><span class=p>(</span><span class=k>value</span><span class=p>,</span> <span class=n>scope</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>                <span class=c1>// DerivedState 的依赖也一并追踪
+</span></span></span><span class=line><span class=cl>                <span class=k>if</span> <span class=p>(</span><span class=k>value</span> <span class=k>is</span> <span class=n>DerivedState</span><span class=p>&lt;*&gt;)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                    <span class=k>val</span> <span class=py>record</span> <span class=p>=</span> <span class=k>value</span><span class=p>.</span><span class=n>currentRecord</span>
+</span></span><span class=line><span class=cl>                    <span class=n>derivedStates</span><span class=p>.</span><span class=n>removeScope</span><span class=p>(</span><span class=k>value</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>                    <span class=n>record</span><span class=p>.</span><span class=n>dependencies</span><span class=p>.</span><span class=n>forEachKey</span> <span class=p>{</span> <span class=n>dependency</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>                        <span class=n>dependency</span><span class=p>.</span><span class=n>recordReadIn</span><span class=p>(</span><span class=nc>ReaderKind</span><span class=p>.</span><span class=n>Composition</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>                        <span class=n>derivedStates</span><span class=p>.</span><span class=n>add</span><span class=p>(</span><span class=n>dependency</span><span class=p>,</span> <span class=k>value</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>                    <span class=p>}</span>
+</span></span><span class=line><span class=cl>                    <span class=n>scope</span><span class=p>.</span><span class=n>recordDerivedStateValue</span><span class=p>(</span><span class=k>value</span><span class=p>,</span> <span class=n>record</span><span class=p>.</span><span class=n>currentValue</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>                <span class=p>}</span>
+</span></span><span class=line><span class=cl>            <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><code>observations</code> 是一个 <code>ScopeMap</code>，记录"状态对象 → 依赖它的重组作用域"映射。当状态变化时，<code>recordWriteOf</code> 通过查找这个映射来精确失效相关作用域：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>override</span> <span class=k>fun</span> <span class=nf>recordWriteOf</span><span class=p>(</span><span class=k>value</span><span class=p>:</span> <span class=n>Any</span><span class=p>)</span> <span class=p>=</span>
+</span></span><span class=line><span class=cl>    <span class=n>synchronized</span><span class=p>(</span><span class=n>lock</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>invalidateScopeOfLocked</span><span class=p>(</span><span class=k>value</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=n>derivedStates</span><span class=p>.</span><span class=n>forEachScopeOf</span><span class=p>(</span><span class=k>value</span><span class=p>)</span> <span class=p>{</span> <span class=n>invalidateScopeOfLocked</span><span class=p>(</span><span class=k>it</span><span class=p>)</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>invalidateScopeOfLocked</span><span class=p>(</span><span class=k>value</span><span class=p>:</span> <span class=n>Any</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>observations</span><span class=p>.</span><span class=n>forEachScopeOf</span><span class=p>(</span><span class=k>value</span><span class=p>)</span> <span class=p>{</span> <span class=n>scope</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>scope</span><span class=p>.</span><span class=n>invalidateForResult</span><span class=p>(</span><span class=k>value</span><span class=p>)</span> <span class=o>==</span> <span class=nc>InvalidationResult</span><span class=p>.</span><span class=n>IMMINENT</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>observationsProcessed</span><span class=p>.</span><span class=n>add</span><span class=p>(</span><span class=k>value</span><span class=p>,</span> <span class=n>scope</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h4 id=82-全局级别的变更通知>8.2 全局级别的变更通知</h4><p><code>Recomposer</code> 还注册了一个全局 <code>applyObserver</code>，在快照提交后收集所有变更的状态对象：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=k>val</span> <span class=py>unregisterApplyObserver</span> <span class=p>=</span>
+</span></span><span class=line><span class=cl>    <span class=nc>Snapshot</span><span class=p>.</span><span class=n>registerApplyObserver</span> <span class=p>{</span> <span class=n>changed</span><span class=p>,</span> <span class=n>_</span> <span class=o>-&gt;</span>
+</span></span><span class=line><span class=cl>        <span class=n>synchronized</span><span class=p>(</span><span class=n>stateLock</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>if</span> <span class=p>(</span><span class=n>_state</span><span class=p>.</span><span class=k>value</span> <span class=o>&gt;=</span> <span class=nc>State</span><span class=p>.</span><span class=n>Idle</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                <span class=k>val</span> <span class=py>snapshotInvalidations</span> <span class=p>=</span> <span class=n>snapshotInvalidations</span>
+</span></span><span class=line><span class=cl>                <span class=n>changed</span><span class=p>.</span><span class=n>fastForEach</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                    <span class=k>if</span> <span class=p>(</span><span class=k>it</span> <span class=k>is</span> <span class=n>StateObjectImpl</span> <span class=o>&amp;&amp;</span> <span class=p>!</span><span class=k>it</span><span class=p>.</span><span class=n>isReadIn</span><span class=p>(</span><span class=nc>ReaderKind</span><span class=p>.</span><span class=n>Composition</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>                        <span class=k>return</span><span class=nd>@fastForEach</span>  <span class=c1>// 跳过从未在组合中读取过的状态
+</span></span></span><span class=line><span class=cl>                    <span class=p>}</span>
+</span></span><span class=line><span class=cl>                    <span class=n>snapshotInvalidations</span><span class=p>.</span><span class=n>add</span><span class=p>(</span><span class=k>it</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>                <span class=p>}</span>
+</span></span><span class=line><span class=cl>                <span class=n>deriveStateLocked</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>            <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span><span class=o>?.</span><span class=n>resume</span><span class=p>(</span><span class=n>Unit</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>这些被收集的失效在 <code>recordComposerModifications()</code> 中被分发到各个 <code>Composition</code>，最终触发 <code>performRecompose()</code> 的执行。</p><p>这里有一个值得注意的优化：<code>StateObjectImpl.recordReadIn(ReaderKind)</code> 使用原子操作记录状态对象被哪种读者（Composition 还是 SnapshotStateObserver）读取过。如果一个状态从未在组合中被读取（例如它只被布局或绘制代码使用），Recomposer 的全局 apply observer 可以直接跳过它，避免不必要的重组调度。</p><hr><h3 id=九两条独立的观察路径>九、两条独立的观察路径</h3><p>理解 Snapshot 系统的一个关键架构洞察是：<strong>组合失效和布局/绘制失效是两条独立的观察路径</strong>。</p><p>Recomposer 通过全局 <code>registerApplyObserver</code> 监听快照提交事件，将变更的状态对象分发给组合层，驱动 Composable 函数的重新执行。这是"重组"意义上的失效。</p><p><code>SnapshotStateObserver</code> 通过自己的 <code>registerApplyObserver</code> 独立监听同样的事件，但它服务于布局和绘制阶段。当一个 Composable 函数在布局（<code>Layout</code>）或绘制（<code>DrawScope</code>）过程中读取了某个状态，<code>SnapshotStateObserver</code> 负责在状态变化时只使对应的布局节点或绘制层失效，而非重新执行整个 Composable。</p><p>这两条路径共享底层的 MVCC 快照基础设施，但各自维护独立的 <code>ScopeMap</code> 和失效队列，互不干扰。</p><hr><h3 id=十advance-机制与初始组合>十、<code>advance()</code> 机制与初始组合</h3><p><code>MutableSnapshot</code> 提供了一个 <code>advance()</code> 方法，允许快照"推进"自己的视角，看到自己之前的写入。这在初始组合阶段尤为重要。</p><p>在 <code>composeInitial</code> 中，<code>Snapshot.notifyObjectsInitialized()</code> 被调用了两次：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-kotlin data-lang=kotlin><span class=line><span class=cl><span class=c1>// Composition.kt — composeInitial 简化流程
+</span></span></span><span class=line><span class=cl><span class=k>private</span> <span class=k>fun</span> <span class=nf>composeInitial</span><span class=p>(</span><span class=n>content</span><span class=p>:</span> <span class=nd>@Composable</span> <span class=p>()</span> <span class=o>-&gt;</span> <span class=n>Unit</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>composing</span><span class=p>(</span><span class=n>composition</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>composition</span><span class=p>.</span><span class=n>composeContent</span><span class=p>(</span><span class=n>content</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=nc>Snapshot</span><span class=p>.</span><span class=n>notifyObjectsInitialized</span><span class=p>()</span>  <span class=c1>// 第一次
+</span></span></span><span class=line><span class=cl>    <span class=c1>// ... apply changes ...
+</span></span></span><span class=line><span class=cl>    <span class=nc>Snapshot</span><span class=p>.</span><span class=n>notifyObjectsInitialized</span><span class=p>()</span>  <span class=c1>// 第二次
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>第一次调用确保在组合阶段创建的状态对象（通过 <code>remember { mutableStateOf(...) }</code>）被全局快照看到。第二次调用确保在应用变更阶段创建的状态对象也被追踪。这两次通知使得后续的状态变更都能正确触发重组。</p><p><code>TransparentObserverMutableSnapshot</code> 是另一种值得关注的快照类型。它不引入新的隔离边界，而是在父快照之上叠加额外的 <code>readObserver</code> / <code>writeObserver</code>。这在需要追踪读取但不想创建新事务边界的场景中使用。</p><hr><h3 id=十一架构总结>十一、架构总结</h3><p>Snapshot 系统的设计可以用一张完整的生命周期图来概括：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span><span class=lnt>29
+</span><span class=lnt>30
+</span><span class=lnt>31
+</span><span class=lnt>32
+</span><span class=lnt>33
+</span><span class=lnt>34
+</span><span class=lnt>35
+</span><span class=lnt>36
+</span><span class=lnt>37
+</span><span class=lnt>38
+</span><span class=lnt>39
+</span><span class=lnt>40
+</span><span class=lnt>41
+</span><span class=lnt>42
+</span><span class=lnt>43
+</span><span class=lnt>44
+</span><span class=lnt>45
+</span><span class=lnt>46
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>                        ┌─────────────────────┐
+</span></span><span class=line><span class=cl>                        │  Snapshot.takeMutable │
+</span></span><span class=line><span class=cl>                        │  Snapshot(readObs,    │
+</span></span><span class=line><span class=cl>                        │  writeObs)            │
+</span></span><span class=line><span class=cl>                        └──────────┬────────────┘
+</span></span><span class=line><span class=cl>                                   │
+</span></span><span class=line><span class=cl>                    ┌──────────────▼──────────────┐
+</span></span><span class=line><span class=cl>                    │  advanceGlobalSnapshot()     │
+</span></span><span class=line><span class=cl>                    │  刷新全局待处理变更            │
+</span></span><span class=line><span class=cl>                    │  分配新 snapshotId            │
+</span></span><span class=line><span class=cl>                    │  invalid = openSnapshots     │
+</span></span><span class=line><span class=cl>                    └──────────────┬──────────────┘
+</span></span><span class=line><span class=cl>                                   │
+</span></span><span class=line><span class=cl>                    ┌──────────────▼──────────────┐
+</span></span><span class=line><span class=cl>                    │  snapshot.enter { ... }      │
+</span></span><span class=line><span class=cl>                    │  threadSnapshot.set(this)    │
+</span></span><span class=line><span class=cl>                    │                              │
+</span></span><span class=line><span class=cl>                    │  读：readable()              │
+</span></span><span class=line><span class=cl>                    │    → readObserver.invoke()   │
+</span></span><span class=line><span class=cl>                    │    → 查找可见的 StateRecord   │
+</span></span><span class=line><span class=cl>                    │                              │
+</span></span><span class=line><span class=cl>                    │  写：writable()              │
+</span></span><span class=line><span class=cl>                    │    → copy-on-write 新 Record │
+</span></span><span class=line><span class=cl>                    │    → writeObserver.invoke()  │
+</span></span><span class=line><span class=cl>                    │    → recordModified(state)   │
+</span></span><span class=line><span class=cl>                    └──────────────┬──────────────┘
+</span></span><span class=line><span class=cl>                                   │
+</span></span><span class=line><span class=cl>                    ┌──────────────▼──────────────┐
+</span></span><span class=line><span class=cl>                    │  snapshot.apply()            │
+</span></span><span class=line><span class=cl>                    │  乐观预计算三方合并（锁外）    │
+</span></span><span class=line><span class=cl>                    │  innerApplyLocked（锁内）     │
+</span></span><span class=line><span class=cl>                    │    current vs previous       │
+</span></span><span class=line><span class=cl>                    │    → merge / conflict        │
+</span></span><span class=line><span class=cl>                    │  通知 applyObservers（锁外）  │
+</span></span><span class=line><span class=cl>                    └──────────────┬──────────────┘
+</span></span><span class=line><span class=cl>                                   │
+</span></span><span class=line><span class=cl>              ┌────────────────────┼────────────────────┐
+</span></span><span class=line><span class=cl>              │                                         │
+</span></span><span class=line><span class=cl>   ┌──────────▼──────────┐              ┌──────────────▼──────────────┐
+</span></span><span class=line><span class=cl>   │  Recomposer 路径     │              │  SnapshotStateObserver 路径  │
+</span></span><span class=line><span class=cl>   │  snapshotInvalidations│              │  addChanges (无锁 CAS)      │
+</span></span><span class=line><span class=cl>   │  → recordModifications│              │  → drainChanges              │
+</span></span><span class=line><span class=cl>   │  → performRecompose  │              │  → recordInvalidation        │
+</span></span><span class=line><span class=cl>   │  → applyChanges      │              │  → sendNotifications         │
+</span></span><span class=line><span class=cl>   └─────────────────────┘              │  → onChanged(scope)          │
+</span></span><span class=line><span class=cl>                                         └─────────────────────────────┘
+</span></span></code></pre></td></tr></table></div></div><p>从架构角度看，Snapshot 系统做了几件非常精巧的事情。它将数据库级别的 MVCC 事务隔离引入到 UI 框架中，用版本链替代了传统的互斥锁，实现了真正的无阻塞并发读写。三方合并算法确保了并发写入的正确性，而 <code>SnapshotMutationPolicy</code> 提供了灵活的冲突解决策略。两条独立的观察路径（组合级和布局级）共享同一个底层基础设施，却各自维护精确的依赖追踪，使得失效通知的粒度可以做到非常精细。</p><p>对于日常开发而言，理解这些底层机制有助于我们写出更高效的 Compose 代码 —— 例如为什么 <code>@Stable</code> 注解能帮助跳过重组、为什么 <code>DerivedState</code> 能减少不必要的重计算、为什么从非 UI 线程修改 <code>mutableStateOf</code> 是安全的。这些上层行为的正确性，都建立在 Snapshot 系统坚实的理论基础之上。</p><hr><h3 id=参考源码>参考源码</h3><p>本文基于以下 AndroidX Compose Runtime 源码文件分析：</p><ul><li><code>Snapshot.kt</code> — 核心快照系统，包含 MVCC 版本链、可见性判定、读写操作</li><li><code>SnapshotStateObserver.kt</code> — 快照状态观察者，连接快照变更到布局/绘制失效</li><li><code>SnapshotState.kt</code> — <code>mutableStateOf</code> 的内部实现，<code>SnapshotMutationPolicy</code> 定义</li><li><code>SnapshotIdSet.kt</code> — 不可变位集合，追踪无效的快照 ID</li><li><code>StateObjectImpl.kt</code> — 状态对象内部实现，记录读取者类型</li><li><code>Composition.kt</code> — <code>recordReadOf</code> / <code>recordWriteOf</code>，组合层的读追踪</li><li><code>Recomposer.kt</code> — <code>composing()</code> / <code>runRecomposeAndApplyChanges()</code>，重组循环与快照集成</li></ul></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Jun 10, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026060801/ title="Compose 核心概念：Group 与 Scope 详解">Compose 核心概念：Group 与 Scope 详解</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
