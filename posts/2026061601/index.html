@@ -1,0 +1,1245 @@
+<!doctype html><html xmlns=http://www.w3.org/1999/xhtml xml:lang=en lang=en-us><head><meta charset=utf-8><meta name=viewport content="width=device-width,minimum-scale=1,maximum-scale=1"><link href=/css/fonts.css rel=stylesheet type=text/css><title>Linux 内核 Per-CPU 变量机制深度解析</title><link rel=stylesheet href=/css/hugo-octopress.css><link rel=stylesheet href=/css/syntax.css><link rel=stylesheet href=/css/fork-awesome.min.css><link href=/favicon.png rel=icon><meta name=description content><meta name=keywords content><meta name=author content="bitristan"><meta name=generator content="Hugo 0.163.2"></head><body><header role=banner><hgroup><h1><a href=/>学而时习之</a></h1><h2>人生最可悲的事情莫过于胸怀大志却又虚度光阴</h2></hgroup></header><nav role=navigation><fieldset class=mobile-nav><select onchange="location=this.value"><option value>Navigate…</option><option value=/>» Home</option></select></fieldset><ul class=main-navigation><li><a href=/ title=Home>Home</a></li></ul><ul class=subscription></ul></nav><div id=main><div id=content><div><article class=hentry role=article><header><p class=meta>Jun 16, 2026
+- 31 minute read</p><h1 class=entry-title>Linux 内核 Per-CPU 变量机制深度解析</h1></header><div class=entry-content><blockquote><p>基于 Linux 6.10 内核源码</p></blockquote><h2 id=目录>目录</h2><ul><li><a href=#1-%e6%a6%82%e8%bf%b0%e4%b8%8e%e8%ae%be%e8%ae%a1%e5%8a%a8%e6%9c%ba>1. 概述与设计动机</a></li><li><a href=#2-%e5%9f%ba%e6%9c%ac%e5%8e%9f%e7%90%86>2. 基本原理</a></li><li><a href=#3-%e9%9d%99%e6%80%81-per-cpu-%e5%8f%98%e9%87%8f>3. 静态 Per-CPU 变量</a><ul><li><a href=#31-%e5%a3%b0%e6%98%8e%e4%b8%8e%e5%ae%9a%e4%b9%89%e5%ae%8f>3.1 声明与定义宏</a></li><li><a href=#32-%e9%93%be%e6%8e%a5%e5%99%a8%e6%ae%b5section%e5%b8%83%e5%b1%80>3.2 链接器段（Section）布局</a></li><li><a href=#33-%e4%b8%8d%e5%90%8c%e5%8f%98%e4%bd%93>3.3 不同变体</a></li></ul></li><li><a href=#4-%e5%8a%a8%e6%80%81-per-cpu-%e5%8f%98%e9%87%8f>4. 动态 Per-CPU 变量</a><ul><li><a href=#41-%e5%88%86%e9%85%8d%e4%b8%8e%e9%87%8a%e6%94%be>4.1 分配与释放</a></li><li><a href=#42-per-cpu-%e5%88%86%e9%85%8d%e5%99%a8%e6%9e%b6%e6%9e%84>4.2 Per-CPU 分配器架构</a></li><li><a href=#43-chunkunit-%e4%b8%8e-group>4.3 Chunk、Unit 与 Group</a></li><li><a href=#44-%e5%88%86%e9%85%8d%e6%b5%81%e7%a8%8b%e8%af%a6%e8%a7%a3>4.4 分配流程详解</a></li><li><a href=#45-%e9%87%8a%e6%94%be%e6%b5%81%e7%a8%8b%e8%af%a6%e8%a7%a3>4.5 释放流程详解</a></li></ul></li><li><a href=#5-%e5%9c%b0%e5%9d%80%e8%bd%ac%e6%8d%a2%e6%9c%ba%e5%88%b6>5. 地址转换机制</a><ul><li><a href=#51-%e9%80%9a%e7%94%a8%e5%ae%9e%e7%8e%b0%e5%81%8f%e7%a7%bb%e9%87%8f%e6%95%b0%e7%bb%84>5.1 通用实现：偏移量数组</a></li><li><a href=#52-x86-%e5%ae%9e%e7%8e%b0%e6%ae%b5%e5%af%84%e5%ad%98%e5%99%a8--this_cpu_off>5.2 x86 实现：段寄存器 + this_cpu_off</a></li><li><a href=#53-%e5%9c%b0%e5%9d%80%e8%bd%ac%e6%8d%a2%e8%be%85%e5%8a%a9%e5%ae%8f>5.3 地址转换辅助宏</a></li></ul></li><li><a href=#6-%e8%ae%bf%e9%97%ae%e6%8e%a5%e5%8f%a3>6. 访问接口</a><ul><li><a href=#61-%e6%8c%87%e9%92%88%e8%8e%b7%e5%8f%96>6.1 指针获取</a></li><li><a href=#62-%e8%af%bb%e5%86%99%e6%93%8d%e4%bd%9c%e4%b8%89%e7%ba%a7%e5%ae%89%e5%85%a8%e6%80%a7>6.2 读写操作（三级安全性）</a></li><li><a href=#63-%e4%b8%b4%e7%95%8c%e5%8c%ba%e6%8e%a5%e5%8f%a3getput>6.3 临界区接口：get/put</a></li><li><a href=#64-up-%e9%85%8d%e7%bd%ae%e7%9a%84%e9%80%80%e5%8c%96>6.4 UP 配置的退化</a></li></ul></li><li><a href=#7-x86-%e6%9e%b6%e6%9e%84%e7%9a%84%e4%bc%98%e5%8c%96%e5%ae%9e%e7%8e%b0>7. x86 架构的优化实现</a><ul><li><a href=#71-%e6%ae%b5%e5%af%84%e5%ad%98%e5%99%a8%e5%af%bb%e5%9d%80>7.1 段寄存器寻址</a></li><li><a href=#72-x86-%e6%8c%87%e4%bb%a4%e7%ba%a7%e4%bc%98%e5%8c%96>7.2 x86 指令级优化</a></li><li><a href=#73-named-address-space-%e4%bc%98%e5%8c%96>7.3 Named Address Space 优化</a></li><li><a href=#74-this_cpu_read_stable--%e5%8f%af%e7%bc%93%e5%ad%98%e7%9a%84%e8%af%bb%e5%8f%96%e4%bc%98%e5%8c%96>7.4 this_cpu_read_stable — 可缓存的读取优化</a></li></ul></li><li><a href=#8-%e5%88%9d%e5%a7%8b%e5%8c%96%e6%b5%81%e7%a8%8b>8. 初始化流程</a><ul><li><a href=#81-%e6%97%a9%e6%9c%9f%e5%90%af%e5%8a%a8%e9%98%b6%e6%ae%b5>8.1 早期启动阶段</a></li><li><a href=#82-setup_per_cpu_areas>8.2 setup_per_cpu_areas()</a></li><li><a href=#83-first-chunk-%e7%9a%84%e6%9e%84%e5%bb%ba>8.3 First Chunk 的构建</a></li><li><a href=#84-cpu-hotplug-%e4%b8%8e-per-cpu>8.4 CPU Hotplug 与 Per-CPU</a></li></ul></li><li><a href=#9-%e9%ab%98%e7%ba%a7%e5%ba%94%e7%94%a8>9. 高级应用</a><ul><li><a href=#91-per-cpu-%e8%ae%a1%e6%95%b0%e5%99%a8percpu_counter>9.1 Per-CPU 计数器（percpu_counter）</a></li><li><a href=#92-per-cpu-%e5%bc%95%e7%94%a8%e8%ae%a1%e6%95%b0percpu_ref>9.2 Per-CPU 引用计数（percpu_ref）</a></li><li><a href=#93-per-cpu-%e8%af%bb%e5%86%99%e4%bf%a1%e5%8f%b7%e9%87%8fpercpu_rw_semaphore>9.3 Per-CPU 读写信号量（percpu_rw_semaphore）</a></li></ul></li><li><a href=#10-%e8%b0%83%e8%af%95%e4%b8%8e%e8%af%8a%e6%96%ad>10. 调试与诊断</a></li><li><a href=#11-%e6%9c%80%e4%bd%b3%e5%ae%9e%e8%b7%b5%e4%b8%8e%e5%b8%b8%e8%a7%81%e9%99%b7%e9%98%b1>11. 最佳实践与常见陷阱</a></li><li><a href=#12-%e6%80%bb%e7%bb%93>12. 总结</a></li></ul><hr><h2 id=1-概述与设计动机>1. 概述与设计动机</h2><p>在多处理器（SMP）系统中，多个 CPU 可能同时访问共享数据，这通常需要使用锁机制（如自旋锁、互斥锁）来保证一致性。然而，锁会引入竞争（contention），降低系统的可扩展性。</p><p><strong>Per-CPU 变量</strong>的核心思想极其简单：为每个 CPU 提供一份数据的独立副本。由于每个 CPU 只访问自己的副本，不需要任何锁，天然避免了竞争条件。这是一种<strong>以空间换时间</strong>的策略。</p><p>Per-CPU 机制的典型应用场景包括：</p><ul><li><strong>统计计数器</strong>：如网络收发包计数、进程调度统计，每个 CPU 独立更新，需要汇总时再遍历所有 CPU</li><li><strong>CPU 本地缓存</strong>：如 slab 分配器的 per-CPU 缓存、页面分配器的 per-CPU 页面集</li><li><strong>当前任务指针</strong>：<code>current</code> 宏在 x86_64 上就是通过 per-CPU 变量 <code>pcpu_hot.current_task</code> 实现的</li><li><strong>中断统计</strong>：每个 CPU 独立维护自己的中断计数</li></ul><p>Per-CPU 变量的主要优势：</p><ul><li><strong>无锁访问</strong>：本 CPU 访问自己的副本无需任何同步</li><li><strong>缓存友好</strong>：每个 CPU 的副本在自己的缓存行中，避免 false sharing</li><li><strong>可扩展性</strong>：CPU 越多，并发度越高，优势越明显</li></ul><hr><h2 id=2-基本原理>2. 基本原理</h2><p>Per-CPU 变量的核心原理可以用一句话概括：<strong>同一变量名，不同 CPU 看到不同的内存地址</strong>。</p><p>在编译时，per-CPU 变量被放置到特殊的链接器段 <code>.data..percpu</code> 中，其地址是一个<strong>基准地址（base address）</strong>。在运行时，每个 CPU 通过加上自己的**偏移量（offset）**来定位自己的副本。</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-gdscript3 data-lang=gdscript3><span class=line><span class=cl>                  <span class=n>CPU</span> <span class=mi>0</span>                <span class=n>CPU</span> <span class=mi>1</span>                <span class=n>CPU</span> <span class=mi>2</span>
+</span></span><span class=line><span class=cl>                 <span class=o>+----------+</span>        <span class=o>+----------+</span>        <span class=o>+----------+</span>
+</span></span><span class=line><span class=cl>                 <span class=o>|</span> <span class=n>var副本0</span>  <span class=o>|</span>        <span class=o>|</span> <span class=n>var副本1</span>  <span class=o>|</span>        <span class=o>|</span> <span class=n>var副本2</span>  <span class=o>|</span>
+</span></span><span class=line><span class=cl>                 <span class=o>+----------+</span>        <span class=o>+----------+</span>        <span class=o>+----------+</span>
+</span></span><span class=line><span class=cl>                  <span class=o>^</span>                    <span class=o>^</span>                    <span class=o>^</span>
+</span></span><span class=line><span class=cl>                  <span class=o>|</span>                    <span class=o>|</span>                    <span class=o>|</span>
+</span></span><span class=line><span class=cl>           <span class=n>base</span> <span class=o>+</span> <span class=n>offset_0</span>      <span class=n>base</span> <span class=o>+</span> <span class=n>offset_1</span>      <span class=n>base</span> <span class=o>+</span> <span class=n>offset_2</span>
+</span></span></code></pre></td></tr></table></div></div><p>关键数据结构：</p><ul><li><code>__per_cpu_offset[]</code>：每个 CPU 的偏移量数组（声明大小为 <code>NR_CPUS</code>，实际使用 <code>nr_cpu_ids</code> 个条目，<code>nr_cpu_ids</code> ≤ <code>NR_CPUS</code>）</li><li><code>pcpu_base_addr</code>：第一个 chunk 的基地址（对应链接器符号 <code>__per_cpu_start</code> 的运行时地址）</li><li><code>__per_cpu_start / __per_cpu_end</code>：链接器定义的静态 per-CPU 段起止符号</li></ul><p>在代码中，per-CPU 指针带有 <code>__percpu</code> 标记（通过 sparse 工具进行地址空间检查），以防止误用：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// include/linux/compiler_types.h
+</span></span></span><span class=line><span class=cl><span class=c1>// sparse 静态分析路径（__CHECKER__ 定义时）
+</span></span></span><span class=line><span class=cl><span class=cp># define __percpu    __attribute__((noderef, address_space(__percpu)))
+</span></span></span><span class=line><span class=cl><span class=c1>// 非 sparse 路径（正常编译时）
+</span></span></span><span class=line><span class=cl><span class=cp># define __percpu    BTF_TYPE_TAG(percpu)
+</span></span></span></code></pre></td></tr></table></div></div><p>当使用 sparse 静态分析工具时（<code>__CHECKER__</code> 被定义），<code>__percpu</code> 展开为 <code>address_space(__percpu)</code> 注解，让 sparse 能够检测到直接解引用 per-CPU 指针（而不经过 per-CPU 访问接口）等错误。在正常编译路径下，<code>__percpu</code> 展开为 <code>BTF_TYPE_TAG(percpu)</code>，为 BPF Type Format（BTF）提供类型标记，使 BPF 验证器和调试工具能够识别 per-CPU 指针。</p><hr><h2 id=3-静态-per-cpu-变量>3. 静态 Per-CPU 变量</h2><p>静态 per-CPU 变量在编译时定义，存放在内核镜像的 <code>.data..percpu</code> 段中。启动时，引导代码将这个段的内容复制为每个 CPU 的副本。</p><h3 id=31-声明与定义宏>3.1 声明与定义宏</h3><h4 id=define_per_cpu--declare_per_cpu>DEFINE_PER_CPU / DECLARE_PER_CPU</h4><p>最基本的定义和声明方式：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 定义一个 per-CPU 变量
+</span></span></span><span class=line><span class=cl><span class=nf>DEFINE_PER_CPU</span><span class=p>(</span><span class=kt>int</span><span class=p>,</span> <span class=n>my_counter</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 在另一个文件中声明它
+</span></span></span><span class=line><span class=cl><span class=nf>DECLARE_PER_CPU</span><span class=p>(</span><span class=kt>int</span><span class=p>,</span> <span class=n>my_counter</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>展开后的核心逻辑（<code>include/linux/percpu-defs.h</code>）：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define __PCPU_ATTRS(sec)                        \
+</span></span></span><span class=line><span class=cl><span class=cp>    __percpu __attribute__((section(PER_CPU_BASE_SECTION sec))) \
+</span></span></span><span class=line><span class=cl><span class=cp>    PER_CPU_ATTRIBUTES
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 非弱定义路径（大多数架构）
+</span></span></span><span class=line><span class=cl><span class=cp>#define DEFINE_PER_CPU_SECTION(type, name, sec)  \
+</span></span></span><span class=line><span class=cl><span class=cp>    __PCPU_ATTRS(sec) __typeof__(type) name
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=cp>#define DEFINE_PER_CPU(type, name)               \
+</span></span></span><span class=line><span class=cl><span class=cp>    DEFINE_PER_CPU_SECTION(type, name, &#34;&#34;)
+</span></span></span></code></pre></td></tr></table></div></div><p><code>DEFINE_PER_CPU(int, my_counter)</code> 展开后等价于：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=n>__percpu</span> <span class=nf>__attribute__</span><span class=p>((</span><span class=nf>section</span><span class=p>(</span><span class=s>&#34;.data..percpu&#34;</span><span class=p>)))</span> <span class=kt>int</span> <span class=n>my_counter</span><span class=p>;</span>
+</span></span></code></pre></td></tr></table></div></div><p>编译器将 <code>my_counter</code> 放入 <code>.data..percpu</code> 段，且其地址是段内偏移（即"模板"地址）。</p><h4 id=弱定义路径>弱定义路径</h4><p>某些架构（s390、alpha）需要将 per-CPU 变量定义为弱符号，因为它们的 per-CPU 段可能位于通常可寻址范围之外，需要通过 GOT（全局偏移表）进行间接引用：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#if defined(ARCH_NEEDS_WEAK_PER_CPU) || defined(CONFIG_DEBUG_FORCE_WEAK_PER_CPU)
+</span></span></span><span class=line><span class=cl><span class=cp>#define DEFINE_PER_CPU_SECTION(type, name, sec)             \
+</span></span></span><span class=line><span class=cl><span class=cp>    __PCPU_DUMMY_ATTRS char __pcpu_scope_##name;            \
+</span></span></span><span class=line><span class=cl><span class=cp>    extern __PCPU_DUMMY_ATTRS char __pcpu_unique_##name;    \
+</span></span></span><span class=line><span class=cl><span class=cp>    __PCPU_DUMMY_ATTRS char __pcpu_unique_##name;           \
+</span></span></span><span class=line><span class=cl><span class=cp>    extern __PCPU_ATTRS(sec) __typeof__(type) name;         \
+</span></span></span><span class=line><span class=cl><span class=cp>    __PCPU_ATTRS(sec) __weak __typeof__(type) name
+</span></span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span><span class=line><span class=cl><span class=c1>// __pcpu_scope_##name / __pcpu_unique_##name 用于 sparse 符号唯一性检查
+</span></span></span><span class=line><span class=cl><span class=c1>// __weak 使得链接器允许符号被更强的定义覆盖（如模块加载时）
+</span></span></span></code></pre></td></tr></table></div></div><p>弱定义引入了两个约束：</p><ol><li>符号必须全局唯一（即使 <code>static</code> 变量也是如此）</li><li><code>static</code> per-CPU 变量不能在函数内部定义</li></ol><h3 id=32-链接器段section布局>3.2 链接器段（Section）布局</h3><p>Per-CPU 变量的段布局由 <code>include/asm-generic/vmlinux.lds.h</code> 中的 <code>PERCPU_INPUT</code> 宏定义：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define PERCPU_INPUT(cacheline)                   \
+</span></span></span><span class=line><span class=cl><span class=cp>    __per_cpu_start = .;                          \
+</span></span></span><span class=line><span class=cl><span class=cp>    *(.data..percpu..first)                       \
+</span></span></span><span class=line><span class=cl><span class=cp>    . = ALIGN(PAGE_SIZE);                         \
+</span></span></span><span class=line><span class=cl><span class=cp>    *(.data..percpu..page_aligned)                \
+</span></span></span><span class=line><span class=cl><span class=cp>    . = ALIGN(cacheline);                         \
+</span></span></span><span class=line><span class=cl><span class=cp>    *(.data..percpu..read_mostly)                 \
+</span></span></span><span class=line><span class=cl><span class=cp>    . = ALIGN(cacheline);                         \
+</span></span></span><span class=line><span class=cl><span class=cp>    *(.data..percpu)                              \
+</span></span></span><span class=line><span class=cl><span class=cp>    *(.data..percpu..shared_aligned)              \
+</span></span></span><span class=line><span class=cl><span class=cp>    PERCPU_DECRYPTED_SECTION                      \
+</span></span></span><span class=line><span class=cl><span class=cp>    __per_cpu_end = .;
+</span></span></span></code></pre></td></tr></table></div></div><p>各子段的排列顺序和用途：</p><table><thead><tr><th>子段</th><th>用途</th><th>对齐要求</th></tr></thead><tbody><tr><td><code>.data..percpu..first</code></td><td>必须放在最前面的变量</td><td>无特殊</td></tr><tr><td><code>.data..percpu..page_aligned</code></td><td>页对齐的变量</td><td>PAGE_SIZE</td></tr><tr><td><code>.data..percpu..read_mostly</code></td><td>主要读取的变量</td><td>cacheline</td></tr><tr><td><code>.data..percpu</code></td><td>普通变量</td><td>cacheline</td></tr><tr><td><code>.data..percpu..shared_aligned</code></td><td>SMP 下 cacheline 对齐</td><td>cacheline</td></tr><tr><td><code>.data..percpu..decrypted</code></td><td>内存加密环境下需解密访问</td><td>—</td></tr></tbody></table><p><code>__per_cpu_start</code> 和 <code>__per_cpu_end</code> 标记了静态 per-CPU 区域的起止，用于计算静态区域大小和初始化时复制模板。</p><h3 id=33-不同变体>3.3 不同变体</h3><p>根据不同的需求，内核提供了多种 per-CPU 变量变体：</p><h4 id=define_per_cpu_shared_aligned>DEFINE_PER_CPU_SHARED_ALIGNED</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>DEFINE_PER_CPU_SHARED_ALIGNED</span><span class=p>(</span><span class=n>type</span><span class=p>,</span> <span class=n>name</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>在 SMP 配置下，变量被放置在 <code>.data..percpu..shared_aligned</code> 子段，并且强制 cacheline 对齐。这用于<strong>虽然每个 CPU 有独立副本，但可能被其他 CPU 读取</strong>的场景（如 <code>/proc</code> 统计信息的汇总），避免不同 CPU 的数据共享同一缓存行导致的 false sharing。</p><h4 id=define_per_cpu_aligned>DEFINE_PER_CPU_ALIGNED</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>DEFINE_PER_CPU_ALIGNED</span><span class=p>(</span><span class=n>type</span><span class=p>,</span> <span class=n>name</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>变量强制 cacheline 对齐，无论是否为 SMP 配置。适用于对齐要求严格的场景。</p><h4 id=define_per_cpu_page_aligned>DEFINE_PER_CPU_PAGE_ALIGNED</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>DEFINE_PER_CPU_PAGE_ALIGNED</span><span class=p>(</span><span class=n>type</span><span class=p>,</span> <span class=n>name</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>变量页对齐，放置在 <code>.data..percpu..page_aligned</code> 子段。适用于需要页对齐的数据结构（如某些页表项）。</p><h4 id=define_per_cpu_read_mostly>DEFINE_PER_CPU_READ_MOSTLY</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>DEFINE_PER_CPU_READ_MOSTLY</span><span class=p>(</span><span class=n>type</span><span class=p>,</span> <span class=n>name</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>放置在 <code>.data..percpu..read_mostly</code> 子段，标记为"主要读取"。内核可以将这些变量放在更适合读取的内存区域。</p><h4 id=define_per_cpu_first>DEFINE_PER_CPU_FIRST</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>DEFINE_PER_CPU_FIRST</span><span class=p>(</span><span class=n>type</span><span class=p>,</span> <span class=n>name</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>放置在 <code>.data..percpu..first</code> 子段，确保在所有 per-CPU 变量之前。</p><h4 id=define_per_cpu_decrypted>DEFINE_PER_CPU_DECRYPTED</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>DEFINE_PER_CPU_DECRYPTED</span><span class=p>(</span><span class=n>type</span><span class=p>,</span> <span class=n>name</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>用于 AMD 内存加密（SME/SEV）环境，标记变量在 guest 中需要以解密方式访问。</p><h4 id=模块导出>模块导出</h4><p>如果 per-CPU 变量需要被内核模块访问，必须使用专门的导出宏（<code>include/linux/percpu-defs.h</code>）：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>EXPORT_PER_CPU_SYMBOL</span><span class=p>(</span><span class=n>var</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=nf>EXPORT_PER_CPU_SYMBOL_GPL</span><span class=p>(</span><span class=n>var</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>在 <code>__CHECKER__</code>（sparse 静态分析）路径下，这两个宏展开为空——因为 sparse 在处理 <code>EXPORT_SYMBOL</code> 时会丢失地址空间注解，导致误报。在非 sparse 路径下，它们分别展开为 <code>EXPORT_SYMBOL(var)</code> 和 <code>EXPORT_SYMBOL_GPL(var)</code>，遵循标准的内核符号导出语义。</p><p>模块中使用 <code>DECLARE_PER_CPU</code> 声明后即可通过正常的 per-CPU 访问接口访问：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 模块代码
+</span></span></span><span class=line><span class=cl><span class=nf>DECLARE_PER_CPU</span><span class=p>(</span><span class=kt>int</span><span class=p>,</span> <span class=n>my_counter</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=kt>int</span> <span class=n>val</span> <span class=o>=</span> <span class=nf>this_cpu_read</span><span class=p>(</span><span class=n>my_counter</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h2 id=4-动态-per-cpu-变量>4. 动态 Per-CPU 变量</h2><p>动态 per-CPU 变量在运行时分配，由 per-CPU 分配器（<code>mm/percpu.c</code>）管理。</p><h3 id=41-分配与释放>4.1 分配与释放</h3><h4 id=分配接口>分配接口</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 分配一个 type 类型的 per-CPU 变量
+</span></span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>my_struct</span> <span class=n>__percpu</span> <span class=o>*</span><span class=n>ptr</span> <span class=o>=</span> <span class=nf>alloc_percpu</span><span class=p>(</span><span class=k>struct</span> <span class=n>my_struct</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 带 GFP 标志的分配
+</span></span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>my_struct</span> <span class=n>__percpu</span> <span class=o>*</span><span class=n>ptr</span> <span class=o>=</span> <span class=nf>alloc_percpu_gfp</span><span class=p>(</span><span class=k>struct</span> <span class=n>my_struct</span><span class=p>,</span> <span class=n>GFP_ATOMIC</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 更底层的接口，可自定义对齐
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>__percpu</span> <span class=o>*</span><span class=n>ptr</span> <span class=o>=</span> <span class=nf>__alloc_percpu</span><span class=p>(</span><span class=n>size</span><span class=p>,</span> <span class=n>align</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 从预留区域分配（用于模块等特殊场景）
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>__percpu</span> <span class=o>*</span><span class=n>ptr</span> <span class=o>=</span> <span class=nf>__alloc_reserved_percpu</span><span class=p>(</span><span class=n>size</span><span class=p>,</span> <span class=n>align</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 直接调用底层分配器，不经过 alloc_hooks() profiling 包装
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>__percpu</span> <span class=o>*</span><span class=n>ptr</span> <span class=o>=</span> <span class=nf>alloc_percpu_noprof</span><span class=p>(</span><span class=k>struct</span> <span class=n>my_struct</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p><code>alloc_percpu(type)</code> 展开为：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=p>(</span><span class=nf>typeof</span><span class=p>(</span><span class=n>type</span><span class=p>)</span> <span class=n>__percpu</span> <span class=o>*</span><span class=p>)</span><span class=nf>__alloc_percpu</span><span class=p>(</span><span class=k>sizeof</span><span class=p>(</span><span class=n>type</span><span class=p>),</span> <span class=nf>__alignof__</span><span class=p>(</span><span class=n>type</span><span class=p>))</span>
+</span></span></code></pre></td></tr></table></div></div><p>而 <code>__alloc_percpu</code> 进一步展开为：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>alloc_hooks</span><span class=p>(</span><span class=nf>pcpu_alloc_noprof</span><span class=p>(</span><span class=n>_size</span><span class=p>,</span> <span class=n>_align</span><span class=p>,</span> <span class=nb>false</span><span class=p>,</span> <span class=n>GFP_KERNEL</span><span class=p>))</span>
+</span></span></code></pre></td></tr></table></div></div><p>其中 <code>alloc_hooks</code> 是内存分配 profiling 的包装宏（在 <code>CONFIG_MEM_ALLOC_PROFILING</code> 启用时记录分配调用栈），最终调用 <code>pcpu_alloc_noprof()</code>。函数名中的 <code>noprof</code> 后缀是内核内存分配 profiling 框架的命名约定：带 <code>noprof</code> 后缀的是不带 profiling 记录的底层实现，而 <code>alloc_hooks</code> 宏在调用前注入 profiling 调用栈记录。这一约定同样适用于其他分配器（如 <code>kmalloc_noprof</code>、<code>__vmalloc_noprof</code> 等），核心流程（简化）：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=kt>void</span> <span class=n>__percpu</span> <span class=o>*</span><span class=nf>pcpu_alloc_noprof</span><span class=p>(</span><span class=kt>size_t</span> <span class=n>size</span><span class=p>,</span> <span class=kt>size_t</span> <span class=n>align</span><span class=p>,</span> <span class=kt>bool</span> <span class=n>reserved</span><span class=p>,</span> <span class=kt>gfp_t</span> <span class=n>gfp</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 1. 将 size/align 转换为 bitmap 中的 bits 和 bit_align
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 2. 如果是 reserved 分配，尝试从 reserved chunk 分配
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 3. 遍历 chunk 槽位链表，寻找合适的 chunk
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 4. 在 chunk 中找到满足条件的空闲区域
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 5. 如果没有合适的 chunk，创建新的 chunk
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 6. 为所有 CPU 的对应偏移处清零
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 7. 返回 per-CPU 指针
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h4 id=释放接口>释放接口</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=kt>void</span> <span class=nf>free_percpu</span><span class=p>(</span><span class=kt>void</span> <span class=n>__percpu</span> <span class=o>*</span><span class=n>__pdata</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>释放时，分配器找到对应的 chunk，标记区域为空闲，并可能触发 chunk 回收平衡工作。</p><h4 id=自动清理cleanuph-集成>自动清理（cleanup.h 集成）</h4><p>内核通过 <code>DEFINE_FREE</code> 宏（<code>include/linux/percpu.h</code>）为 per-CPU 指针注册了自动清理器：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>DEFINE_FREE</span><span class=p>(</span><span class=n>free_percpu</span><span class=p>,</span> <span class=kt>void</span> <span class=n>__percpu</span> <span class=o>*</span><span class=p>,</span> <span class=nf>free_percpu</span><span class=p>(</span><span class=n>_T</span><span class=p>))</span>
+</span></span></code></pre></td></tr></table></div></div><p>这使得可以使用 <code>__free(free_percpu)</code> 属性实现 RAII 风格的自动释放——当变量离开作用域时自动调用 <code>free_percpu()</code>，减少资源泄漏风险：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>struct</span> <span class=n>my_struct</span> <span class=n>__percpu</span> <span class=o>*</span><span class=n>ptr</span> <span class=nf>__free</span><span class=p>(</span><span class=n>free_percpu</span><span class=p>)</span> <span class=o>=</span> <span class=nf>alloc_percpu</span><span class=p>(</span><span class=k>struct</span> <span class=n>my_struct</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=n>ptr</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=o>-</span><span class=n>ENOMEM</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=c1>// ... 使用 ptr ...
+</span></span></span><span class=line><span class=cl><span class=c1>// 函数返回时自动释放
+</span></span></span></code></pre></td></tr></table></div></div><h3 id=42-per-cpu-分配器架构>4.2 Per-CPU 分配器架构</h3><p>Per-CPU 分配器的设计灵感来自 slab 分配器，但专门针对 per-CPU 的特殊需求进行了优化。</p><h4 id=核心概念>核心概念</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>  Chunk 0 (first chunk)                Chunk 1                     Chunk 2
+</span></span><span class=line><span class=cl>  --------------------------          --------------------------  ----------
+</span></span><span class=line><span class=cl> | u0 | u1 | u2 | u3 | ... |        | u0 | u1 | u2 | u3 | ... | | u0 | u1 |
+</span></span><span class=line><span class=cl>  --------------------------          --------------------------  ----------
+</span></span><span class=line><span class=cl>  |&lt;--- unit_size ---&gt;|              |&lt;--- unit_size ---&gt;|
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  每个 unit 对应一个 possible CPU
+</span></span></code></pre></td></tr></table></div></div><ul><li><strong>Chunk（块）</strong>：per-CPU 分配器的基本管理单元，包含一组连续的内存区域</li><li><strong>Unit（单元）</strong>：chunk 内划分的等大小区域，每个 unit 对应一个 possible CPU</li><li><strong>Group（组）</strong>：按 NUMA 节点关系将 units 分组</li></ul><h4 id=first-chunk-的特殊结构>First Chunk 的特殊结构</h4><p>第一个 chunk 始终存在，具有特殊的内部布局：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>&lt;--- Static ---|&lt;-- Reserved --&gt;|&lt;--------- Dynamic ----------&gt;
+</span></span><span class=line><span class=cl>                (模块静态变量)      (动态分配区域)
+</span></span></code></pre></td></tr></table></div></div><ul><li><strong>Static 区域</strong>：存放内核编译时定义的 <code>.data..percpu</code> 段内容</li><li><strong>Reserved 区域</strong>：为模块的静态 per-CPU 变量预留空间</li><li><strong>Dynamic 区域</strong>：用于运行时动态分配</li></ul><h4 id=分配策略>分配策略</h4><p>分配器将 chunks 组织到不同的**槽位（slot）**链表中，按最大连续空闲区域大小排序（完全空闲的 chunks 放入 <code>pcpu_free_slot</code>）。分配时从最满的 chunk 开始尝试（类似 slab 的思路），以减少内存碎片。完整的分配流程详见 4.4 节。</p><h4 id=memcg-感知分配>Memcg 感知分配</h4><p>分配器支持通过 <code>__GFP_ACCOUNT</code> 标志进行<strong>内存控制组（memcg）感知分配</strong>。分配器维护两组独立的 chunk 链表：</p><ul><li><strong>已记账（accounted）链表</strong>：存放带有 <code>__GFP_ACCOUNT</code> 标志的分配</li><li><strong>未记账（unaccounted）链表</strong>：存放普通分配和 root cgroup 的分配</li></ul><p>每个已记账的分配会在 <code>pcpuobj_ext</code> 中记录其所属的 <code>obj_cgroup</code>，用于精确的内存使用追踪。<code>pcpuobj_ext</code> 的定义根据配置条件编译：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// mm/percpu-internal.h
+</span></span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>pcpuobj_ext</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl><span class=cp>#ifdef CONFIG_MEMCG_KMEM
+</span></span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>obj_cgroup</span>   <span class=o>*</span><span class=n>cgroup</span><span class=p>;</span>     <span class=cm>/* 对象所属的 cgroup */</span>
+</span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span><span class=line><span class=cl><span class=cp>#ifdef CONFIG_MEM_ALLOC_PROFILING
+</span></span></span><span class=line><span class=cl>    <span class=k>union</span> <span class=n>codetag_ref</span>   <span class=n>tag</span><span class=p>;</span>         <span class=cm>/* 内存分配 profiling 标签 */</span>
+</span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p>只有当 <code>CONFIG_MEMCG_KMEM</code> 或 <code>CONFIG_MEM_ALLOC_PROFILING</code> 启用时（即 <code>NEED_PCPUOBJ_EXT</code> 被定义），<code>pcpu_chunk</code> 中才会包含 <code>obj_exts</code> 指针数组。当 memcg 记账被禁用（<code>mem_cgroup_kmem_disabled()</code> 返回 true）时，所有分配都走未记账路径，避免额外开销。</p><h4 id=并发控制>并发控制</h4><p>分配器使用两级锁保护内部数据结构：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// mm/percpu.c
+</span></span></span><span class=line><span class=cl><span class=nf>DEFINE_SPINLOCK</span><span class=p>(</span><span class=n>pcpu_lock</span><span class=p>);</span>	<span class=cm>/* all internal data structures */</span>
+</span></span><span class=line><span class=cl><span class=k>static</span> <span class=nf>DEFINE_MUTEX</span><span class=p>(</span><span class=n>pcpu_alloc_mutex</span><span class=p>);</span>	<span class=cm>/* chunk create/destroy, [de]pop, map ext */</span>
+</span></span></code></pre></td></tr></table></div></div><ul><li><strong><code>pcpu_lock</code></strong>（自旋锁）：保护轻量级元数据操作，包括 slot 链表的增删移动、<code>alloc_map</code>/<code>bound_map</code> 位图更新、块元数据维护。通常以 irq-safe 方式获取（分配/释放路径使用 <code>spin_lock_irqsave</code>，balance 工作使用 <code>spin_lock_irq</code>），因此分配和释放操作可以在中断上下文中安全执行。单次临界区较短（主要是位图扫描和标记），实际锁竞争通常有限。</li><li><strong><code>pcpu_alloc_mutex</code></strong>（互斥锁）：保护重量级操作，包括 chunk 的创建与销毁、页面的 populate/depulate、以及 map 扩展。这些操作可能涉及内存分配（<code>vmalloc</code>/<code>memblock</code>）和睡眠，因此使用 mutex 而非 spinlock。由于这些操作不在分配热路径上（通常由后台 balance 工作或首次分配触发），对整体性能影响较小。</li></ul><p>这种两级锁设计将高频的元数据操作与低频的结构变更解耦，避免了重操作阻塞轻操作。</p><h3 id=43-chunkunit-与-group>4.3 Chunk、Unit 与 Group</h3><h4 id=pcpu_chunk-结构>pcpu_chunk 结构</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span><span class=lnt>26
+</span><span class=lnt>27
+</span><span class=lnt>28
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>struct</span> <span class=n>pcpu_chunk</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl><span class=cp>#ifdef CONFIG_PERCPU_STATS
+</span></span></span><span class=line><span class=cl>    <span class=kt>int</span>                 <span class=n>nr_alloc</span><span class=p>;</span>       <span class=cm>/* 分配次数 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>size_t</span>              <span class=n>max_alloc_size</span><span class=p>;</span> <span class=cm>/* 最大分配大小 */</span>
+</span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>list_head</span>    <span class=n>list</span><span class=p>;</span>           <span class=cm>/* 链接到 slot 链表 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span>                 <span class=n>free_bytes</span><span class=p>;</span>     <span class=cm>/* chunk 中的空闲字节数 */</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>pcpu_block_md</span> <span class=n>chunk_md</span><span class=p>;</span>      <span class=cm>/* chunk 级别的块元数据 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>unsigned</span> <span class=kt>long</span>      <span class=o>*</span><span class=n>bound_map</span><span class=p>;</span>      <span class=cm>/* 边界位图（仅分配时更新） */</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=cm>/* base_addr 单独放在一个 cacheline，避免与 free_bytes/chunk_md 发生 false sharing */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>void</span>               <span class=o>*</span><span class=n>base_addr</span> <span class=n>____cacheline_aligned_in_smp</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=kt>unsigned</span> <span class=kt>long</span>      <span class=o>*</span><span class=n>alloc_map</span><span class=p>;</span>      <span class=cm>/* 分配位图（每次分配/释放都更新） */</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>pcpu_block_md</span> <span class=o>*</span><span class=n>md_blocks</span><span class=p>;</span>    <span class=cm>/* 每个块的元数据 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>void</span>               <span class=o>*</span><span class=n>data</span><span class=p>;</span>           <span class=cm>/* chunk 数据 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>bool</span>                <span class=n>immutable</span><span class=p>;</span>      <span class=cm>/* 不允许 populate/depulate */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>bool</span>                <span class=n>isolated</span><span class=p>;</span>       <span class=cm>/* 从活跃 slot 链表隔离 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span>                 <span class=n>start_offset</span><span class=p>;</span>   <span class=cm>/* 与前一个区域的重叠（保证 base_addr 页对齐） */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span>                 <span class=n>end_offset</span><span class=p>;</span>     <span class=cm>/* 保证区域末尾页对齐的额外空间 */</span>
+</span></span><span class=line><span class=cl><span class=cp>#ifdef NEED_PCPUOBJ_EXT
+</span></span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>pcpuobj_ext</span> <span class=o>*</span><span class=n>obj_exts</span><span class=p>;</span>       <span class=cm>/* 对象 cgroup 向量（memcg 记账用） */</span>
+</span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span><span class=line><span class=cl>    <span class=kt>int</span>                 <span class=n>nr_pages</span><span class=p>;</span>       <span class=cm>/* chunk 管理的页面数 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span>                 <span class=n>nr_populated</span><span class=p>;</span>   <span class=cm>/* 已 populate 的页面数 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span>                 <span class=n>nr_empty_pop_pages</span><span class=p>;</span> <span class=cm>/* 空的已填充页面数 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>unsigned</span> <span class=kt>long</span>       <span class=n>populated</span><span class=p>[];</span>    <span class=cm>/* populate 位图 */</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p>注意 <code>base_addr</code> 上的 <code>____cacheline_aligned_in_smp</code> 标注：这是刻意的布局设计，将频繁访问的 <code>free_bytes</code>/<code>chunk_md</code> 与 <code>base_addr</code> 分离到不同的 cacheline，减少并发访问时的 false sharing。<code>start_offset</code> 和 <code>end_offset</code> 用于处理 chunk 区域与页边界不对齐的情况。</p><h4 id=pcpu_block_md-元数据>pcpu_block_md 元数据</h4><p>每个 bitmap block 和整个 chunk 都有 <code>pcpu_block_md</code> 元数据，用于加速空闲区域查找：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>struct</span> <span class=n>pcpu_block_md</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>scan_hint</span><span class=p>;</span>          <span class=cm>/* 扫描提示：已知最大连续空闲 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>scan_hint_start</span><span class=p>;</span>    <span class=cm>/* 扫描提示起始位置 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>contig_hint</span><span class=p>;</span>        <span class=cm>/* 连续空闲区域提示 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>contig_hint_start</span><span class=p>;</span>  <span class=cm>/* 连续空闲区域起始位置 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>left_free</span><span class=p>;</span>          <span class=cm>/* 块左侧空闲大小 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>right_free</span><span class=p>;</span>         <span class=cm>/* 块右侧空闲大小 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>first_free</span><span class=p>;</span>         <span class=cm>/* 第一个空闲位的位置 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>nr_bits</span><span class=p>;</span>            <span class=cm>/* 块的总位数 */</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p>这些提示信息使得分配器无需扫描整个位图就能快速定位空闲区域。</p><h4 id=pcpu_alloc_info-结构>pcpu_alloc_info 结构</h4><p>用于描述 per-CPU 区域的布局信息：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>struct</span> <span class=n>pcpu_alloc_info</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>size_t</span> <span class=n>static_size</span><span class=p>;</span>     <span class=cm>/* 静态区域大小 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>size_t</span> <span class=n>reserved_size</span><span class=p>;</span>   <span class=cm>/* 预留区域大小 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>size_t</span> <span class=n>dyn_size</span><span class=p>;</span>        <span class=cm>/* 动态区域大小 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>size_t</span> <span class=n>unit_size</span><span class=p>;</span>       <span class=cm>/* unit 大小 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>size_t</span> <span class=n>atom_size</span><span class=p>;</span>       <span class=cm>/* 原子分配大小（通常为大页大小） */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>size_t</span> <span class=n>alloc_size</span><span class=p>;</span>      <span class=cm>/* 实际分配大小 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>size_t</span> <span class=n>__ai_size</span><span class=p>;</span>       <span class=cm>/* 内部使用，不要直接使用 */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>nr_groups</span><span class=p>;</span>          <span class=cm>/* 组数（0 表示不需要分组） */</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>pcpu_group_info</span> <span class=n>groups</span><span class=p>[];</span> <span class=cm>/* 组信息 */</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><h3 id=44-分配流程详解>4.4 分配流程详解</h3><p>以 <code>pcpu_alloc_noprof()</code> 为例，详细流程如下：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>pcpu_alloc_noprof(size, align, reserved, gfp)
+</span></span><span class=line><span class=cl>  │
+</span></span><span class=line><span class=cl>  ├─ 计算 bits = DIV_ROUND_UP(size, PCPU_MIN_ALLOC_SIZE)
+</span></span><span class=line><span class=cl>  ├─ 计算 bit_align = align / PCPU_MIN_ALLOC_SIZE
+</span></span><span class=line><span class=cl>  │
+</span></span><span class=line><span class=cl>  ├─ [reserved=true] → 尝试从 pcpu_reserved_chunk 分配
+</span></span><span class=line><span class=cl>  │    ├─ pcpu_find_block_fit() → 查找合适的空闲区域
+</span></span><span class=line><span class=cl>  │    └─ pcpu_alloc_area() → 标记区域为已分配
+</span></span><span class=line><span class=cl>  │
+</span></span><span class=line><span class=cl>  ├─ [reserved=false] 遍历 slot 链表
+</span></span><span class=line><span class=cl>  │    ├─ 对每个 chunk 调用 pcpu_find_block_fit()
+</span></span><span class=line><span class=cl>  │    │    └─ 利用 contig_hint/scan_hint 快速判断
+</span></span><span class=line><span class=cl>  │    ├─ 找到后调用 pcpu_alloc_area()
+</span></span><span class=line><span class=cl>  │    │    └─ 更新 alloc_map、bound_map 和元数据
+</span></span><span class=line><span class=cl>  │    └─ 如果找不到，且非原子分配，创建新 chunk
+</span></span><span class=line><span class=cl>  │
+</span></span><span class=line><span class=cl>  ├─ 对每个 CPU 的对应偏移处 memset 清零
+</span></span><span class=line><span class=cl>  │   （注意：此步骤在 pcpu_lock 释放之后执行，减少锁持有时间）
+</span></span><span class=line><span class=cl>  │
+</span></span><span class=line><span class=cl>  └─ 返回 __addr_to_pcpu_ptr(chunk-&gt;base_addr + off)
+</span></span></code></pre></td></tr></table></div></div><h3 id=45-释放流程详解>4.5 释放流程详解</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>free_percpu(ptr)
+</span></span><span class=line><span class=cl>  │
+</span></span><span class=line><span class=cl>  ├─ addr = __pcpu_ptr_to_addr(ptr)  // per-CPU 指针转为 chunk 内地址
+</span></span><span class=line><span class=cl>  ├─ chunk = pcpu_chunk_addr_search(addr)  // 查找所属 chunk
+</span></span><span class=line><span class=cl>  ├─ off = addr - chunk-&gt;base_addr
+</span></span><span class=line><span class=cl>  │
+</span></span><span class=line><span class=cl>  ├─ pcpu_free_area(chunk, off)
+</span></span><span class=line><span class=cl>  │    ├─ 更新 alloc_map、bound_map
+</span></span><span class=line><span class=cl>  │    └─ 更新块元数据和 chunk 元数据
+</span></span><span class=line><span class=cl>  │
+</span></span><span class=line><span class=cl>  ├─ 如果 chunk 完全空闲且存在其他空闲 chunk
+</span></span><span class=line><span class=cl>  │    └─ 调度 pcpu_balance_work 回收
+</span></span><span class=line><span class=cl>  │
+</span></span><span class=line><span class=cl>  └─ 如果 chunk 应该被回收
+</span></span><span class=line><span class=cl>       └─ pcpu_isolate_chunk() → 调度平衡工作
+</span></span></code></pre></td></tr></table></div></div><hr><h2 id=5-地址转换机制>5. 地址转换机制</h2><p>Per-CPU 变量的核心是地址转换：如何从"模板指针"得到当前 CPU 或指定 CPU 的实际数据地址。</p><h3 id=51-通用实现偏移量数组>5.1 通用实现：偏移量数组</h3><p>大多数架构使用 <code>__per_cpu_offset[]</code> 数组存储每个 CPU 的偏移量：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// include/asm-generic/percpu.h
+</span></span></span><span class=line><span class=cl><span class=k>extern</span> <span class=kt>unsigned</span> <span class=kt>long</span> <span class=n>__per_cpu_offset</span><span class=p>[</span><span class=n>NR_CPUS</span><span class=p>];</span>
+</span></span><span class=line><span class=cl><span class=cp>#define per_cpu_offset(x) (__per_cpu_offset[x])
+</span></span></span></code></pre></td></tr></table></div></div><p>获取指定 CPU 的变量地址：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define per_cpu_ptr(ptr, cpu)                   \
+</span></span></span><span class=line><span class=cl><span class=cp>({                                              \
+</span></span></span><span class=line><span class=cl><span class=cp>    __verify_pcpu_ptr(ptr);                     \
+</span></span></span><span class=line><span class=cl><span class=cp>    SHIFT_PERCPU_PTR((ptr), per_cpu_offset((cpu))); \
+</span></span></span><span class=line><span class=cl><span class=cp>})
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=cp>#define SHIFT_PERCPU_PTR(__p, __offset)         \
+</span></span></span><span class=line><span class=cl><span class=cp>    RELOC_HIDE((typeof(*(__p)) __kernel __force *)(__p), (__offset))
+</span></span></span></code></pre></td></tr></table></div></div><p><code>RELOC_HIDE</code> 的作用是给指针加上偏移量，同时防止编译器基于指针值做出错误假设。<code>__force</code> 用于抑制 sparse 的地址空间警告。</p><p>获取当前 CPU 的变量地址：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#ifndef __my_cpu_offset
+</span></span></span><span class=line><span class=cl><span class=cp>#define __my_cpu_offset per_cpu_offset(raw_smp_processor_id())
+</span></span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span></code></pre></td></tr></table></div></div><p>通用实现需要先获取当前 CPU 编号（<code>raw_smp_processor_id()</code>），再查数组得到偏移量。</p><h3 id=52-x86-实现段寄存器--this_cpu_off>5.2 x86 实现：段寄存器 + this_cpu_off</h3><p>x86 使用更高效的方式，避免了一次内存查找。</p><p>在 x86_64 上，per-CPU 区域通过 <strong>GS 段寄存器</strong>寻址；在 x86_32 上使用 <strong>FS 段寄存器</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// arch/x86/include/asm/percpu.h
+</span></span></span><span class=line><span class=cl><span class=cp>#ifdef CONFIG_X86_64
+</span></span></span><span class=line><span class=cl><span class=cp>#define __percpu_seg    gs
+</span></span></span><span class=line><span class=cl><span class=cp>#else
+</span></span></span><span class=line><span class=cl><span class=cp>#define __percpu_seg    fs
+</span></span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span></code></pre></td></tr></table></div></div><p>x86 定义了 <code>this_cpu_off</code> 这个 per-CPU 变量，存储每个 CPU 自己的偏移量：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// arch/x86/kernel/setup_percpu.c
+</span></span></span><span class=line><span class=cl><span class=nf>DEFINE_PER_CPU_READ_MOSTLY</span><span class=p>(</span><span class=kt>unsigned</span> <span class=kt>long</span><span class=p>,</span> <span class=n>this_cpu_off</span><span class=p>)</span> <span class=o>=</span> <span class=n>BOOT_PERCPU_OFFSET</span><span class=p>;</span>
+</span></span></code></pre></td></tr></table></div></div><p>并自定义了 <code>__my_cpu_offset</code>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define __my_cpu_offset this_cpu_read(this_cpu_off)
+</span></span></span></code></pre></td></tr></table></div></div><p>更关键的是，x86 提供了优化的 <code>arch_raw_cpu_ptr()</code>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define arch_raw_cpu_ptr(_ptr)                                  \
+</span></span></span><span class=line><span class=cl><span class=cp>({                                                              \
+</span></span></span><span class=line><span class=cl><span class=cp>    unsigned long tcp_ptr__ = raw_cpu_read_long(this_cpu_off);  \
+</span></span></span><span class=line><span class=cl><span class=cp>    tcp_ptr__ += (__force unsigned long)(_ptr);                 \
+</span></span></span><span class=line><span class=cl><span class=cp>    (typeof(*(_ptr)) __kernel __force *)tcp_ptr__;              \
+</span></span></span><span class=line><span class=cl><span class=cp>})
+</span></span></span></code></pre></td></tr></table></div></div><p>这里 <code>raw_cpu_read_long(this_cpu_off)</code> 通过 GS 段寄存器直接读取当前 CPU 的 <code>this_cpu_off</code>，只需一条汇编指令（<code>mov %gs:this_cpu_off</code>），无需先获取 CPU 编号再查数组。</p><h3 id=53-地址转换辅助宏>5.3 地址转换辅助宏</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// mm/percpu.c
+</span></span></span><span class=line><span class=cl><span class=cp>#define __addr_to_pcpu_ptr(addr)                                \
+</span></span></span><span class=line><span class=cl><span class=cp>    (void __percpu *)((unsigned long)(addr) -                   \
+</span></span></span><span class=line><span class=cl><span class=cp>                      (unsigned long)pcpu_base_addr +           \
+</span></span></span><span class=line><span class=cl><span class=cp>                      (unsigned long)__per_cpu_start)
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=cp>#define __pcpu_ptr_to_addr(ptr)                                 \
+</span></span></span><span class=line><span class=cl><span class=cp>    (void __force *)((unsigned long)(ptr) +                     \
+</span></span></span><span class=line><span class=cl><span class=cp>                     (unsigned long)pcpu_base_addr -            \
+</span></span></span><span class=line><span class=cl><span class=cp>                     (unsigned long)__per_cpu_start)
+</span></span></span></code></pre></td></tr></table></div></div><ul><li><code>__addr_to_pcpu_ptr</code>：将 chunk 内的绝对地址转为 per-CPU 指针</li><li><code>__pcpu_ptr_to_addr</code>：将 per-CPU 指针转为 chunk 内的绝对地址</li></ul><p>这两个转换基于以下关系：</p><ul><li>per-CPU 指针的"值"等于 <code>__per_cpu_start + chunk内偏移</code></li><li>chunk 的基地址 <code>pcpu_base_addr</code> 对应 <code>__per_cpu_start</code></li></ul><hr><h2 id=6-访问接口>6. 访问接口</h2><h3 id=61-指针获取>6.1 指针获取</h3><table><thead><tr><th>接口</th><th>说明</th><th style=text-align:center>preempt 安全</th></tr></thead><tbody><tr><td><code>per_cpu_ptr(ptr, cpu)</code></td><td>获取指定 CPU 的副本地址</td><td style=text-align:center>—</td></tr><tr><td><code>this_cpu_ptr(ptr)</code></td><td>获取当前 CPU 的副本地址</td><td style=text-align:center>✗（debug 模式检查）</td></tr><tr><td><code>raw_cpu_ptr(ptr)</code></td><td>获取当前 CPU 的副本地址（不检查 preempt）</td><td style=text-align:center>✗</td></tr></tbody></table><p>对于<strong>静态</strong> per-CPU 变量，还有一个更常用的便捷宏 <code>per_cpu(var, cpu)</code>，它直接返回变量值（左值）而非指针：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// include/linux/percpu-defs.h
+</span></span></span><span class=line><span class=cl><span class=cp>#define per_cpu(var, cpu)	(*per_cpu_ptr(&amp;(var), cpu))
+</span></span></span></code></pre></td></tr></table></div></div><p><code>per_cpu(var, cpu)</code> 等价于 <code>*per_cpu_ptr(&amp;var, cpu)</code>，但写法更简洁。例如：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 读取指定 CPU 的 my_counter 值
+</span></span></span><span class=line><span class=cl><span class=kt>int</span> <span class=n>val</span> <span class=o>=</span> <span class=nf>per_cpu</span><span class=p>(</span><span class=n>my_counter</span><span class=p>,</span> <span class=n>cpu</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 等价写法
+</span></span></span><span class=line><span class=cl><span class=kt>int</span> <span class=n>val</span> <span class=o>=</span> <span class=o>*</span><span class=nf>per_cpu_ptr</span><span class=p>(</span><span class=o>&amp;</span><span class=n>my_counter</span><span class=p>,</span> <span class=n>cpu</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p><code>this_cpu_ptr</code> 和 <code>raw_cpu_ptr</code> 的区别：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 开启 CONFIG_DEBUG_PREEMPT 时，this_cpu_ptr 会检查 preempt 安全性
+</span></span></span><span class=line><span class=cl><span class=cp>#ifdef CONFIG_DEBUG_PREEMPT
+</span></span></span><span class=line><span class=cl><span class=cp>#define this_cpu_ptr(ptr)                       \
+</span></span></span><span class=line><span class=cl><span class=cp>({                                              \
+</span></span></span><span class=line><span class=cl><span class=cp>    __verify_pcpu_ptr(ptr);                     \
+</span></span></span><span class=line><span class=cl><span class=cp>    SHIFT_PERCPU_PTR(ptr, my_cpu_offset);       \
+</span></span></span><span class=line><span class=cl><span class=cp>})
+</span></span></span><span class=line><span class=cl><span class=cp>#else
+</span></span></span><span class=line><span class=cl><span class=cp>#define this_cpu_ptr(ptr) raw_cpu_ptr(ptr)
+</span></span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span></code></pre></td></tr></table></div></div><p>在 <code>CONFIG_DEBUG_PREEMPT</code> 开启时，<code>this_cpu_ptr</code> 使用 <code>smp_processor_id()</code>（会检查 preempt），而 <code>raw_cpu_ptr</code> 使用 <code>raw_smp_processor_id()</code>。</p><h3 id=62-读写操作三级安全性>6.2 读写操作（三级安全性）</h3><p>per-CPU 读写操作按安全性分为三级，提供从简单读写到原子 RMW（Read-Modify-Write）的完整操作集：</p><h4 id=raw_cpu_--无任何保护>raw_cpu_* — 无任何保护</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>raw_cpu_read</span><span class=p>(</span><span class=n>pcp</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>raw_cpu_write</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>raw_cpu_add</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>raw_cpu_and</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>raw_cpu_or</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>raw_cpu_add_return</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>raw_cpu_xchg</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>nval</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>raw_cpu_cmpxchg</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>oval</span><span class=p>,</span> <span class=n>nval</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>raw_cpu_try_cmpxchg</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>ovalp</span><span class=p>,</span> <span class=n>nval</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>raw_cpu_sub</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>raw_cpu_inc</span><span class=p>(</span><span class=n>pcp</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>raw_cpu_dec</span><span class=p>(</span><span class=n>pcp</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=c1>// ... 以及 _return 变体
+</span></span></span></code></pre></td></tr></table></div></div><p>其中 <code>try_cmpxchg</code> 与 <code>cmpxchg</code> 的语义差异值得注意：<code>cmpxchg</code> 返回旧的内存值（调用者自行与期望值比较），而 <code>try_cmpxchg</code> 返回 <code>bool</code> 并在失败时通过指针回写实际值，更适合 CAS 循环。在 x86 上，<code>try_cmpxchg</code> 利用 <code>CC_SET(z)</code> / <code>CC_OUT(z)</code> 直接读取 ZF 标志位判断成败，避免额外的比较指令，生成的代码更紧凑。</p><p><strong>不检查 preempt 安全性</strong>。调用者必须自行保证不会被抢占或中断到同一变量。除非你明确知道自己在做什么，否则不应使用。</p><h4 id=_this_--preempt-检查>_<em>this_cpu</em>* — preempt 检查</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>__this_cpu_read</span><span class=p>(</span><span class=n>pcp</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>__this_cpu_write</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>__this_cpu_add</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=c1>// ... 等等
+</span></span></span></code></pre></td></tr></table></div></div><p>在 <code>CONFIG_DEBUG_PREEMPT</code> 开启时，会检查当前是否在 preempt-safe 的上下文中。如果不在，会打印警告。但<strong>不提供真正的保护</strong>，只是调试辅助。</p><h4 id=this_cpu_--中断安全>this_cpu_* — 中断安全</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>this_cpu_read</span><span class=p>(</span><span class=n>pcp</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>this_cpu_write</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>this_cpu_add</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>this_cpu_and</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>this_cpu_or</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>this_cpu_add_return</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>val</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>this_cpu_xchg</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>nval</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>this_cpu_cmpxchg</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>oval</span><span class=p>,</span> <span class=n>nval</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=nf>this_cpu_try_cmpxchg</span><span class=p>(</span><span class=n>pcp</span><span class=p>,</span> <span class=n>ovalp</span><span class=p>,</span> <span class=n>nval</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=c1>// ... 等等
+</span></span></span></code></pre></td></tr></table></div></div><p><strong>提供中断安全性</strong>。在通用实现中，<code>this_cpu_*</code> 的写和 RMW 操作通过 <code>raw_local_irq_save/restore</code> 禁用本地中断来保证不被中断处理程序干扰（<code>raw_</code> 前缀版本不触发 lockdep/irq 追踪等调试钩子，开销更小）。但<strong>读操作</strong>有两条路径（<code>this_cpu_generic_read</code>）：</p><ul><li>当变量大小是原生字长（<code>__native_word(pcp)</code> 为真，如 4 字节或 8 字节）时，仅使用 <code>preempt_disable_notrace()</code> 禁止抢占，无需关中断——因为对原生字长的单次加载本身就是原子的，即使中断发生并修改了该变量，加载指令读到的仍然是中断前或中断后的完整值，不会出现"撕裂读"</li><li>当变量大小非原生字长时，使用 <code>raw_local_irq_save/restore</code> 禁用本地中断，防止多字加载被中断打断导致数据不一致</li></ul><p>在 x86 等有架构优化的平台上，可能使用单条原子指令实现，无需禁用中断。</p><h4 id=分发机制__pcpu_size_call>分发机制：__pcpu_size_call</h4><p>所有 this_cpu 操作通过 <code>__pcpu_size_call</code> 系列宏实现按变量大小自动分发：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define __pcpu_size_call(stem, variable, ...)           \
+</span></span></span><span class=line><span class=cl><span class=cp>do {                                                    \
+</span></span></span><span class=line><span class=cl><span class=cp>    __verify_pcpu_ptr(&amp;(variable));                     \
+</span></span></span><span class=line><span class=cl><span class=cp>    switch(sizeof(variable)) {                          \
+</span></span></span><span class=line><span class=cl><span class=cp>    case 1: stem##1(variable, __VA_ARGS__);break;      \
+</span></span></span><span class=line><span class=cl><span class=cp>    case 2: stem##2(variable, __VA_ARGS__);break;      \
+</span></span></span><span class=line><span class=cl><span class=cp>    case 4: stem##4(variable, __VA_ARGS__);break;      \
+</span></span></span><span class=line><span class=cl><span class=cp>    case 8: stem##8(variable, __VA_ARGS__);break;      \
+</span></span></span><span class=line><span class=cl><span class=cp>    default:                                            \
+</span></span></span><span class=line><span class=cl><span class=cp>        __bad_size_call_parameter();break;              \
+</span></span></span><span class=line><span class=cl><span class=cp>    }                                                   \
+</span></span></span><span class=line><span class=cl><span class=cp>} while (0)
+</span></span></span></code></pre></td></tr></table></div></div><p>例如 <code>this_cpu_add(pcp, val)</code> 展开为 <code>__pcpu_size_call(this_cpu_add_, pcp, val)</code>，根据变量大小分发到 <code>this_cpu_add_1/2/4/8</code>。架构可以针对特定大小提供优化实现，未提供的则回退到通用实现。</p><h3 id=63-临界区接口getput>6.3 临界区接口：get/put</h3><p>对于需要将多个操作作为一个整体执行的场景，内核提供了 <code>get_cpu_var/put_cpu_var</code> 和 <code>get_cpu_ptr/put_cpu_ptr</code> 接口：</p><table><thead><tr><th>接口</th><th>说明</th></tr></thead><tbody><tr><td><code>get_cpu_var(var)</code></td><td>禁止抢占 + 获取当前 CPU 变量的左值</td></tr><tr><td><code>put_cpu_var(var)</code></td><td>恢复抢占</td></tr><tr><td><code>get_cpu_ptr(ptr)</code></td><td>禁止抢占 + 获取当前 CPU 变量的指针</td></tr><tr><td><code>put_cpu_ptr(ptr)</code></td><td>恢复抢占</td></tr></tbody></table><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define get_cpu_var(var)                        \
+</span></span></span><span class=line><span class=cl><span class=cp>(*({                                            \
+</span></span></span><span class=line><span class=cl><span class=cp>    preempt_disable();                          \
+</span></span></span><span class=line><span class=cl><span class=cp>    this_cpu_ptr(&amp;var);                         \
+</span></span></span><span class=line><span class=cl><span class=cp>}))
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=cp>#define put_cpu_var(var)                        \
+</span></span></span><span class=line><span class=cl><span class=cp>do {                                            \
+</span></span></span><span class=line><span class=cl><span class=cp>    (void)&amp;(var);                               \
+</span></span></span><span class=line><span class=cl><span class=cp>    preempt_enable();                           \
+</span></span></span><span class=line><span class=cl><span class=cp>} while (0)
+</span></span></span></code></pre></td></tr></table></div></div><p><code>get_cpu_var</code> 返回的是<strong>左值</strong>，可以直接赋值：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>get_cpu_var</span><span class=p>(</span><span class=n>my_counter</span><span class=p>)</span><span class=o>++</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=nf>put_cpu_var</span><span class=p>(</span><span class=n>my_counter</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>这对接口通过 <code>preempt_disable/enable</code> 确保在访问期间不会被调度到其他 CPU。适用于需要<strong>多个操作作为一个整体</strong>执行的简单场景。但注意，它们<strong>不防止中断</strong>，如果中断处理程序也访问同一变量，仍需使用 <code>this_cpu_*</code> 或额外的中断保护。</p><h3 id=64-up-配置的退化>6.4 UP 配置的退化</h3><p>在单处理器（<code>!CONFIG_SMP</code>）配置下，per-CPU 机制会大幅退化，所有访问退化为对普通全局变量的操作：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// !CONFIG_SMP 路径（include/linux/percpu-defs.h）
+</span></span></span><span class=line><span class=cl><span class=cp>#define per_cpu_ptr(ptr, cpu)	({ (void)(cpu); VERIFY_PERCPU_PTR(ptr); })
+</span></span></span><span class=line><span class=cl><span class=cp>#define raw_cpu_ptr(ptr)	per_cpu_ptr(ptr, 0)
+</span></span></span><span class=line><span class=cl><span class=cp>#define this_cpu_ptr(ptr)	raw_cpu_ptr(ptr)
+</span></span></span></code></pre></td></tr></table></div></div><ul><li><code>per_cpu_ptr(ptr, cpu)</code> 忽略 <code>cpu</code> 参数，直接返回原始指针</li><li><code>this_cpu_ptr</code> 和 <code>raw_cpu_ptr</code> 等价，无任何额外开销</li><li><code>this_cpu_*</code> / <code>raw_cpu_*</code> / <code>__this_cpu_*</code> 的通用回退实现退化为普通的变量读写和算术操作</li><li>不存在偏移量数组、段寄存器等机制，整个 per-CPU 区域只有一份数据</li></ul><p>这意味着在 UP 内核上，per-CPU 变量本质上就是普通全局变量。代码中仍然需要正确使用 per-CPU 访问接口，以保证在 SMP 和 UP 配置下都能编译通过。</p><p>值得注意的是，<code>percpu_counter</code> 在 UP 下退化更为彻底——整个结构体缩减为只有 <code>s64 count</code> 字段（无 spinlock、无 per-CPU counters），所有操作退化为简单的 <code>local_irq_save</code> 保护下的标量加减法：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// !CONFIG_SMP 路径（include/linux/percpu_counter.h）
+</span></span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>percpu_counter</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>s64</span> <span class=n>count</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>static</span> <span class=kr>inline</span> <span class=kt>void</span> <span class=nf>percpu_counter_add</span><span class=p>(</span><span class=k>struct</span> <span class=n>percpu_counter</span> <span class=o>*</span><span class=n>fbc</span><span class=p>,</span> <span class=n>s64</span> <span class=n>amount</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>unsigned</span> <span class=kt>long</span> <span class=n>flags</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=nf>local_irq_save</span><span class=p>(</span><span class=n>flags</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>fbc</span><span class=o>-&gt;</span><span class=n>count</span> <span class=o>+=</span> <span class=n>amount</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=nf>local_irq_restore</span><span class=p>(</span><span class=n>flags</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=c1>// percpu_counter_sum() 等价于 percpu_counter_read()，直接返回 fbc-&gt;count
+</span></span></span><span class=line><span class=cl><span class=c1>// percpu_counter_init/destroy 变为空操作（无 per-CPU 内存分配）
+</span></span></span></code></pre></td></tr></table></div></div><p>这使得 UP 内核上 <code>percpu_counter</code> 的内存开销和运行时开销都降到最低。</p><hr><h2 id=7-x86-架构的优化实现>7. x86 架构的优化实现</h2><p>x86 架构对 per-CPU 操作进行了深度优化，利用段寄存器和 x86 原子指令实现高效访问。</p><h3 id=71-段寄存器寻址>7.1 段寄存器寻址</h3><p>x86_64 使用 GS 段寄存器，x86_32 使用 FS 段寄存器作为 per-CPU 基址。当编译器支持 Named Address Space 时（<code>CONFIG_USE_X86_SEG_SUPPORT</code>），per-CPU 读写被编译为直接的段前缀内存访问：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 当 CONFIG_USE_X86_SEG_SUPPORT 启用时
+</span></span></span><span class=line><span class=cl><span class=cp>#define __raw_cpu_read(qual, pcp)                        \
+</span></span></span><span class=line><span class=cl><span class=cp>({                                                       \
+</span></span></span><span class=line><span class=cl><span class=cp>    *(qual __my_cpu_type(pcp) *)__my_cpu_ptr(&amp;(pcp));   \
+</span></span></span><span class=line><span class=cl><span class=cp>})
+</span></span></span></code></pre></td></tr></table></div></div><p>其中 <code>__my_cpu_type</code> 添加 <code>__seg_gs</code> / <code>__seg_fs</code> 修饰：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define __my_cpu_type(var)   typeof(var) __percpu_seg_override
+</span></span></span><span class=line><span class=cl><span class=c1>// x86_64: __percpu_seg_override = __seg_gs
+</span></span></span><span class=line><span class=cl><span class=c1>// x86_32: __percpu_seg_override = __seg_fs
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=cp>#define __my_cpu_ptr(ptr)   (__my_cpu_type(*(ptr))*)(__force uintptr_t)(ptr)
+</span></span></span></code></pre></td></tr></table></div></div><p>这使得编译器可以直接生成 <code>mov %gs:offset</code> 指令，一条指令即可完成 per-CPU 变量的读写。</p><p>当不支持 Named Address Space 时，回退到内联汇编方式：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define raw_cpu_read_1(pcp)   percpu_from_op(1, , &#34;mov&#34;, pcp)
+</span></span></span></code></pre></td></tr></table></div></div><p>展开为类似：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-asm data-lang=asm><span class=line><span class=cl><span class=nf>movb</span> <span class=nv>%gs</span><span class=p>:</span><span class=no>pcp</span><span class=p>,</span> <span class=nv>%al</span>
+</span></span></code></pre></td></tr></table></div></div><h3 id=72-x86-指令级优化>7.2 x86 指令级优化</h3><p>x86 利用其丰富的指令集实现高效的 per-CPU 操作，包括普通读写和 RMW（Read-Modify-Write）操作：</p><h4 id=percpu_add_op--加法操作>percpu_add_op — 加法操作</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define percpu_add_op(size, qual, var, val)               \
+</span></span></span><span class=line><span class=cl><span class=cp>do {                                                       \
+</span></span></span><span class=line><span class=cl><span class=cp>    const int pao_ID__ = (__builtin_constant_p(val) &amp;&amp;    \
+</span></span></span><span class=line><span class=cl><span class=cp>                          ((val) == 1 || (val) == -1)) ?  \
+</span></span></span><span class=line><span class=cl><span class=cp>                            (int)(val) : 0;                \
+</span></span></span><span class=line><span class=cl><span class=cp>    if (pao_ID__ == 1)                                     \
+</span></span></span><span class=line><span class=cl><span class=cp>        percpu_unary_op(size, qual, &#34;inc&#34;, var);          \
+</span></span></span><span class=line><span class=cl><span class=cp>    else if (pao_ID__ == -1)                               \
+</span></span></span><span class=line><span class=cl><span class=cp>        percpu_unary_op(size, qual, &#34;dec&#34;, var);          \
+</span></span></span><span class=line><span class=cl><span class=cp>    else                                                   \
+</span></span></span><span class=line><span class=cl><span class=cp>        percpu_to_op(size, qual, &#34;add&#34;, var, val);        \
+</span></span></span><span class=line><span class=cl><span class=cp>} while (0)
+</span></span></span></code></pre></td></tr></table></div></div><p>对于 <code>+1</code> 和 <code>-1</code>，使用更短的 <code>inc</code>/<code>dec</code> 指令而非 <code>add</code>。</p><h4 id=percpu_add_return_op--带返回值的加法>percpu_add_return_op — 带返回值的加法</h4><p>使用 x86 的 <code>xadd</code> 指令（exchange and add），原子地完成加法并返回新值。核心逻辑：将临时值与 per-CPU 变量交换后再加上原值，即 <code>paro_tmp__ + _val</code> 即为最终结果。</p><h4 id=percpu_cmpxchg_op--比较并交换>percpu_cmpxchg_op — 比较并交换</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define percpu_cmpxchg_op(size, qual, _var, _oval, _nval)  \
+</span></span></span><span class=line><span class=cl><span class=cp>({                                                          \
+</span></span></span><span class=line><span class=cl><span class=cp>    __pcpu_type_##size pco_old__ = __pcpu_cast_##size(_oval); \
+</span></span></span><span class=line><span class=cl><span class=cp>    __pcpu_type_##size pco_new__ = __pcpu_cast_##size(_nval); \
+</span></span></span><span class=line><span class=cl><span class=cp>    asm qual (__pcpu_op2_##size(&#34;cmpxchg&#34;, &#34;%[nval]&#34;,      \
+</span></span></span><span class=line><span class=cl><span class=cp>                                __percpu_arg([var]))        \
+</span></span></span><span class=line><span class=cl><span class=cp>          : [oval] &#34;+a&#34; (pco_old__),                       \
+</span></span></span><span class=line><span class=cl><span class=cp>            [var] &#34;+m&#34; (__my_cpu_var(_var))                \
+</span></span></span><span class=line><span class=cl><span class=cp>          : [nval] __pcpu_reg_##size(, pco_new__)          \
+</span></span></span><span class=line><span class=cl><span class=cp>          : &#34;memory&#34;);                                     \
+</span></span></span><span class=line><span class=cl><span class=cp>    (typeof(_var))(unsigned long) pco_old__;               \
+</span></span></span><span class=line><span class=cl><span class=cp>})
+</span></span></span></code></pre></td></tr></table></div></div><p>使用 x86 的 <code>cmpxchg</code> 指令。注意：<strong>这里没有 <code>lock</code> 前缀</strong>。<code>lock</code> 前缀的核心作用是保证操作在多核环境下的原子性（独占缓存行直到 RMW 完成）。在 per-CPU 场景下，只有当前 CPU 会访问自己的副本，不存在跨核并发修改，因此无需 <code>lock</code> 前缀。加上 <code>lock</code> 反而会不必要地触发缓存一致性协议（MESI），增加开销。</p><h4 id=cmpxchg8b--cmpxchg16b--双字四字比较交换>cmpxchg8b / cmpxchg16b — 双字/四字比较交换</h4><p>x86 还支持 64 位（32 位模式下使用 <code>cmpxchg8b</code>）和 128 位（64 位模式下使用 <code>cmpxchg16b</code>）的 per-CPU 原子操作：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// x86_64
+</span></span></span><span class=line><span class=cl><span class=cp>#define raw_cpu_cmpxchg128(pcp, oval, nval) \
+</span></span></span><span class=line><span class=cl><span class=cp>    percpu_cmpxchg128_op(16, , pcp, oval, nval)
+</span></span></span><span class=line><span class=cl><span class=cp>#define this_cpu_cmpxchg128(pcp, oval, nval) \
+</span></span></span><span class=line><span class=cl><span class=cp>    percpu_cmpxchg128_op(16, volatile, pcp, oval, nval)
+</span></span></span></code></pre></td></tr></table></div></div><p>底层 <code>percpu_cmpxchg128_op</code> 使用 <code>ALTERNATIVE</code> 宏实现运行时指令热替换：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>asm</span> <span class=nf>qual</span> <span class=p>(</span><span class=nf>ALTERNATIVE</span><span class=p>(</span><span class=s>&#34;call this_cpu_cmpxchg16b_emu&#34;</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                      <span class=s>&#34;cmpxchg16b &#34;</span> <span class=nf>__percpu_arg</span><span class=p>([</span><span class=n>var</span><span class=p>]),</span>
+</span></span><span class=line><span class=cl>                      <span class=n>X86_FEATURE_CX16</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>...);</span>
+</span></span></code></pre></td></tr></table></div></div><p>如果 CPU 支持 <code>CX16</code> 特性（通过 <code>X86_FEATURE_CX16</code> 检测），则直接使用硬件 <code>cmpxchg16b</code> 指令；否则回退到软件模拟函数 <code>this_cpu_cmpxchg16b_emu</code>。<code>ALTERNATIVE</code> 机制在启动时根据 CPU 特性动态替换指令序列，避免了运行时特性检测的开销。</p><h4 id=this_cpu_xchg--交换操作的特殊实现>this_cpu_xchg — 交换操作的特殊实现</h4><p>x86 的 <code>this_cpu_xchg</code> 没有直接使用 <code>xchg</code> 指令，而是使用无 <code>lock</code> 前缀的 <code>cmpxchg</code> 循环实现：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define this_percpu_xchg_op(_var, _nval)                \
+</span></span></span><span class=line><span class=cl><span class=cp>({                                                      \
+</span></span></span><span class=line><span class=cl><span class=cp>    typeof(_var) pxo_old__ = this_cpu_read(_var);       \
+</span></span></span><span class=line><span class=cl><span class=cp>    do { } while (!this_cpu_try_cmpxchg(_var, &amp;pxo_old__, _nval)); \
+</span></span></span><span class=line><span class=cl><span class=cp>    pxo_old__;                                          \
+</span></span></span><span class=line><span class=cl><span class=cp>})
+</span></span></span></code></pre></td></tr></table></div></div><p>这是因为 x86 的 <code>xchg</code> 指令隐含 <code>lock</code> 前缀语义，会独占缓存行并阻止硬件预取，开销很大。而 <code>cmpxchg</code>（无显式 <code>lock</code>）不会触发锁语义，在 per-CPU 场景下（仅本 CPU 访问）更加高效。相比之下，<code>raw_cpu_xchg</code> 则直接使用简单的 load-store 序列，因为 raw 级别不需要中断安全保证。</p><h3 id=73-named-address-space-优化>7.3 Named Address Space 优化</h3><p>当编译器支持 C11 Named Address Space（<code>CONFIG_CC_HAS_NAMED_AS</code>，GCC 9+）时，x86 可以使用 <code>__seg_gs</code>/<code>__seg_fs</code> 地址空间修饰符：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#ifdef CONFIG_CC_HAS_NAMED_AS
+</span></span></span><span class=line><span class=cl><span class=cp>#ifdef __CHECKER__
+</span></span></span><span class=line><span class=cl><span class=cp>#define __seg_gs    __attribute__((address_space(__seg_gs)))
+</span></span></span><span class=line><span class=cl><span class=cp>#define __seg_fs    __attribute__((address_space(__seg_fs)))
+</span></span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=cp>#ifdef CONFIG_X86_64
+</span></span></span><span class=line><span class=cl><span class=cp>#define __percpu_seg_override   __seg_gs
+</span></span></span><span class=line><span class=cl><span class=cp>#else
+</span></span></span><span class=line><span class=cl><span class=cp>#define __percpu_seg_override   __seg_fs
+</span></span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span></code></pre></td></tr></table></div></div><p>这让编译器知道 per-CPU 变量位于 GS/FS 段，可以生成更优的代码，且静态分析工具能更好地检查。相比传统内联汇编方式，这种方式让编译器有更大的优化空间（如 CSE、指令调度等）。</p><h3 id=74-this_cpu_read_stable--可缓存的读取优化>7.4 this_cpu_read_stable — 可缓存的读取优化</h3><p>x86 提供了一个特殊的读取变体 <code>this_cpu_read_stable()</code>，它允许编译器<strong>缓存</strong>读取结果：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define this_cpu_read_stable(pcp)  __pcpu_size_call_return(this_cpu_read_stable_, pcp)
+</span></span></span></code></pre></td></tr></table></div></div><p>与普通的 <code>this_cpu_read()</code>（每次访问都从 per-CPU 区域重新加载）不同，<code>this_cpu_read_stable()</code> 使用 <code>percpu_stable_op</code> 宏，其中使用立即数地址（<code>"i" (&(_var))</code>）而非内存操作数，允许编译器将值缓存在寄存器中。</p><p>这个优化仅适用于<strong>值在跨 CPU 访问时仍然有效</strong>的场景——即那些虽然实现为 per-CPU 变量、但实际上是 per-thread 的数据。典型用户包括：</p><ul><li><code>pcpu_hot.current_task</code>：当前任务指针，对同一线程在不同 CPU 上值相同</li><li><code>pcpu_hot.top_of_stack</code>：当前栈顶地址，同样是 per-thread 性质</li></ul><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// arch/x86/include/asm/current.h
+</span></span></span><span class=line><span class=cl><span class=k>static</span> <span class=n>__always_inline</span> <span class=k>struct</span> <span class=n>task_struct</span> <span class=o>*</span><span class=nf>get_current</span><span class=p>(</span><span class=kt>void</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 当编译器支持 Named Address Space 时，使用更优的 const 变体
+</span></span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=nf>IS_ENABLED</span><span class=p>(</span><span class=n>CONFIG_USE_X86_SEG_SUPPORT</span><span class=p>))</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=nf>this_cpu_read_const</span><span class=p>(</span><span class=n>const_pcpu_hot</span><span class=p>.</span><span class=n>current_task</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nf>this_cpu_read_stable</span><span class=p>(</span><span class=n>pcpu_hot</span><span class=p>.</span><span class=n>current_task</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>当 <code>CONFIG_USE_X86_SEG_SUPPORT</code> 启用时（编译器支持 <code>__seg_gs</code>/<code>__seg_fs</code>），使用 <code>this_cpu_read_const</code> 读取 <code>const_pcpu_hot</code>——一个标记为 <code>const</code> 的 per-CPU 结构，编译器可进一步优化。否则回退到 <code>this_cpu_read_stable</code>。两者都允许编译器缓存读取结果，避免重复的段前缀内存访问。</p><p>以上各节从编译时段布局到运行时动态分配，从通用偏移量数组到 x86 段寄存器优化，完整描述了 per-CPU 机制的静态特性。接下来的部分将转向动态视角——per-CPU 区域在内核启动过程中是如何被初始化的。</p><hr><h2 id=8-初始化流程>8. 初始化流程</h2><h3 id=81-早期启动阶段>8.1 早期启动阶段</h3><p>在 per-CPU 区域初始化之前，内核使用一组<strong>早期 per-CPU 宏</strong>（x86 特有）：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=cp>#define DEFINE_EARLY_PER_CPU(_type, _name, _initvalue)         \
+</span></span></span><span class=line><span class=cl><span class=cp>    DEFINE_PER_CPU(_type, _name) = _initvalue;                 \
+</span></span></span><span class=line><span class=cl><span class=cp>    __typeof__(_type) _name##_early_map[NR_CPUS] __initdata =  \
+</span></span></span><span class=line><span class=cl><span class=cp>                            { [0 ... NR_CPUS-1] = _initvalue };\
+</span></span></span><span class=line><span class=cl><span class=cp>    __typeof__(_type) *_name##_early_ptr __refdata = _name##_early_map
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=cp>#define early_per_cpu(_name, _cpu)                              \
+</span></span></span><span class=line><span class=cl><span class=cp>    *(early_per_cpu_ptr(_name) ?                                \
+</span></span></span><span class=line><span class=cl><span class=cp>        &amp;early_per_cpu_ptr(_name)[_cpu] :                      \
+</span></span></span><span class=line><span class=cl><span class=cp>        &amp;per_cpu(_name, _cpu))
+</span></span></span></code></pre></td></tr></table></div></div><p>初始化前，通过 <code>_early_map</code> 数组访问；初始化后，<code>_early_ptr</code> 被置为 NULL，回退到正常的 per-CPU 机制。</p><p>典型使用场景（x86）：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=nf>DECLARE_EARLY_PER_CPU_READ_MOSTLY</span><span class=p>(</span><span class=n>u32</span><span class=p>,</span> <span class=n>x86_cpu_to_apicid</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=nf>DECLARE_EARLY_PER_CPU</span><span class=p>(</span><span class=kt>int</span><span class=p>,</span> <span class=n>x86_cpu_to_node_map</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><h3 id=82-setup_per_cpu_areas>8.2 setup_per_cpu_areas()</h3><p><code>setup_per_cpu_areas()</code> 是 per-CPU 初始化的核心入口，在 <code>init/main.c</code> 的 <code>start_kernel()</code> 中调用：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// init/main.c
+</span></span></span><span class=line><span class=cl><span class=n>asmlinkage</span> <span class=n>__visible</span> <span class=n>__init</span> <span class=n>__no_sanitize_address</span> \
+</span></span><span class=line><span class=cl><span class=n>__noreturn</span> <span class=kt>void</span> <span class=nf>start_kernel</span><span class=p>(</span><span class=kt>void</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ...
+</span></span></span><span class=line><span class=cl>    <span class=nf>setup_per_cpu_areas</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ...
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>以 x86 为例，其核心流程（<code>arch/x86/kernel/setup_percpu.c</code>，以下为简化伪代码）：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span><span class=lnt>24
+</span><span class=lnt>25
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=kt>void</span> <span class=n>__init</span> <span class=nf>setup_per_cpu_areas</span><span class=p>(</span><span class=kt>void</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 1. 选择分配策略
+</span></span></span><span class=line><span class=cl>    <span class=c1>//    优先使用 embed 分配器，失败则回退到 page 分配器
+</span></span></span><span class=line><span class=cl>    <span class=n>rc</span> <span class=o>=</span> <span class=nf>pcpu_embed_first_chunk</span><span class=p>(</span><span class=n>PERCPU_FIRST_CHUNK_RESERVE</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                                <span class=n>dyn_size</span><span class=p>,</span> <span class=n>atom_size</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                                <span class=n>pcpu_cpu_distance</span><span class=p>,</span> <span class=n>pcpu_cpu_to_node</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// 失败时: rc = pcpu_page_first_chunk(...)
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 2. 设置每个 CPU 的偏移量
+</span></span></span><span class=line><span class=cl>    <span class=n>delta</span> <span class=o>=</span> <span class=p>(</span><span class=kt>unsigned</span> <span class=kt>long</span><span class=p>)</span><span class=n>pcpu_base_addr</span> <span class=o>-</span> <span class=p>(</span><span class=kt>unsigned</span> <span class=kt>long</span><span class=p>)</span><span class=n>__per_cpu_start</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=nf>for_each_possible_cpu</span><span class=p>(</span><span class=n>cpu</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=nf>per_cpu_offset</span><span class=p>(</span><span class=n>cpu</span><span class=p>)</span> <span class=o>=</span> <span class=n>delta</span> <span class=o>+</span> <span class=n>pcpu_unit_offsets</span><span class=p>[</span><span class=n>cpu</span><span class=p>];</span>
+</span></span><span class=line><span class=cl>        <span class=nf>per_cpu</span><span class=p>(</span><span class=n>this_cpu_off</span><span class=p>,</span> <span class=n>cpu</span><span class=p>)</span> <span class=o>=</span> <span class=nf>per_cpu_offset</span><span class=p>(</span><span class=n>cpu</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        <span class=nf>per_cpu</span><span class=p>(</span><span class=n>pcpu_hot</span><span class=p>.</span><span class=n>cpu_number</span><span class=p>,</span> <span class=n>cpu</span><span class=p>)</span> <span class=o>=</span> <span class=n>cpu</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>        <span class=nf>setup_percpu_segment</span><span class=p>(</span><span class=n>cpu</span><span class=p>);</span>  <span class=c1>// x86_32: 设置 GDT 中的 per-CPU 段描述符
+</span></span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 3. 迁移早期数据
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 将 early_per_cpu 数据复制到真正的 per-CPU 区域
+</span></span></span><span class=line><span class=cl>    <span class=c1>// 然后置空 early_per_cpu_ptr
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=c1>// 4. 切换到 per-CPU 基址
+</span></span></span><span class=line><span class=cl>    <span class=c1>// x86_64: 通过 wrmsr(MSR_GS_BASE, per_cpu_offset) 设置 GS 段基址
+</span></span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><h3 id=83-first-chunk-的构建>8.3 First Chunk 的构建</h3><p>Per-CPU 分配器支持两种分配策略，通过 <code>pcpu_fc</code> 枚举控制：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>enum</span> <span class=n>pcpu_fc</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>PCPU_FC_AUTO</span><span class=p>,</span>   <span class=c1>// 自动选择（默认）
+</span></span></span><span class=line><span class=cl>    <span class=n>PCPU_FC_EMBED</span><span class=p>,</span>  <span class=c1>// 强制使用 embed 分配器
+</span></span></span><span class=line><span class=cl>    <span class=n>PCPU_FC_PAGE</span><span class=p>,</span>   <span class=c1>// 强制使用 page 分配器
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p>可以通过内核启动参数 <code>percpu_alloc=embed</code> 或 <code>percpu_alloc=page</code> 强制选择特定的分配策略。默认情况下使用 <code>PCPU_FC_AUTO</code>，由架构代码自动选择最合适的策略。</p><h4 id=embed-分配器pcpu_embed_first_chunk>Embed 分配器（<code>pcpu_embed_first_chunk</code>）</h4><p>将所有 CPU 的 per-CPU 区域嵌入在一段连续的物理内存中：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>+-------+-------+-------+-------+
+</span></span><span class=line><span class=cl>| CPU 0 | CPU 1 | CPU 2 | CPU 3 |  (连续的物理内存)
+</span></span><span class=line><span class=cl>+-------+-------+-------+-------+
+</span></span></code></pre></td></tr></table></div></div><ul><li><strong>优点</strong>：减少 TLB 压力，可以映射到大页（PMD_SIZE 对齐）</li><li><strong>缺点</strong>：NUMA 不友好（所有 CPU 的数据可能不在本地节点）</li><li><strong>x86_64 默认使用此策略</strong>，atom_size 为 PMD_SIZE（2MB）</li></ul><h4 id=page-分配器pcpu_page_first_chunk>Page 分配器（<code>pcpu_page_first_chunk</code>）</h4><p>为每个 CPU 独立分配页面：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>CPU 0: [page][page][page]    ← 可能位于 NUMA 节点 0
+</span></span><span class=line><span class=cl>CPU 1: [page][page][page]    ← 可能位于 NUMA 节点 1
+</span></span><span class=line><span class=cl>CPU 2: [page][page][page]    ← 可能位于 NUMA 节点 0
+</span></span></code></pre></td></tr></table></div></div><ul><li><strong>优点</strong>：NUMA 友好，每个 CPU 的数据可以分配在本地节点</li><li><strong>缺点</strong>：需要更多的页表项，TLB 压力大</li><li><strong>x86_32 NUMA 配置</strong>下使用此策略</li></ul><h3 id=84-cpu-hotplug-与-per-cpu>8.4 CPU Hotplug 与 Per-CPU</h3><p>当新 CPU 上线时，需要为其初始化 per-CPU 数据：</p><ol><li>新 CPU 的 per-CPU 内存已在 <code>setup_per_cpu_areas()</code> 时分配（<code>nr_units</code> 基于 <code>possible</code> CPU）</li><li>需要将静态 per-CPU 变量的模板值复制到新 CPU 的区域</li><li>需要设置新 CPU 的 <code>__per_cpu_offset</code> 和 <code>this_cpu_off</code></li><li>对于 x86_64，需要通过 <code>wrmsr</code> 设置新 CPU 的 <code>GS_BASE</code></li></ol><p>对于动态分配的 per-CPU 变量，新 CPU 上线时其区域已由分配器清零。</p><hr><h2 id=9-高级应用>9. 高级应用</h2><h3 id=91-per-cpu-计数器percpu_counter>9.1 Per-CPU 计数器（percpu_counter）</h3><p><code>percpu_counter</code> 是 per-CPU 机制的经典应用，提供了一种<strong>近似计数器</strong>机制：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// include/linux/percpu_counter.h
+</span></span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>percpu_counter</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>raw_spinlock_t</span> <span class=n>lock</span><span class=p>;</span>       <span class=c1>// 保护 count 的自旋锁
+</span></span></span><span class=line><span class=cl>    <span class=n>s64</span> <span class=n>count</span><span class=p>;</span>                 <span class=c1>// 精确的主计数值
+</span></span></span><span class=line><span class=cl><span class=cp>#ifdef CONFIG_HOTPLUG_CPU
+</span></span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>list_head</span> <span class=n>list</span><span class=p>;</span>     <span class=c1>// 所有 percpu_counter 的链表（CPU 下线时遍历刷数用）
+</span></span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span><span class=line><span class=cl>    <span class=n>s32</span> <span class=n>__percpu</span> <span class=o>*</span><span class=n>counters</span><span class=p>;</span>    <span class=c1>// 每 CPU 的近似计数
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>工作原理</strong>：</p><ul><li>每次 <code>percpu_counter_add()</code> 时，将增量加到当前 CPU 的 <code>*counters</code> 上（无锁、快速）</li><li>当某个 CPU 的计数器超过 <code>batch</code> 阈值时，将其值累加到主 <code>count</code> 并清零</li><li><code>batch</code> 参数控制近似程度：值越大，写操作越快（刷新频率低），但 <code>percpu_counter_read()</code> 读取的误差越大</li><li><code>percpu_counter_read()</code> 只读 <code>count</code>，结果可能是近似值</li><li><code>percpu_counter_sum()</code> 遍历所有 CPU 的计数器并求和，结果精确但较慢</li></ul><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// lib/percpu_counter.c
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=nf>percpu_counter_add_batch</span><span class=p>(</span><span class=k>struct</span> <span class=n>percpu_counter</span> <span class=o>*</span><span class=n>fbc</span><span class=p>,</span> <span class=n>s64</span> <span class=n>amount</span><span class=p>,</span> <span class=n>s32</span> <span class=n>batch</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>s64</span> <span class=n>count</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=kt>unsigned</span> <span class=kt>long</span> <span class=n>flags</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=nf>local_irq_save</span><span class=p>(</span><span class=n>flags</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=n>count</span> <span class=o>=</span> <span class=nf>__this_cpu_read</span><span class=p>(</span><span class=o>*</span><span class=n>fbc</span><span class=o>-&gt;</span><span class=n>counters</span><span class=p>)</span> <span class=o>+</span> <span class=n>amount</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=nf>abs</span><span class=p>(</span><span class=n>count</span><span class=p>)</span> <span class=o>&gt;=</span> <span class=n>batch</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 超过阈值，将本地累积刷入主计数器
+</span></span></span><span class=line><span class=cl>        <span class=nf>raw_spin_lock</span><span class=p>(</span><span class=o>&amp;</span><span class=n>fbc</span><span class=o>-&gt;</span><span class=n>lock</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        <span class=n>fbc</span><span class=o>-&gt;</span><span class=n>count</span> <span class=o>+=</span> <span class=n>count</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>        <span class=nf>__this_cpu_sub</span><span class=p>(</span><span class=o>*</span><span class=n>fbc</span><span class=o>-&gt;</span><span class=n>counters</span><span class=p>,</span> <span class=n>count</span> <span class=o>-</span> <span class=n>amount</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        <span class=nf>raw_spin_unlock</span><span class=p>(</span><span class=o>&amp;</span><span class=n>fbc</span><span class=o>-&gt;</span><span class=n>lock</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span> <span class=k>else</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=nf>this_cpu_add</span><span class=p>(</span><span class=o>*</span><span class=n>fbc</span><span class=o>-&gt;</span><span class=n>counters</span><span class=p>,</span> <span class=n>amount</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=nf>local_irq_restore</span><span class=p>(</span><span class=n>flags</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>注意这里使用 <code>local_irq_save/restore</code>（而非 <code>preempt_disable/enable</code>），因为该函数需要在中断上下文中也能安全使用。刷入主计数器时使用 <code>__this_cpu_sub(*fbc->counters, count - amount)</code> 而非简单的清零——因为 <code>count</code>（即 <code>旧本地累积值 + amount</code>）已整体刷入 <code>fbc->count</code>，本地计数器只应减去已刷入的旧累积值（<code>count - amount</code>），保留本次调用的 <code>amount</code> 增量在本地继续累积。</p><p><code>percpu_counter_add_local()</code> 使用 <code>PERCPU_COUNTER_LOCAL_BATCH</code>（即 <code>INT_MAX</code>）作为 batch，这意味着本地计数器几乎永远不会溢出到主计数器，写操作极其高效，但读取时必须使用 <code>percpu_counter_sum()</code> 而非 <code>percpu_counter_read()</code>。</p><h3 id=92-per-cpu-引用计数percpu_ref>9.2 Per-CPU 引用计数（percpu_ref）</h3><p><code>percpu_ref</code> 实现了一个可以在<strong>per-CPU 模式</strong>和<strong>原子模式</strong>之间切换的引用计数：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>struct</span> <span class=n>percpu_ref</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>unsigned</span> <span class=kt>long</span> <span class=n>percpu_count_ptr</span><span class=p>;</span>    <span class=c1>// 低 2 位为标志位
+</span></span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>percpu_ref_data</span> <span class=o>*</span><span class=n>data</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>percpu_ref_data</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>atomic_long_t</span> <span class=n>count</span><span class=p>;</span>               <span class=c1>// 原子计数（原子模式使用）
+</span></span></span><span class=line><span class=cl>    <span class=kt>percpu_ref_func_t</span> <span class=o>*</span><span class=n>release</span><span class=p>;</span>        <span class=c1>// 降为 0 时的回调
+</span></span></span><span class=line><span class=cl>    <span class=c1>// ...
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>工作原理</strong>：</p><ol><li><strong>Per-CPU 模式</strong>：<code>percpu_ref_get/put</code> 操作当前 CPU 的本地计数器，无锁高效</li><li><strong>Kill 操作</strong>：<code>percpu_ref_kill()</code> 将引用计数从 per-CPU 模式切换到原子模式<ul><li>汇总所有 CPU 的计数到 <code>atomic_long_t count</code></li><li>设置 <code>__PERCPU_REF_ATOMIC</code> 和 <code>__PERCPU_REF_DEAD</code> 标志</li></ul></li><li><strong>原子模式</strong>：<code>percpu_ref_get/put</code> 操作 <code>atomic_long_t count</code></li><li><strong>Reinit 操作</strong>：<code>percpu_ref_reinit()</code> 可以将原子模式切回 per-CPU 模式</li></ol><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>static</span> <span class=kr>inline</span> <span class=kt>void</span> <span class=nf>percpu_ref_get_many</span><span class=p>(</span><span class=k>struct</span> <span class=n>percpu_ref</span> <span class=o>*</span><span class=n>ref</span><span class=p>,</span> <span class=kt>unsigned</span> <span class=kt>long</span> <span class=n>nr</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>unsigned</span> <span class=kt>long</span> <span class=n>__percpu</span> <span class=o>*</span><span class=n>percpu_count</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=nf>rcu_read_lock</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=nf>__ref_is_percpu</span><span class=p>(</span><span class=n>ref</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>percpu_count</span><span class=p>))</span>
+</span></span><span class=line><span class=cl>        <span class=nf>this_cpu_add</span><span class=p>(</span><span class=o>*</span><span class=n>percpu_count</span><span class=p>,</span> <span class=n>nr</span><span class=p>);</span>     <span class=c1>// per-CPU 模式：快速
+</span></span></span><span class=line><span class=cl>    <span class=k>else</span>
+</span></span><span class=line><span class=cl>        <span class=nf>atomic_long_add</span><span class=p>(</span><span class=n>nr</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>ref</span><span class=o>-&gt;</span><span class=n>data</span><span class=o>-&gt;</span><span class=n>count</span><span class=p>);</span>  <span class=c1>// 原子模式：慢但安全
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=nf>rcu_read_unlock</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>这种模式切换机制在对象生命周期管理中非常有用：正常操作时使用 per-CPU 模式获得高性能，销毁时切换到原子模式获得精确的零检测。</p><p><strong>完整的模式切换 API</strong>：除了 <code>kill</code> 之外，内核还提供了更灵活的模式切换接口：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 从 per-CPU 模式切换到原子模式（不标记为 DEAD，可逆）
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=nf>percpu_ref_switch_to_atomic</span><span class=p>(</span><span class=k>struct</span> <span class=n>percpu_ref</span> <span class=o>*</span><span class=n>ref</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                                  <span class=kt>percpu_ref_func_t</span> <span class=o>*</span><span class=n>confirm_switch</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 从原子模式切换回 per-CPU 模式
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=nf>percpu_ref_switch_to_percpu</span><span class=p>(</span><span class=k>struct</span> <span class=n>percpu_ref</span> <span class=o>*</span><span class=n>ref</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 重新初始化已被 kill 的引用计数（恢复初始引用并切回 per-CPU 模式）
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=nf>percpu_ref_reinit</span><span class=p>(</span><span class=k>struct</span> <span class=n>percpu_ref</span> <span class=o>*</span><span class=n>ref</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// kill 的变体：带确认回调，在所有 per-CPU 计数汇总完成后调用
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=nf>percpu_ref_kill_and_confirm</span><span class=p>(</span><span class=k>struct</span> <span class=n>percpu_ref</span> <span class=o>*</span><span class=n>ref</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>                                  <span class=kt>percpu_ref_func_t</span> <span class=o>*</span><span class=n>confirm_kill</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 从 DEAD 状态恢复（不重置计数，仅清除 DEAD 标志）
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=nf>percpu_ref_resurrect</span><span class=p>(</span><span class=k>struct</span> <span class=n>percpu_ref</span> <span class=o>*</span><span class=n>ref</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><p>完整的生命周期如下：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span><span class=lnt>16
+</span><span class=lnt>17
+</span><span class=lnt>18
+</span><span class=lnt>19
+</span><span class=lnt>20
+</span><span class=lnt>21
+</span><span class=lnt>22
+</span><span class=lnt>23
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-fallback data-lang=fallback><span class=line><span class=cl>percpu_ref_init()
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ├─ PERCPU_REF_INIT_ATOMIC → 初始为原子模式
+</span></span><span class=line><span class=cl>    ├─ PERCPU_REF_INIT_DEAD   → 初始为原子+死亡模式（需 resurrect 才能使用）
+</span></span><span class=line><span class=cl>    │
+</span></span><span class=line><span class=cl>    ▼
+</span></span><span class=line><span class=cl>percpu_ref_switch_to_percpu()  ←→  percpu_ref_switch_to_atomic()
+</span></span><span class=line><span class=cl>    │                                    │
+</span></span><span class=line><span class=cl>    │  (per-CPU 模式，高性能)              │  (原子模式，精确计数)
+</span></span><span class=line><span class=cl>    │                                    │
+</span></span><span class=line><span class=cl>    └────────── percpu_ref_kill() ────────┘
+</span></span><span class=line><span class=cl>                    │
+</span></span><span class=line><span class=cl>                    ▼
+</span></span><span class=line><span class=cl>              (引用计数递减至 0)
+</span></span><span class=line><span class=cl>                    │
+</span></span><span class=line><span class=cl>                    ▼
+</span></span><span class=line><span class=cl>              release 回调
+</span></span><span class=line><span class=cl>                    │
+</span></span><span class=line><span class=cl>              percpu_ref_reinit() / percpu_ref_resurrect()
+</span></span><span class=line><span class=cl>                    │               (reinit 重置计数并切回 per-CPU 模式，
+</span></span><span class=line><span class=cl>                    │                resurrect 仅恢复 DEAD 标志不重置计数)
+</span></span><span class=line><span class=cl>                    ▼
+</span></span><span class=line><span class=cl>              可重新开始上述循环
+</span></span></code></pre></td></tr></table></div></div><p><code>PERCPU_REF_ALLOW_REINIT</code> 标志控制是否允许从原子模式切回 per-CPU 模式。<code>kill</code> 操作设置 <code>__PERCPU_REF_DEAD</code> 标志后，普通的 <code>switch_to_percpu</code> 将被拒绝，只有 <code>reinit</code> 或 <code>resurrect</code> 才能恢复。两者的区别在于：<code>resurrect</code> 仅清除 <code>__PERCPU_REF_DEAD</code> 标志，不重置计数值也不切换模式；<code>reinit</code> 则完整重置引用计数并切回 per-CPU 模式。</p><p><strong>RCU 保护的必要性</strong>：<code>percpu_ref_get/put</code> 中的 <code>rcu_read_lock()</code> 并非用于保护数据，而是保证模式切换的安全性。<code>percpu_ref_kill()</code> 在汇总所有 CPU 计数并设置 <code>__PERCPU_REF_ATOMIC</code> 标志后，需要通过 <code>synchronize_rcu()</code> 等待所有在 RCU 读侧临界区中的 <code>__ref_is_percpu()</code> 检查完成。这确保了：一旦 <code>kill</code> 返回，后续所有 <code>get/put</code> 都会走原子路径，不会有任何调用者在 <code>kill</code> 完成后仍误入 per-CPU 路径。</p><h3 id=93-per-cpu-读写信号量percpu_rw_semaphore>9.3 Per-CPU 读写信号量（percpu_rw_semaphore）</h3><p><code>percpu_rw_semaphore</code> 利用 per-CPU 计数器实现了一种<strong>读操作极其高效</strong>的读写信号量：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>struct</span> <span class=n>percpu_rw_semaphore</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>rcu_sync</span> <span class=n>rss</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=kt>unsigned</span> <span class=kt>int</span> <span class=n>__percpu</span> <span class=o>*</span><span class=n>read_count</span><span class=p>;</span>  <span class=c1>// 每 CPU 的读计数
+</span></span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>rcuwait</span> <span class=n>writer</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=kt>wait_queue_head_t</span> <span class=n>waiters</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=kt>atomic_t</span> <span class=n>block</span><span class=p>;</span>                     <span class=c1>// 写者阻塞标志
+</span></span></span><span class=line><span class=cl><span class=cp>#ifdef CONFIG_DEBUG_LOCK_ALLOC
+</span></span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>lockdep_map</span> <span class=n>dep_map</span><span class=p>;</span>         <span class=c1>// lockdep 锁调试
+</span></span></span><span class=line><span class=cl><span class=cp>#endif
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p><strong>读路径（极快）</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>static</span> <span class=kr>inline</span> <span class=kt>void</span> <span class=nf>percpu_down_read</span><span class=p>(</span><span class=k>struct</span> <span class=n>percpu_rw_semaphore</span> <span class=o>*</span><span class=n>sem</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nf>might_sleep</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=nf>rwsem_acquire_read</span><span class=p>(</span><span class=o>&amp;</span><span class=n>sem</span><span class=o>-&gt;</span><span class=n>dep_map</span><span class=p>,</span> <span class=mi>0</span><span class=p>,</span> <span class=mi>0</span><span class=p>,</span> <span class=n>_RET_IP_</span><span class=p>);</span>  <span class=c1>// lockdep 注解
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=nf>preempt_disable</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=nf>likely</span><span class=p>(</span><span class=nf>rcu_sync_is_idle</span><span class=p>(</span><span class=o>&amp;</span><span class=n>sem</span><span class=o>-&gt;</span><span class=n>rss</span><span class=p>)))</span>
+</span></span><span class=line><span class=cl>        <span class=nf>this_cpu_inc</span><span class=p>(</span><span class=o>*</span><span class=n>sem</span><span class=o>-&gt;</span><span class=n>read_count</span><span class=p>);</span>  <span class=c1>// 仅一条 per-CPU 加法！
+</span></span></span><span class=line><span class=cl>    <span class=k>else</span>
+</span></span><span class=line><span class=cl>        <span class=nf>__percpu_down_read</span><span class=p>(</span><span class=n>sem</span><span class=p>,</span> <span class=nb>false</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=nf>preempt_enable</span><span class=p>();</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p><code>might_sleep()</code> 标记此函数为可睡眠函数——如果在原子上下文（如持有自旋锁时）调用会触发警告。<code>rwsem_acquire_read()</code> 是 lockdep 的读锁获取注解，用于死锁和锁序检测。</p><p>没有写者时，读操作仅执行 <code>this_cpu_inc()</code>，无需任何原子操作或锁。这里的关键是 <code>rcu_sync</code> 机制：它维护一个"是否有人在慢速路径"的状态。当没有任何写者时，<code>rcu_sync_is_idle()</code> 返回 <code>true</code>，读者可以直接走快速路径，无需检查任何全局状态。只有当写者调用 <code>percpu_down_write()</code> 时，<code>rcu_sync</code> 才通过 <code>rcu_sync_enter()</code> 进入非空闲状态，后续读者才会进入慢速路径。写者释放锁后，<code>rcu_sync_exit()</code> 经过至少一个 RCU-sched 宽限期才恢复空闲状态，确保读者快速路径重新可用时能看见写者临界区的所有修改。</p><p><strong>写路径</strong>：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span><span class=lnt>11
+</span><span class=lnt>12
+</span><span class=lnt>13
+</span><span class=lnt>14
+</span><span class=lnt>15
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// kernel/locking/percpu-rwsem.c
+</span></span></span><span class=line><span class=cl><span class=kt>void</span> <span class=n>__sched</span> <span class=nf>percpu_down_write</span><span class=p>(</span><span class=k>struct</span> <span class=n>percpu_rw_semaphore</span> <span class=o>*</span><span class=n>sem</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nf>might_sleep</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>    <span class=nf>rwsem_acquire</span><span class=p>(</span><span class=o>&amp;</span><span class=n>sem</span><span class=o>-&gt;</span><span class=n>dep_map</span><span class=p>,</span> <span class=mi>0</span><span class=p>,</span> <span class=mi>0</span><span class=p>,</span> <span class=n>_RET_IP_</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=nf>rcu_sync_enter</span><span class=p>(</span><span class=o>&amp;</span><span class=n>sem</span><span class=o>-&gt;</span><span class=n>rss</span><span class=p>);</span>              <span class=c1>// 通知读者进入慢速路径
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=o>!</span><span class=nf>__percpu_down_write_trylock</span><span class=p>(</span><span class=n>sem</span><span class=p>))</span>   <span class=c1>// atomic_xchg(&amp;sem-&gt;block, 1)
+</span></span></span><span class=line><span class=cl>        <span class=nf>percpu_rwsem_wait</span><span class=p>(</span><span class=n>sem</span><span class=p>,</span> <span class=nb>false</span><span class=p>);</span>       <span class=c1>// 已有写者，等待
+</span></span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>    <span class=nf>rcuwait_wait_event</span><span class=p>(</span><span class=o>&amp;</span><span class=n>sem</span><span class=o>-&gt;</span><span class=n>writer</span><span class=p>,</span>         <span class=c1>// 等待所有活跃读者退出
+</span></span></span><span class=line><span class=cl>                       <span class=nf>readers_active_check</span><span class=p>(</span><span class=n>sem</span><span class=p>),</span>
+</span></span><span class=line><span class=cl>                       <span class=n>TASK_UNINTERRUPTIBLE</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></td></tr></table></div></div><p>释放时（<code>percpu_up_write</code>）依次执行：<code>atomic_set_release(&amp;sem->block, 0)</code> 释放写锁 → <code>__wake_up()</code> 唤醒等待者 → <code>rcu_sync_exit()</code> 经过至少一个 RCU-sched 宽限期后恢复读者快速路径。</p><p>写路径的详细流程：</p><ol><li><strong><code>rcu_sync_enter()</code></strong>：通知 <code>rcu_sync</code> 状态机进入非空闲状态，后续读者的 <code>rcu_sync_is_idle()</code> 检查将返回 <code>false</code>，被迫走慢速路径</li><li><strong><code>__percpu_down_write_trylock()</code></strong>：通过 <code>atomic_xchg(&amp;sem->block, 1)</code> 原子地尝试获取写锁。如果已有写者（<code>block</code> 非零），则进入 <code>percpu_rwsem_wait()</code> 等待</li><li><strong><code>readers_active_check()</code></strong>：在 <code>rcuwait_wait_event</code> 中反复检查 <code>per_cpu_sum(*sem->read_count)</code> 是否为零——即所有快速路径读者是否已退出。由于 <code>block</code> 已设置，新读者不会进入快速路径，因此该计数只会递减</li><li><strong>释放时</strong>：<code>rcu_sync_exit()</code> 不是立即恢复快速路径，而是经过至少一个 RCU-sched 宽限期后才恢复，保证新读者能看到写者临界区内的所有修改</li></ol><hr><h2 id=10-调试与诊断>10. 调试与诊断</h2><h3 id=101-sparse-静态检查>10.1 Sparse 静态检查</h3><p>per-CPU 变量使用 <code>__percpu</code> 地址空间注解，sparse 可以检测以下错误：</p><ul><li>直接解引用 per-CPU 指针（必须通过访问接口）</li><li>混用 per-CPU 指针和普通指针</li><li>在 per-CPU 指针上使用错误的访问方式</li></ul><h3 id=102-config_debug_preempt>10.2 CONFIG_DEBUG_PREEMPT</h3><p>开启后，<code>this_cpu_ptr</code> 和 <code>__this_cpu_*</code> 操作会检查当前上下文是否 preempt-safe。如果在中断上下文或 preempt 未禁止的情况下调用，会打印警告。</p><h3 id=103-config_debug_force_weak_per_cpu>10.3 CONFIG_DEBUG_FORCE_WEAK_PER_CPU</h3><p>强制所有 per-CPU 变量使用弱定义，帮助检测符号冲突和作用域问题。</p><h3 id=104-per-cpu-统计>10.4 Per-CPU 统计</h3><p><code>CONFIG_PERCPU_STATS</code> 开启后（<strong>默认关闭</strong>，需手动开启），分配器维护详细的统计信息：</p><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt> 1
+</span><span class=lnt> 2
+</span><span class=lnt> 3
+</span><span class=lnt> 4
+</span><span class=lnt> 5
+</span><span class=lnt> 6
+</span><span class=lnt> 7
+</span><span class=lnt> 8
+</span><span class=lnt> 9
+</span><span class=lnt>10
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=k>struct</span> <span class=n>percpu_stats</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>u64</span> <span class=n>nr_alloc</span><span class=p>;</span>           <span class=c1>// 总分配次数
+</span></span></span><span class=line><span class=cl>    <span class=n>u64</span> <span class=n>nr_dealloc</span><span class=p>;</span>         <span class=c1>// 总释放次数
+</span></span></span><span class=line><span class=cl>    <span class=n>u64</span> <span class=n>nr_cur_alloc</span><span class=p>;</span>       <span class=c1>// 当前活跃分配数
+</span></span></span><span class=line><span class=cl>    <span class=n>u64</span> <span class=n>nr_max_alloc</span><span class=p>;</span>       <span class=c1>// 最大同时分配数
+</span></span></span><span class=line><span class=cl>    <span class=n>u32</span> <span class=n>nr_chunks</span><span class=p>;</span>          <span class=c1>// 当前 chunk 数
+</span></span></span><span class=line><span class=cl>    <span class=n>u32</span> <span class=n>nr_max_chunks</span><span class=p>;</span>      <span class=c1>// 最大 chunk 数
+</span></span></span><span class=line><span class=cl>    <span class=kt>size_t</span> <span class=n>min_alloc_size</span><span class=p>;</span>  <span class=c1>// 最小分配大小
+</span></span></span><span class=line><span class=cl>    <span class=kt>size_t</span> <span class=n>max_alloc_size</span><span class=p>;</span>  <span class=c1>// 最大分配大小
+</span></span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></td></tr></table></div></div><p>可通过 <code>/sys/kernel/debug/percpu_stats</code> 查看。</p><h3 id=105-地址验证>10.5 地址验证</h3><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 检查地址是否在内核静态 per-CPU 区域内
+</span></span></span><span class=line><span class=cl><span class=kt>bool</span> <span class=nf>__is_kernel_percpu_address</span><span class=p>(</span><span class=kt>unsigned</span> <span class=kt>long</span> <span class=n>addr</span><span class=p>,</span> <span class=kt>unsigned</span> <span class=kt>long</span> <span class=o>*</span><span class=n>can_addr</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 检查地址是否在任何 per-CPU 区域内（包括动态分配）
+</span></span></span><span class=line><span class=cl><span class=kt>bool</span> <span class=nf>is_kernel_percpu_address</span><span class=p>(</span><span class=kt>unsigned</span> <span class=kt>long</span> <span class=n>addr</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 将 per-CPU 指针转为物理地址
+</span></span></span><span class=line><span class=cl><span class=kt>phys_addr_t</span> <span class=nf>per_cpu_ptr_to_phys</span><span class=p>(</span><span class=kt>void</span> <span class=o>*</span><span class=n>addr</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><hr><h2 id=11-最佳实践与常见陷阱>11. 最佳实践与常见陷阱</h2><h3 id=111-选择正确的操作级别>11.1 选择正确的操作级别</h3><table><thead><tr><th>场景</th><th>推荐接口</th><th>原因</th></tr></thead><tbody><tr><td>简单读写当前 CPU 变量</td><td><code>this_cpu_read/write</code></td><td>自动处理中断安全</td></tr><tr><td>需要保证不被抢占</td><td><code>get_cpu_var/put_cpu_var</code></td><td>禁止抢占</td></tr><tr><td>已在 preempt-off 上下文中</td><td><code>__this_cpu_read/write</code></td><td>避免 redundant preempt 操作</td></tr><tr><td>中断处理程序中访问</td><td><code>this_cpu_*</code></td><td>保证中断安全</td></tr><tr><td>性能极其敏感且无中断风险</td><td><code>raw_cpu_*</code></td><td>零开销</td></tr></tbody></table><h3 id=112-常见陷阱>11.2 常见陷阱</h3><h4 id=陷阱-1在可抢占上下文中使用-raw_cpu_-或-_this_>陷阱 1：在可抢占上下文中使用 raw_cpu_* 或 _<em>this_cpu</em>*</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 错误！如果在此期间被调度到其他 CPU，
+</span></span></span><span class=line><span class=cl><span class=c1>// 读到的可能是其他 CPU 的值
+</span></span></span><span class=line><span class=cl><span class=kt>int</span> <span class=n>val</span> <span class=o>=</span> <span class=nf>raw_cpu_read</span><span class=p>(</span><span class=n>my_counter</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><h4 id=陷阱-2忘记-per-cpu-指针不能直接解引用>陷阱 2：忘记 per-CPU 指针不能直接解引用</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span><span class=lnt>6
+</span><span class=lnt>7
+</span><span class=lnt>8
+</span><span class=lnt>9
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=kt>int</span> <span class=n>__percpu</span> <span class=o>*</span><span class=n>ptr</span> <span class=o>=</span> <span class=nf>alloc_percpu</span><span class=p>(</span><span class=kt>int</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 错误！直接解引用 per-CPU 指针
+</span></span></span><span class=line><span class=cl><span class=o>*</span><span class=n>ptr</span> <span class=o>=</span> <span class=mi>42</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 正确方式
+</span></span></span><span class=line><span class=cl><span class=nf>this_cpu_write</span><span class=p>(</span><span class=o>*</span><span class=n>ptr</span><span class=p>,</span> <span class=mi>42</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=c1>// 或
+</span></span></span><span class=line><span class=cl><span class=o>*</span><span class=nf>per_cpu_ptr</span><span class=p>(</span><span class=n>ptr</span><span class=p>,</span> <span class=n>cpu</span><span class=p>)</span> <span class=o>=</span> <span class=mi>42</span><span class=p>;</span>
+</span></span></code></pre></td></tr></table></div></div><h4 id=陷阱-3在中断上下文中使用-get_cpu_var>陷阱 3：在中断上下文中使用 get_cpu_var</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span><span class=lnt>5
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 错误！在中断上下文中 preempt_disable 是非法的
+</span></span></span><span class=line><span class=cl><span class=nf>get_cpu_var</span><span class=p>(</span><span class=n>my_var</span><span class=p>)</span><span class=o>++</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 正确方式
+</span></span></span><span class=line><span class=cl><span class=nf>this_cpu_inc</span><span class=p>(</span><span class=n>my_var</span><span class=p>);</span>
+</span></span></code></pre></td></tr></table></div></div><h4 id=陷阱-4假设-per_cpuvar-smp_processor_id-等价于-this_cpu>陷阱 4：假设 per_cpu(var, smp_processor_id()) 等价于 this_cpu</h4><p>虽然语义上等价，但 <code>this_cpu_*</code> 操作在 x86 上可以生成单条段前缀指令，而 <code>per_cpu(var, smp_processor_id())</code> 需要额外的函数调用来获取 CPU 编号。</p><h4 id=陷阱-5在进程上下文中读取其他-cpu-的-per-cpu-数据时缺少同步>陷阱 5：在进程上下文中读取其他 CPU 的 per-CPU 数据时缺少同步</h4><div class=highlight><div class=chroma><table class=lntable><tr><td class=lntd><pre tabindex=0 class=chroma><code><span class=lnt>1
+</span><span class=lnt>2
+</span><span class=lnt>3
+</span><span class=lnt>4
+</span></code></pre></td><td class=lntd><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 读取其他 CPU 的 per-CPU 数据可能不一致
+</span></span></span><span class=line><span class=cl><span class=kt>int</span> <span class=n>other_val</span> <span class=o>=</span> <span class=nf>per_cpu</span><span class=p>(</span><span class=n>my_counter</span><span class=p>,</span> <span class=n>other_cpu</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 如果需要一致性，需要适当的同步机制
+</span></span></span></code></pre></td></tr></table></div></div><h3 id=113-per-cpu-变量与中断安全>11.3 Per-CPU 变量与中断安全</h3><p>三种操作级别的中断安全性差异在 6.2 节已详细阐述，此处强调 x86 架构下的一个关键细节：</p><p>在 x86 上，<code>this_cpu_add</code> 使用 <code>add %gs:offset</code> 单条指令完成。虽然普通 <code>add</code> 指令（无 <code>lock</code> 前缀）不保证多核原子性，但<strong>相对于本 CPU 的中断是安全的</strong>——因为中断只能发生在指令边界，一条 <code>add</code> 指令不会被中断打断为读和写两步。通用架构的 <code>this_cpu_add</code> 则需要 <code>raw_local_irq_save/restore</code> 来禁用本地中断以达到同样的效果。</p><h3 id=114-内存回收与碎片整理>11.4 内存回收与碎片整理</h3><p>Per-CPU 分配器有自动的平衡机制（<code>pcpu_balance_workfn</code>）：</p><ul><li>维持 <code>PCPU_EMPTY_POP_PAGES_LOW</code>（2）到 <code>PCPU_EMPTY_POP_PAGES_HIGH</code>（4）个空页面供原子分配使用</li><li>当存在多个完全空闲的 chunk 时，回收多余的 chunk</li><li>当 chunk 中有大量空闲页面时，depulate（释放物理页）以节省内存</li></ul><hr><h2 id=12-总结>12. 总结</h2><p>Linux 内核的 per-CPU 机制是一个精心设计的子系统，从编译时的段布局到运行时的动态分配，从通用的偏移量数组到 x86 的段寄存器优化，每一层都有明确的设计考量和性能优化。</p><p>核心要点回顾：</p><ol><li><strong>设计哲学</strong>：以空间换时间，每个 CPU 持有数据副本，消除锁竞争</li><li><strong>两类变量</strong>：静态（编译时定义，<code>.data..percpu</code> 段布局管理）和动态（运行时分配，chunk/unit/group 管理）</li><li><strong>地址转换</strong>：通用实现用 <code>__per_cpu_offset[]</code> 偏移量数组，x86 用 GS/FS 段寄存器 + <code>this_cpu_off</code> 实现单指令寻址</li><li><strong>三级操作</strong>：<code>raw_cpu_*</code>（无保护，调用者自负安全）、<code>__this_cpu_*</code>（preempt 调试检查）、<code>this_cpu_*</code>（中断安全，通用实现通过关中断或架构通过原子指令保证）</li><li><strong>并发控制</strong>：动态分配器采用 spinlock + mutex 两级锁设计，将高频元数据操作与低频结构变更解耦</li><li><strong>架构优化</strong>：x86 利用段前缀寻址、<code>inc</code>/<code>dec</code> 指令优化、<code>cmpxchg</code> 无锁 CAS、Named Address Space 等手段层层递进</li><li><strong>初始化</strong>：启动时通过 embed（连续内存，TLB 友好）或 page（NUMA 友好）策略构建 first chunk，CPU hotplug 时复用预分配区域</li><li><strong>高级应用</strong>：<code>percpu_counter</code>（batch 阈值控制的近似计数器）、<code>percpu_ref</code>（per-CPU/原子模式切换的引用计数）、<code>percpu_rw_semaphore</code>（<code>rcu_sync</code> 驱动的读写信号量，读者快速路径仅一条 per-CPU 加法）</li><li><strong>UP 退化</strong>：在单处理器配置下，整个 per-CPU 机制退化为普通全局变量访问，零额外开销</li></ol><p>选择正确的操作级别（<code>raw_cpu_*</code> vs <code>this_cpu_*</code> vs <code>get_cpu_var</code>）是内核开发中的常见决策——遵循最小充分保护原则，既保证正确性又避免不必要的开销。Per-CPU 机制是 Linux 内核实现高可扩展性的基石之一，理解其原理对内核开发至关重要。</p><hr><blockquote><p>本文基于 Linux 6.10 内核源码分析，主要涉及文件：</p><ul><li><code>include/linux/percpu-defs.h</code> — per-CPU 变量声明与操作宏定义</li><li><code>include/linux/percpu.h</code> — per-CPU 分配器接口</li><li><code>include/asm-generic/percpu.h</code> — 通用 per-CPU 实现</li><li><code>arch/x86/include/asm/percpu.h</code> — x86 架构优化实现</li><li><code>mm/percpu.c</code> — per-CPU 分配器核心实现</li><li><code>mm/percpu-internal.h</code> — 分配器内部数据结构</li><li><code>arch/x86/kernel/setup_percpu.c</code> — x86 per-CPU 初始化</li><li><code>include/asm-generic/vmlinux.lds.h</code> — 链接器段布局定义</li><li><code>include/linux/percpu-rwsem.h</code> — per-CPU 读写信号量接口</li><li><code>kernel/locking/percpu-rwsem.c</code> — per-CPU 读写信号量实现</li><li><code>include/linux/percpu-refcount.h</code> — per-CPU 引用计数接口</li><li><code>lib/percpu_counter.c</code> — per-CPU 近似计数器实现</li></ul></blockquote></div><footer><p class=meta><span class="byline author vcard">Posted by <span class=fn>bitristan</span></span><time>Jun 16, 2026</time></span></p><p class=meta><a class="basic-alignment left" href=/posts/2026061001/ title="Jetpack Compose Snapshot 架构设计与实现原理">Jetpack Compose Snapshot 架构设计与实现原理</a></p></footer></article></div><aside class="sidebar thirds"><section class="first odd"><h1>About me</h1><p>A software engineer.</p></section><ul class=sidebar-nav><li class=sidebar-nav-item><a target=_blank rel="noopener noreferrer" href=https://github.com/bitristan title=https://github.com/bitristan><i class="fa fa-github fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://gitlab.com/bitristan title=https://gitlab.com/bitristan><i class="fa fa-gitlab fa-3x"></i></a>
+<a target=_blank rel="noopener noreferrer" href=https://stackoverflow.com/users/1099477/bitristan title=https://stackoverflow.com/users/1099477/bitristan><i class="fa fa-stack-overflow fa-3x"></i></a></li></ul></aside></div></div><footer role=contentinfo><p>Copyright &copy; 2026 bitristan - <a href=/license/>License</a> -
+<span class=credit>Powered by <a target=_blank href=https://gohugo.io rel="noopener noreferrer">Hugo</a> and <a target=_blank href=https://github.com/parsiya/hugo-octopress/ rel="noopener noreferrer">Hugo-Octopress</a> theme.</p></footer></body></html>
